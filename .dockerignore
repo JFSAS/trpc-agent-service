@@ -1,0 +1,10 @@
+.git
+.idea
+.vscode
+artifacts
+bin
+dist
+verification
+coverage.out
+coverage.html
+*.log

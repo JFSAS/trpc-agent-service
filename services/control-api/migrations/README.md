@@ -1,8 +1,10 @@
 # Control API migrations
 
-Control API owns the migrations in this directory. The first migration will be
-`0001_baseline.sql`, created after the Control domain model and tenant isolation
-strategy are accepted.
+Control API owns and embeds the migrations in this directory. Startup records
+each applied file in `control_schema_migrations` while holding a PostgreSQL
+transaction-level advisory lock.
 
-An empty SQL migration is deliberately not included: a successful no-op
-baseline would falsely imply that a production schema exists.
+`0001_baseline.sql` contains the V1 Identity, Platform Operator, Tenant, and
+Membership schema. The baseline may grow while the greenfield V1 schema is
+still under construction; after the first released deployment, every schema
+change must use a new migration.

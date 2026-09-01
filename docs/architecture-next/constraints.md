@@ -1,7 +1,7 @@
 # 下一代架构级约束
 
 - **设计状态**：已接受
-- **实现状态**：基础目录骨架已建立；`identity`、`admin` 业务模块和对应能力尚未实现
+- **实现状态**：Control API 的 Identity、Admin、Tenant V1 与 PostgreSQL 基线已实现
 - **确认日期**：2026-08-31
 - **适用范围**：新建的生产代码、协议、数据库迁移、镜像和部署配置
 
@@ -88,6 +88,31 @@ Channel Binding 管理。
 
 禁止为同一进程创建多个互相竞争的启动入口，禁止让领域模块自行监听端口或
 接管进程信号。
+
+### ARC-104：目录、包和文件名必须表达明确职责
+
+目录、Go 包和文件必须使用领域概念、Use Case 或技术职责命名。名称应当让维护者
+不打开文件就能判断其主要内容，禁止用模糊名称建立可以持续堆放无关代码的容器。
+
+- Domain 文件按领域概念命名，例如 `tenant.go`、`membership.go` 和
+  `operator_grant.go`；禁止使用 `model.go` 汇集多个实体、聚合和规则。
+- Application 文件按 Use Case 或明确职责命名，例如 `provision_tenant.go`、
+  `manage_members.go`、`login.go`、`ports.go` 和 `errors.go`。当一个
+  `service.go` 已包含多个独立 Command 或 Query 时，必须按 Use Case 拆分文件；
+  拆分文件不表示创建新的业务模块或进程。
+- Inbound Adapter 文件按协议职责或资源命名，例如 `session_handler.go`、
+  `operator_handler.go` 和 `middleware.go`；Outbound Adapter 文件按持久化对象或
+  外部能力命名，例如 `account_store.go`、`session_store.go` 和
+  `deployment_publisher.go`。禁止让单个通用 `handler.go` 或 `store.go` 长期承载
+  多组无关接口。
+- 同类 Adapter 的包名必须在一个 Workload 内保持一致。Control API 的 HTTP 与
+  PostgreSQL Adapter 分别统一使用 `httpadapter` 和 `postgresadapter`，禁止同一
+  目录结构混用 `http`/`httpadapter` 或 `postgres`/`postgresadapter`。
+- Go 文件名使用小写单词和下划线，测试文件必须与被测职责对应并使用
+  `<name>_test.go`。禁止使用 `common.go`、`utils.go`、`helpers.go`、`types.go`、
+  `misc.go` 等无法表达所有权的兜底名称。
+- `doc.go` 只用于包级文档，禁止用空 `doc.go`、空 `Module` 或空 Wiring 冒充已实现
+  能力。尚未开始的模块应保留在架构文档中，进入代码树后必须具有真实纵向切片。
 
 ## 3. Control API 内部模块
 
@@ -205,12 +230,12 @@ HTTP 与一次性运维 CLI 只是 `admin` 的 Inbound Adapter；`cmd/control-ap
 Operator 权限是平台级授权，不自动构成任何 Tenant Membership，也不得隐式获得
 Tenant 内 Agent、Profile、Deployment 或 Channel Binding 的访问权。
 
-### ARC-208：账号准入采用初始 Owner 与邀请制
+### ARC-208：V1 账号准入采用 Admin 创建用户和 Owner 添加已有用户
 
 V1 禁止公开注册。每个 Tenant 必须由受信任的 Platform Operator 通过 `admin`
-命令创建，并原子建立初始 Tenant Owner；后续成员必须通过 Tenant Invitation
-加入。普通 Invitation 禁止授予 `OWNER`，Owner 转移必须使用独立用例并保持至少
-一个有效 Owner。
+命令创建，并原子建立初始 Tenant Owner。Platform Operator 可以创建全局账号；
+Tenant Owner 只能把已有 ACTIVE 账号添加为普通 `MEMBER`。V1 不实现 Invitation
+和 Owner 转移，普通成员删除也不得移除 `OWNER`。
 
 Platform Operator、Tenant Owner 与普通 Tenant Member 共用 `identity` 的本地账号
 和服务端 Session。身份认证只建立平台 User Identity；平台权限由 `admin` 校验，
@@ -218,27 +243,28 @@ Tenant 权限由 `tenant` 的 Membership 校验。
 
 ### ARC-209：首个 Platform Operator 必须使用一次性数据库引导协议
 
-Control API 进程 bootstrap 必须在数据库迁移后、启动 HTTP Server 前调用
-`admin/application.EnsureInitialPlatformOperator`。它只能在没有任何 UserAccount、
-OperatorGrant 和已完成引导记录的全新数据库中，根据显式启用的启动配置创建首个
-UserAccount、Password Credential 和 OperatorGrant。
+显式启用 `auto` 时，Control API 进程 bootstrap 必须在数据库迁移后、启动 HTTP
+Server 前调用 `admin/application.EnsureInitialOperator`。它只能在没有任何
+UserAccount 和有效 OperatorGrant 的全新数据库中创建首个 UserAccount、Password
+Credential 和 OperatorGrant。
 
 数据库状态是引导是否完成的唯一事实来源。禁止把文件系统安装锁作为权威状态，
-也禁止通过公开 Setup HTTP API、普通环境变量明文密码或日志中输出密码完成引导。
-初始密码必须从 Secret 文件读取，只在内存中进入 Identity Password Hasher。
+也禁止通过公开 Setup HTTP API 或日志输出密码完成引导。V1 从
+`CONTROL_BOOTSTRAP_PASSWORD` 读取初始密码，只在进程内存中把它传给 Identity
+Password Hasher，不把明文写入 HTTP 响应或数据库字段。
 
 引导必须在同一个 PostgreSQL 事务中取得固定 advisory lock，锁内重新检查状态，
-原子写入账号、凭证、Grant、完成记录和审计事实。首个 Grant 的 Actor 必须记录为
+原子写入账号、凭证和 Grant。首个 Grant 的 Actor 必须记录为
 `SYSTEM_BOOTSTRAP`。并发副本取得锁后若发现有效 Operator，必须幂等返回 NOOP。
 
-已有账号但没有有效 Operator、已有完成记录但 Operator 丢失或数据库状态不一致时，
-进程必须返回稳定的恢复错误并阻止业务 HTTP Server 启动；禁止自动提升已有账号或
-重新打开初始引导。详细协议见
+`auto` 模式下已有账号但没有有效 Operator 时，进程必须返回稳定的恢复错误并阻止
+业务 HTTP Server 启动；禁止自动提升已有账号或重新打开初始引导。BootstrapState、
+审计 Outbox 和 Break-glass 恢复属于后续切片。详细协议见
 [`ADR-0001`](decisions/0001-initial-platform-operator-bootstrap.md)。
 
 ### ARC-210：Platform Operator 可以直接创建平台用户
 
-有效 Platform Operator 可以通过 `admin/application.CreatePlatformUserAccount`
+有效 Platform Operator 可以通过 `admin/application.Service.CreateUser`
 直接创建全局 UserAccount。Admin 必须通过使用方定义的 Identity Application Port
 完成账号和临时密码凭证创建，禁止直接写 Identity 表。
 

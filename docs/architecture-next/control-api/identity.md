@@ -1,8 +1,8 @@
 # Identity 子领域设计
 
 - **边界状态**：已接受
-- **细节状态**：草案，等待实现前评审
-- **实现状态**：尚未创建 `internal/identity` 代码
+- **细节状态**：V1 已收口
+- **实现状态**：账号创建、登录、Session 认证、登出和修改密码已实现
 - **适用范围**：Control API 的本地账号认证与服务端会话
 
 ## 1. 目的
@@ -59,10 +59,8 @@ UserAccount
 ├── NormalizedUsername
 ├── DisplayName
 ├── Status: ACTIVE | DISABLED
-├── CredentialVersion
 ├── CreatedAt
-├── UpdatedAt
-└── Version
+└── UpdatedAt
 ```
 
 V1 推荐使用平台全局唯一的用户名。Identity 内部始终以稳定 `UserID` 建立关联，
@@ -74,16 +72,13 @@ V1 推荐使用平台全局唯一的用户名。Identity 内部始终以稳定 `
 PasswordCredential
 ├── UserID
 ├── EncodedHash
-├── Algorithm
-├── Parameters
 ├── MustChangeAtNextLogin
-├── ChangedAt
-└── Version
+└── ChangedAt
 ```
 
-数据库只能保存带独立 Salt、算法标识和参数的密码哈希。禁止保存明文、可逆密文、
-密码提示或快速 SHA-256/MD5 摘要。V1 推荐 Argon2id，并在每次成功登录时判断是否
-需要升级参数。
+数据库只保存 Argon2id PHC 字符串；PHC 字符串已经包含独立 Salt、算法版本和参数。
+禁止保存明文、可逆密文、密码提示或快速 SHA-256/MD5 摘要。参数升级检测在后续
+密码维护切片实现。
 
 ### 4.3 Session Aggregate
 
@@ -92,13 +87,10 @@ Session
 ├── ID
 ├── UserID
 ├── TokenHash
+├── Restricted
 ├── CreatedAt
-├── LastSeenAt
-├── IdleExpiresAt
-├── AbsoluteExpiresAt
-├── RevokedAt
-├── CreatedIP
-└── UserAgent
+├── ExpiresAt
+└── RevokedAt
 ```
 
 浏览器只持有高强度随机 Session Token，数据库只保存 Token Hash。Session 中禁止
@@ -116,35 +108,27 @@ Session
 - 服务端权限判断必须实时读取或可靠缓存拥有方状态，不能信任前端角色标志。
 - 密码和 Session Token 禁止进入日志、Trace、事件、错误消息或 NATS Payload。
 
-由于 V1 只有密码这一种认证因素，密码策略应以长度、弱密码 Blocklist、限速和
-密码管理器兼容性为主，不使用强制字符组合或周期性修改。具体数值在实现前依据
-[NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/)
-与 [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
-校准并记录测试结果。
+V1 密码策略只做 12–128 字符长度校验，不使用强制字符组合或周期性修改；登录由
+HTTP Adapter 限速。弱密码 Blocklist 和泄露密码检查属于后续安全加固切片。
 
 ## 6. Application Use Case
 
 ### 6.1 Command
 
-- `RegisterInitialOperatorAccount`，只供 Initial Operator Bootstrap 使用。
-- `RegisterManagedUserAccount`，只供已授权的 Admin 创建平台用户。
-- `CreateUserAccount`，供 Tenant Provisioning 和 Invitation Acceptance 使用。
+- `CreateManagedAccount`，供 Initial Operator Bootstrap 和已授权 Admin 使用。
 - `LoginWithPassword`
 - `LogoutSession`
-- `LogoutAllOtherSessions`
 - `ChangePassword`
-- `DisableUserAccount`
 
-账号创建不公开暴露为匿名注册。它只能由 Initial Operator Bootstrap、已授权的
-Admin 直接创建用户、Tenant Provisioning 或有效 Invitation Acceptance 流程通过
-Application Port 调用。前两种流程建立的密码凭证必须标记为首次登录强制轮换。
+V1 不公开匿名注册。账号只能由 Initial Operator Bootstrap 或已授权 Admin 通过
+Application Port 创建，凭证必须标记为首次登录强制轮换。禁用账号、密码恢复、
+Invitation 激活和会话管理 UI 属于后续纵向切片。
 
 ### 6.2 Query
 
 - `AuthenticateSession`
 - `GetCurrentUser`
-- `ListMySessions`
-- `ResolveUserByUsername`，仅向明确的内部用例提供最小结果
+- `GetAccount`、`ListAccounts`，只通过 Admin 使用方 Port 暴露
 
 ## 7. HTTP 调用链与接口
 
@@ -165,15 +149,13 @@ Authenticated Request
   -> 目标业务 Use Case
 ```
 
-建议的首批接口：
+V1 首批接口按纵向切片实现：
 
 ```text
 POST   /v1/auth/login
 POST   /v1/auth/logout
 GET    /v1/me
 POST   /v1/me/change-password
-GET    /v1/me/sessions
-DELETE /v1/me/sessions/{session_id}
 ```
 
 Control Web 使用 `HttpOnly`、`Secure`、`SameSite` Cookie 承载不透明 Session
@@ -181,23 +163,25 @@ Token。CSRF、Origin 校验、空闲过期与绝对过期的精确参数属于�
 
 ## 8. Application Port
 
-`identity/application` 使用方侧 Port 至少包括：
+V1 只声明实际使用的 Port：
 
 ```text
-UserAccountRepository
-PasswordCredentialRepository
-SessionRepository
-PasswordHasher
-SessionTokenGenerator
-LoginRateLimiter
-Clock
-AuditSink
+AccountReader.FindLoginIdentity
+PasswordVerifier.Verify
+SessionWriter.CreateSession
+SessionIdentityReader.FindSessionIdentity
+PasswordChangeStore.ChangePassword
+SessionRevoker.RevokeSession
+AccountStore.CreateAccount/GetAccount/ListAccounts
 ```
 
-`admin` 与 `tenant` 若需要创建或解析账号，必须在各自的使用方 Application 定义
-最小 Port。Admin 首次引导使用 `RegisterInitialOperatorAccount`，直接创建用户使用
-`RegisterManagedUserAccount`；Identity 提供实现并由 bootstrap 注入。调用方禁止
-访问 Identity Repository，也禁止自行计算密码哈希。
+Session Token 使用标准库 `crypto/rand` 生成。登录限速位于 Inbound HTTP Adapter，
+当前是单进程固定窗口；多副本共享限额仍是部署前演进项。Clock、Audit 和其他
+Repository 等到真实用例出现后再建立，避免预先形成只有一个实现的浅接口。
+
+`admin` 与 `tenant` 只通过使用方 Application Port 调用 Identity。Admin 首次引导
+和直接创建用户都使用 `AccountManagement`；初始引导把它绑定到同一 PostgreSQL
+事务，调用方不访问 Identity 表，也不自行计算密码哈希。
 
 ## 9. 持久化所有权
 
@@ -235,8 +219,8 @@ services/control-api/internal/identity/
 
 ## 11. 待确认细节
 
-- Username 的字符集、长度、改名策略和保留名称。
-- 初始 Owner 与受邀新用户设置密码的具体激活流程。
-- Session 空闲与绝对过期时间、续期和并发会话上限。
+- Username 改名策略和保留名称。
+- Invitation 新用户的激活流程。
+- Session 续期和并发会话上限。
 - 密码恢复渠道、MFA 与高风险 Admin Command 的二次认证。
 - Login Rate Limiter 的共享存储和部署拓扑。

@@ -22,10 +22,14 @@
   Tenant 开通与共享 Control Web 边界。
 - [Identity 子领域](control-api/identity.md)：本地用户账号、密码凭证、Session 与
   认证上下文。
-- [Tenant 子领域](control-api/tenant.md)：Tenant、Membership、Invitation、初始
-  Owner 与租户授权。
+- [Tenant 子领域](control-api/tenant.md)：Tenant、Membership、初始 Owner 与 V1
+  租户授权；Invitation 留待后续纵向切片。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
+- [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与
+  Helm 部署资产的统一目录和所有权。
+- [可观测性与 Telemetry](operations/observability.md)：OpenTelemetry、Metrics、
+  Trace、日志、Dashboard、告警和基础设施观测的生产基线。
 
 ## 后续文档结构
 

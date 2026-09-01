@@ -5,21 +5,21 @@ Workload、服务本地 `internal/`、领域模块和不可变运行快照组织
 
 ## 当前状态
 
-目前只完成：
+Control API 的首个可运行版本已经覆盖三个核心子领域：
 
-- 下一代架构约束文档。
-- Control API 可编译目录骨架。
-- Tenant、Agent、Runtime Profile、Deployment、Channel Binding 模块边界。
-- 单一 Bootstrap、独立二进制和独立镜像入口。
+- Identity：登录、Session 校验、`/me`、登出和强制首次修改密码。
+- Admin：Platform Operator 授权、全局用户管理、Tenant 开通和首个 Operator 引导。
+- Tenant：Tenant 查询、Owner 添加或移除已有平台用户、Membership 授权。
+- PostgreSQL `0001_baseline.sql`、Gin 进程组装、OpenAPI 和真实 PostgreSQL 集成测试。
 
-当前还没有可用的 HTTP API、数据库 Schema、NATS 协议或 Agent 执行能力，不能
-把目录、接口或容器存在视为生产功能完成。
+Agent、Runtime Profile、Deployment 和 Channel Binding 当前只保留边界骨架，继续按
+纵向切片实现；Gateway、Worker 和 Local IM Provider 仍属于后续 Workload。
 
 ## 生产 Workload
 
 | Workload | 职责 | 状态 |
 | --- | --- | --- |
-| `control-api` | Tenant、AgentSpec、Profile、Deployment、Channel Binding | 目录骨架 |
+| `control-api` | Identity、Admin、Tenant 及后续控制面领域 | Identity/Admin/Tenant V1 |
 | `channel-gateway` | IM Webhook、Run Admission、运行投影和回复投递 | 待设计 |
 | `agent-worker` | 消费 Run、执行 Agent、完成 Run、产生 ReplyIntent | 待设计 |
 | `local-im-provider` | 与外部 IM Adapter 统一的本地调试服务 | 待设计 |
@@ -41,8 +41,10 @@ Workload、服务本地 `internal/`、领域模块和不可变运行快照组织
 ## 当前验证命令
 
 ```bash
-go test ./...
-go build ./services/control-api/cmd/control-api
+just test
+just vet
+just vuln
+just build
 ```
 
 Control API 的详细目录说明见

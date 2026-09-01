@@ -30,7 +30,7 @@ func run() error {
 		return err
 	}
 
-	app, err := bootstrap.New(cfg)
+	app, err := bootstrap.New(ctx, cfg)
 	if err != nil {
 		return err
 	}

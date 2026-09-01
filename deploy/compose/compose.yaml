@@ -1,0 +1,43 @@
+name: trpc-agent-control
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CONTROL_POSTGRES_DB:-control}
+      POSTGRES_USER: ${CONTROL_POSTGRES_USER:-control}
+      POSTGRES_PASSWORD: ${CONTROL_POSTGRES_PASSWORD:-control-local-only}
+    volumes:
+      - control-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  control-api:
+    image: ${CONTROL_API_IMAGE:-trpc-agent-service/control-api:local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CONTROL_HTTP_ADDRESS: :8080
+      CONTROL_DATABASE_URL: ${CONTROL_DATABASE_URL:-postgres://${CONTROL_POSTGRES_USER:-control}:${CONTROL_POSTGRES_PASSWORD:-control-local-only}@postgres:5432/${CONTROL_POSTGRES_DB:-control}?sslmode=disable}
+      CONTROL_SESSION_LIFETIME: ${CONTROL_SESSION_LIFETIME:-24h}
+      CONTROL_SESSION_COOKIE_NAME: ${CONTROL_SESSION_COOKIE_NAME:-control_session}
+      CONTROL_SESSION_COOKIE_SECURE: ${CONTROL_SESSION_COOKIE_SECURE:-true}
+      CONTROL_BOOTSTRAP_MODE: ${CONTROL_BOOTSTRAP_MODE:-auto}
+      CONTROL_BOOTSTRAP_USERNAME: ${CONTROL_BOOTSTRAP_USERNAME:-platform-admin}
+      CONTROL_BOOTSTRAP_DISPLAY_NAME: ${CONTROL_BOOTSTRAP_DISPLAY_NAME:-Platform Operator}
+      CONTROL_BOOTSTRAP_PASSWORD: ${CONTROL_BOOTSTRAP_PASSWORD:-admin1234567}
+    expose:
+      - "8080"
+    stop_grace_period: 15s
+
+volumes:
+  control-postgres-data:

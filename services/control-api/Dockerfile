@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.21 AS build
+FROM golang:1.25.14 AS build
 
 WORKDIR /src
-COPY go.mod ./
-RUN go mod download
+COPY go.mod go.sum ./
+ARG GOPROXY=https://proxy.golang.org,direct
+RUN GOPROXY="${GOPROXY}" go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
