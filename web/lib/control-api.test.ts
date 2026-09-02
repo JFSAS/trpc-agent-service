@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { controlApi } from "./control-api";
+import { ControlApiError, controlApi } from "./control-api";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -107,5 +107,146 @@ describe("Control API browser client", () => {
       ["/api/control/v1/tenants/t/members", "POST"],
       ["/api/control/v1/tenants/t/members/u", "DELETE"],
     ]);
+  });
+
+  it("maps all Agent V1 operations through the same-origin proxy", async () => {
+    const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+    const agent = {
+      id: "agent b",
+      tenant_id: "tenant/a",
+      name: "Research agent",
+      description: "Searches primary sources",
+      latest_version_number: null,
+      created_by: "user-1",
+      created_at: "2026-09-03T00:00:00Z",
+      updated_at: "2026-09-03T00:00:00Z",
+    };
+    const draft = {
+      agent_id: agent.id,
+      tenant_id: agent.tenant_id,
+      revision: 1,
+      spec: {},
+      updated_by: "user-1",
+      updated_at: "2026-09-03T00:00:00Z",
+    };
+    const validation = {
+      valid: true,
+      schema_version: "v1",
+      draft_revision: 1,
+      diagnostics: [],
+    };
+    const version = {
+      id: "version-1",
+      tenant_id: agent.tenant_id,
+      agent_id: agent.id,
+      version_number: 7,
+      source_draft_revision: 1,
+      schema_version: "v1",
+      spec: {
+        schema_version: "v1",
+        root: "answer",
+        requirements: { models: {}, tools: {}, knowledge: {} },
+        nodes: {},
+      },
+      spec_digest: `sha256:${"a".repeat(64)}`,
+      published_by: "user-1",
+      published_at: "2026-09-03T00:00:00Z",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ agent, draft }, 201))
+      .mockResolvedValueOnce(jsonResponse({ agents: [agent], offset: 20, limit: 10, total: 1 }))
+      .mockResolvedValueOnce(jsonResponse(agent))
+      .mockResolvedValueOnce(jsonResponse({ ...agent, name: "Updated agent" }))
+      .mockResolvedValueOnce(jsonResponse(draft))
+      .mockResolvedValueOnce(jsonResponse({ ...draft, revision: 2 }))
+      .mockResolvedValueOnce(jsonResponse(validation))
+      .mockResolvedValueOnce(jsonResponse({ version, validation }, 201))
+      .mockResolvedValueOnce(jsonResponse({ versions: [version], offset: 0, limit: 25, total: 1 }))
+      .mockResolvedValueOnce(jsonResponse(version));
+
+    const tenantId = "tenant/a";
+    const agentId = "agent b";
+    await controlApi.createAgent(tenantId, {
+      name: "Research agent",
+      description: "Searches primary sources",
+    });
+    await controlApi.listAgents(tenantId, { offset: 20, limit: 10 });
+    await controlApi.getAgent(tenantId, agentId);
+    await controlApi.updateAgent(tenantId, agentId, { name: "Updated agent" });
+    await controlApi.getAgentDraft(tenantId, agentId);
+    await controlApi.saveAgentDraft(tenantId, agentId, { expected_revision: 1, spec: {} });
+    await controlApi.validateAgentDraft(tenantId, agentId, { expected_revision: 2 });
+    await controlApi.publishAgentVersion(tenantId, agentId, { expected_revision: 2 });
+    await controlApi.listAgentVersions(tenantId, agentId, { offset: 0, limit: 25 });
+    await controlApi.getAgentVersion(tenantId, agentId, 7);
+
+    const agentBase = "/api/control/v1/tenants/tenant%2Fa/agents";
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
+      [agentBase, "POST"],
+      [`${agentBase}?offset=20&limit=10`, "GET"],
+      [`${agentBase}/agent%20b`, "GET"],
+      [`${agentBase}/agent%20b`, "PATCH"],
+      [`${agentBase}/agent%20b/draft`, "GET"],
+      [`${agentBase}/agent%20b/draft`, "PUT"],
+      [`${agentBase}/agent%20b/draft/validate`, "POST"],
+      [`${agentBase}/agent%20b/versions`, "POST"],
+      [`${agentBase}/agent%20b/versions?offset=0&limit=25`, "GET"],
+      [`${agentBase}/agent%20b/versions/7`, "GET"],
+    ]);
+
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual({
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Research agent",
+        description: "Searches primary sources",
+      }),
+    });
+    expect(fetchMock.mock.calls[3]?.[1]?.body).toBe(JSON.stringify({ name: "Updated agent" }));
+    expect(fetchMock.mock.calls[5]?.[1]?.body).toBe(JSON.stringify({
+      expected_revision: 1,
+      spec: {},
+    }));
+    expect(fetchMock.mock.calls[6]?.[1]?.body).toBe(JSON.stringify({ expected_revision: 2 }));
+    expect(fetchMock.mock.calls[7]?.[1]?.body).toBe(JSON.stringify({ expected_revision: 2 }));
+    expect(fetchMock.mock.calls.every(([, init]) => init?.credentials === "include")).toBe(true);
+  });
+
+  it("preserves the backend Validation Report on a 422 AgentSpec error", async () => {
+    const validation = {
+      valid: false,
+      schema_version: "v1",
+      draft_revision: 3,
+      diagnostics: [{
+        code: "AGENT_SPEC_ROOT_NOT_FOUND",
+        severity: "error" as const,
+        pointer: "/root",
+        node_id: null,
+        message: "root must reference an existing node",
+      }],
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        error: { code: "AGENT_SPEC_INVALID", message: "AgentSpec validation failed" },
+        validation,
+      }), { status: 422, headers: { "content-type": "application/json" } }),
+    );
+
+    const promise = controlApi.saveAgentDraft("tenant-1", "agent-1", {
+      expected_revision: 3,
+      spec: { schema_version: "v1", root: "missing" },
+    });
+
+    await expect(promise).rejects.toBeInstanceOf(ControlApiError);
+    await expect(promise).rejects.toMatchObject({
+      status: 422,
+      code: "AGENT_SPEC_INVALID",
+      message: "AgentSpec validation failed",
+      validation,
+    });
   });
 });

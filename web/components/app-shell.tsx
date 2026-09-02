@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bot,
   Building2,
   ChevronDown,
   Hexagon,
@@ -32,6 +33,7 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const isOperator = capabilities.length > 0;
+  const tenantPath = pathname.match(/^\/tenants\/([^/]+)/)?.[1];
 
   async function logout() {
     await controlApi.logout().catch(() => undefined);
@@ -62,6 +64,27 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
             <span>我的租户</span>
           </Link>
         </nav>
+        {tenantPath && (
+          <>
+            <div className="sidebar-section-label">租户工作区</div>
+            <nav className="sidebar-nav" aria-label="租户工作区">
+              <Link
+                className={pathname === `/tenants/${tenantPath}` ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}`}
+              >
+                <Users size={18} />
+                <span>成员</span>
+              </Link>
+              <Link
+                className={pathname.startsWith(`/tenants/${tenantPath}/agents`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/agents`}
+              >
+                <Bot size={18} />
+                <span>Agent 画布</span>
+              </Link>
+            </nav>
+          </>
+        )}
         <div className="sidebar-footer">
           <div className="profile-card">
             <span className="avatar">{(user.display_name || user.username).slice(0, 2).toUpperCase()}</span>
@@ -91,6 +114,11 @@ function pageLabel(pathname: string) {
   if (pathname.startsWith("/admin/users")) return "平台用户";
   if (pathname.startsWith("/admin/operators")) return "平台管理员";
   if (pathname.startsWith("/admin/tenants")) return "租户";
+  if (/^\/tenants\/[^/]+\/agents\/[^/]+\/versions\/[^/]+/.test(pathname)) return "不可变版本";
+  if (/^\/tenants\/[^/]+\/agents\/new/.test(pathname)) return "创建 Agent";
+  if (/^\/tenants\/[^/]+\/agents\/[^/]+/.test(pathname)) return "Agent 工作台";
+  if (/^\/tenants\/[^/]+\/agents/.test(pathname)) return "Agents";
+  if (/^\/tenants\/[^/]+/.test(pathname)) return "租户成员";
   if (pathname.startsWith("/tenants")) return "我的租户";
   return "总览";
 }
