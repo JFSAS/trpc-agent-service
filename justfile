@@ -4,7 +4,7 @@ default:
     @just --list
 
 fmt:
-    gofmt -w $(find services tests -type f -name '*.go')
+    gofmt -w $(find services tests api -type f -name '*.go')
 
 test:
     go test ./...
@@ -14,13 +14,13 @@ test-integration:
     go test -count=1 ./services/control-api/integration ./services/control-api/internal/bootstrap
 
 openapi:
-    go run github.com/getkin/kin-openapi/cmd/validate@v0.133.0 api/openapi/control/v1/openapi.yaml
+    go test ./api/openapi/control/v1 ./services/control-api/internal/agent/domain
 
 test-race:
-    go test -race ./services/control-api/internal/identity/... ./services/control-api/internal/tenant/... ./services/control-api/internal/admin/... ./services/control-api/internal/bootstrap
+    go test -race ./services/control-api/internal/identity/... ./services/control-api/internal/tenant/... ./services/control-api/internal/admin/... ./services/control-api/internal/agent/... ./services/control-api/internal/bootstrap
 
 vet:
-    go vet ./services/control-api/...
+    go vet ./services/control-api/... ./api/...
 
 vuln:
     go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./services/control-api/...

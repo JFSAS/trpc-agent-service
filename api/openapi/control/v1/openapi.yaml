@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Control API
   version: 1.0.0
-  description: V1 HTTP contract for Identity, platform administration, and Tenant membership.
+  description: V1 HTTP contract for Identity, platform administration, Tenant membership, and Agent authoring.
 servers:
   - url: /
 tags:
@@ -10,6 +10,7 @@ tags:
   - name: Identity
   - name: Admin
   - name: Tenant
+  - name: Agent
 paths:
   /healthz:
     get:
@@ -193,6 +194,227 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/agents:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: createAgent
+      summary: Create an Agent and its initial Draft atomically
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAgentRequest'}
+      responses:
+        '201':
+          description: Agent and initial Draft created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateAgentResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    get:
+      operationId: listAgents
+      summary: List Agents in the Tenant
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of Agents.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/agents/{agent_id}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/AgentID'
+    get:
+      operationId: getAgent
+      summary: Get an Agent
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Agent metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Agent'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    patch:
+      operationId: updateAgent
+      summary: Update mutable Agent metadata
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateAgentRequest'}
+      responses:
+        '200':
+          description: Updated Agent metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Agent'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/agents/{agent_id}/draft:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/AgentID'
+    get:
+      operationId: getAgentDraft
+      summary: Get the current mutable Agent Draft
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Current Agent Draft.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentDraft'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      operationId: saveAgentDraft
+      summary: Compare-and-swap the current Agent Draft
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SaveAgentDraftRequest'}
+      responses:
+        '200':
+          description: Draft saved at the next revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentDraft'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/AgentSpecInvalid'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/agents/{agent_id}/draft/validate:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/AgentID'
+    post:
+      operationId: validateAgentDraft
+      summary: Validate one exact Draft revision for publication
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DraftRevisionRequest'}
+      responses:
+        '200':
+          description: Validation completed; valid may be false.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ValidationReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/agents/{agent_id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/AgentID'
+    post:
+      operationId: publishAgentVersion
+      summary: Publish an immutable version from one exact Draft revision
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DraftRevisionRequest'}
+      responses:
+        '200':
+          description: The same Draft revision was already published; its Version is returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublishAgentVersionResponse'}
+        '201':
+          description: A new immutable Agent Version was published.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublishAgentVersionResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/AgentSpecInvalid'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    get:
+      operationId: listAgentVersions
+      summary: List immutable versions of an Agent
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of immutable Agent Versions.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentVersionPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/agents/{agent_id}/versions/{version_number}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/AgentID'
+      - $ref: '#/components/parameters/VersionNumber'
+    get:
+      operationId: getAgentVersion
+      summary: Get one immutable Agent Version including Canonical AgentSpec
+      tags: [Agent]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Immutable Agent Version.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentVersion'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /v1/admin/capabilities:
     get:
       operationId: getAdminCapabilities
@@ -364,6 +586,16 @@ components:
       in: path
       required: true
       schema: {type: string, minLength: 1}
+    AgentID:
+      name: agent_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    VersionNumber:
+      name: version_number
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
     UserID:
       name: user_id
       in: path
@@ -403,12 +635,155 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
+    AgentSpecInvalid:
+      description: The AgentSpec cannot be stored safely or published.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AgentValidationErrorResponse'}
     InternalError:
       description: The request could not be completed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
   schemas:
+    CreateAgentRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+    UpdateAgentRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+    Agent:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, name, description, latest_version_number, created_by, created_at, updated_at]
+      properties:
+        id: {type: string}
+        tenant_id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        latest_version_number: {type: integer, minimum: 1, nullable: true}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AgentDraft:
+      type: object
+      additionalProperties: false
+      required: [agent_id, tenant_id, revision, spec, updated_by, updated_at]
+      properties:
+        agent_id: {type: string}
+        tenant_id: {type: string}
+        revision: {type: integer, minimum: 1}
+        spec:
+          type: object
+        updated_by: {type: string}
+        updated_at: {type: string, format: date-time}
+    AgentVersion:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, agent_id, version_number, source_draft_revision, schema_version, spec, spec_digest, published_by, published_at]
+      properties:
+        id: {type: string}
+        tenant_id: {type: string}
+        agent_id: {type: string}
+        version_number: {type: integer, minimum: 1}
+        source_draft_revision: {type: integer, minimum: 1}
+        schema_version: {type: string, enum: [v1]}
+        spec:
+          $ref: '../../../schemas/agentspec/v1/agent-spec.schema.json'
+        spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        published_by: {type: string}
+        published_at: {type: string, format: date-time}
+    CreateAgentResponse:
+      type: object
+      additionalProperties: false
+      required: [agent, draft]
+      properties:
+        agent: {$ref: '#/components/schemas/Agent'}
+        draft: {$ref: '#/components/schemas/AgentDraft'}
+    SaveAgentDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, spec]
+      properties:
+        expected_revision: {type: integer, minimum: 1}
+        spec: {type: object}
+    DraftRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision: {type: integer, minimum: 1}
+    ValidationDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, severity, pointer, node_id, message]
+      properties:
+        code: {type: string}
+        severity: {type: string, enum: [error, warning]}
+        pointer: {type: string}
+        node_id: {type: string, nullable: true}
+        message: {type: string}
+    ValidationReport:
+      type: object
+      additionalProperties: false
+      required: [valid, schema_version, draft_revision, diagnostics]
+      properties:
+        valid: {type: boolean}
+        schema_version: {type: string}
+        draft_revision: {type: integer, minimum: 1}
+        diagnostics:
+          type: array
+          items: {$ref: '#/components/schemas/ValidationDiagnostic'}
+    PublishAgentVersionResponse:
+      type: object
+      additionalProperties: false
+      required: [version, validation]
+      properties:
+        version: {$ref: '#/components/schemas/AgentVersion'}
+        validation: {$ref: '#/components/schemas/ValidationReport'}
+    AgentPage:
+      type: object
+      additionalProperties: false
+      required: [agents, offset, limit, total]
+      properties:
+        agents:
+          type: array
+          items: {$ref: '#/components/schemas/Agent'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    AgentVersionPage:
+      type: object
+      additionalProperties: false
+      required: [versions, offset, limit, total]
+      properties:
+        versions:
+          type: array
+          items: {$ref: '#/components/schemas/AgentVersion'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    AgentValidationErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error, validation]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [AGENT_SPEC_INVALID]}
+            message: {type: string}
+        validation: {$ref: '#/components/schemas/ValidationReport'}
     LoginRequest:
       type: object
       additionalProperties: false

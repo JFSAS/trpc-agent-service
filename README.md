@@ -5,21 +5,22 @@ Workload、服务本地 `internal/`、领域模块和不可变运行快照组织
 
 ## 当前状态
 
-Control API 的首个可运行版本已经覆盖三个核心子领域：
+Control API 的首个可运行版本已经覆盖四个核心子领域：
 
 - Identity：登录、Session 校验、`/me`、登出和强制首次修改密码。
 - Admin：Platform Operator 授权、全局用户管理、Tenant 开通和首个 Operator 引导。
 - Tenant：Tenant 查询、Owner 添加或移除已有平台用户、Membership 授权。
+- Agent：Agent 管理、单一 Draft、AgentSpec 校验和不可变 Version 发布。
 - PostgreSQL `0001_baseline.sql`、Gin 进程组装、OpenAPI 和真实 PostgreSQL 集成测试。
 
-Agent、Runtime Profile、Deployment 和 Channel Binding 当前只保留边界骨架，继续按
-纵向切片实现；Gateway、Worker 和 Local IM Provider 仍属于后续 Workload。
+Runtime Profile、Deployment 和 Channel Binding 当前只保留边界骨架，继续按纵向
+切片实现；Gateway、Worker 和 Local IM Provider 仍属于后续 Workload。
 
 ## 生产 Workload
 
 | Workload | 职责 | 状态 |
 | --- | --- | --- |
-| `control-api` | Identity、Admin、Tenant 及后续控制面领域 | Identity/Admin/Tenant V1 |
+| `control-api` | Identity、Admin、Tenant、Agent 及后续控制面领域 | Identity/Admin/Tenant/Agent V1 |
 | `channel-gateway` | IM Webhook、Run Admission、运行投影和回复投递 | 待设计 |
 | `agent-worker` | 消费 Run、执行 Agent、完成 Run、产生 ReplyIntent | 待设计 |
 | `local-im-provider` | 与外部 IM Adapter 统一的本地调试服务 | 待设计 |

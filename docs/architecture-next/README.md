@@ -24,6 +24,10 @@
   认证上下文。
 - [Tenant 子领域](control-api/tenant.md)：Tenant、Membership、初始 Owner 与 V1
   租户授权；Invitation 留待后续纵向切片。
+- [Agent 子领域](control-api/agent.md)：Agent、当前 Draft、AgentSpec 校验与不可变
+  AgentVersion 发布；运行配置绑定与执行不属于该切片。
+- [AgentSpec V1](control-api/agent-spec.md)：节点协议、三层校验、稳定诊断、
+  Canonicalization、Digest 与 Schema 演进规则。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
 - [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与

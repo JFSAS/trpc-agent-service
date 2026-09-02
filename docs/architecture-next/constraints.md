@@ -149,9 +149,10 @@ Platform Operator 授权以及平台级管理命令；`tenant` 拥有 Tenant、M
 └── wiring.go
 ```
 
-Agent HTTP Handler、Agent PostgreSQL Repository 和 Agent 的 tRPC-Agent-Go
-兼容性 Adapter 必须留在 `agent/` 内。禁止再次建立包含所有业务 Handler 或所有
-业务 Repository 的全局 `adapter/` 目录。
+Agent HTTP Handler 和 Agent PostgreSQL Repository 必须留在 `agent/` 内。出站
+Adapter 只有在存在明确的 Application Port 时才创建；Agent V1 不构造运行中的
+tRPC-Agent-Go 对象，也不保留空的 `adapter/outbound/trpcagent/`。禁止再次建立包含
+所有业务 Handler 或所有业务 Repository 的全局 `adapter/` 目录。
 
 ### ARC-203：基础设施连接由服务共享
 
@@ -271,6 +272,23 @@ Password Hasher，不把明文写入 HTTP 响应或数据库字段。
 该命令不得自动授予 OperatorGrant 或 Tenant Membership。新增账号首次登录必须先
 轮换临时密码；Operator 授权和 Tenant 准入分别通过各自拥有方 Use Case 完成。
 
+### ARC-211：Agent V1 终止于不可变 AgentVersion
+
+`agent` 拥有 Tenant 范围内稳定的 Agent、每个 Agent 当前唯一的 AgentDraft、
+AgentSpec 领域校验和不可变 AgentVersion 发布。发布结果是一个 AgentVersion，
+其中包含一份经过校验、规范化并计算 Digest 的 Canonical AgentSpec；AgentSpec 与
+AgentVersion 不是两个彼此独立的发布资源。
+
+V1 使用 Expected Draft Revision 实现乐观并发，并以
+`(TenantID, AgentID, SourceDraftRevision)` 保证发布幂等。Draft 发布后仍可继续编辑，
+已经发布的 Version 禁止更新。V1 不引入并行 Draft、审批流或 Draft/Published/Deployed
+混合状态机。
+
+AgentSpec 只能表达逻辑行为与 Model/Tool Slot 需求，不绑定具体 ProfileRevision、
+Environment 或 Secret。Runtime Profile 绑定和 RuntimeManifest 生成属于
+Deployment 发布阶段；实际 tRPC-Agent-Go 对象只能由 Worker 根据固定
+RuntimeManifest 组装。详细设计见 [`control-api/agent.md`](control-api/agent.md)。
+
 ## 4. Runtime Profile、Deployment 与 Channel Binding
 
 ### ARC-301：三个模块必须分开
@@ -372,8 +390,7 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 
 以下内容尚未因本文而自动确定：
 
-- 一个 Agent Application 是否允许多个并行 Draft。
-- 发布是否始终审批，还是由 Tenant Policy 决定。
+- V1 之后是否引入并行 Draft、发布审批或 Tenant Policy。
 - Runtime Profile 的具体种类、字段和修订策略。
 - Channel Gateway 与 Worker 的数据库表所有权和完成 Run 的精确事务边界。
 - Platform Operator 全部丢失后的 Break-glass 恢复、密码恢复、MFA、Session

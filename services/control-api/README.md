@@ -1,8 +1,8 @@
 # Control API
 
 Control API is the management backend for the Agent platform. It owns global
-identity, platform administration, Tenant membership, and the later Agent,
-Runtime Profile, Deployment, and Channel Binding management capabilities. It is
+identity, platform administration, Tenant membership, and Agent authoring. Runtime
+Profile, Deployment, and Channel Binding remain later management capabilities. It is
 not part of the message execution hot path.
 
 ## Implemented V1
@@ -36,6 +36,18 @@ not part of the message execution hot path.
   existing active platform users; invitations and ownership transfer are later
   slices.
 
+### Agent authoring and publication
+
+- `POST|GET /v1/tenants/{tenant_id}/agents`
+- `GET|PATCH /v1/tenants/{tenant_id}/agents/{agent_id}`
+- `GET|PUT /v1/tenants/{tenant_id}/agents/{agent_id}/draft`
+- `POST /v1/tenants/{tenant_id}/agents/{agent_id}/draft/validate`
+- `POST|GET /v1/tenants/{tenant_id}/agents/{agent_id}/versions`
+- `GET /v1/tenants/{tenant_id}/agents/{agent_id}/versions/{version_number}`
+- Tenant-scoped membership authorization, optimistic Draft revisions, deterministic
+  AgentSpec validation/canonicalization, idempotent publication, and immutable
+  AgentVersion snapshots.
+
 The implementation contract is
 [`api/openapi/control/v1/openapi.yaml`](../../api/openapi/control/v1/openapi.yaml).
 
@@ -68,7 +80,7 @@ services/control-api/
 │   ├── identity/           # account, credential, session, authentication
 │   ├── admin/              # Platform Operator and cross-domain admin commands
 │   ├── tenant/             # Tenant and Membership rules
-│   ├── agent/              # later vertical slice
+│   ├── agent/              # Agent, Draft, validation, immutable Version
 │   ├── runtimeprofile/     # later vertical slice
 │   ├── deployment/         # later vertical slice
 │   ├── channelbinding/     # later vertical slice

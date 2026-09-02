@@ -100,6 +100,15 @@ func New(ctx context.Context, config Config) (*App, error) {
 		pool.Close()
 		return nil, fmt.Errorf("assemble admin: %w", err)
 	}
+	agentModule, err := agent.NewModule(agent.Dependencies{
+		DB: pool, Routes: router,
+		Authenticate: identityModule.AuthenticationMiddleware(),
+		TenantAccess: activeTenantMemberLookup{tenants: tenantModule.Service},
+	})
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("assemble agent: %w", err)
+	}
 
 	return &App{
 		database:        pool,
@@ -108,7 +117,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 		identity:        identityModule,
 		admin:           adminModule,
 		tenant:          tenantModule,
-		agent:           agent.NewModule(agent.Dependencies{}),
+		agent:           agentModule,
 		runtimeProfile:  runtimeprofile.NewModule(runtimeprofile.Dependencies{}),
 		deployment:      deployment.NewModule(deployment.Dependencies{}),
 		channelBinding:  channelbinding.NewModule(channelbinding.Dependencies{}),

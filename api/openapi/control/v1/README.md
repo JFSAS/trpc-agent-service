@@ -7,5 +7,7 @@ Control API V1 routes:
 - Platform Operator capabilities, operator grants, global users, and Tenant
   provisioning.
 - Current-user Tenant listing and Tenant member management.
+- Tenant-scoped Agent creation, Draft editing/validation, and immutable Version
+  publication/query.
 
 Generated clients and server bindings belong under `/gen`, not here.

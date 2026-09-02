@@ -79,3 +79,77 @@ CREATE TABLE tenant_memberships (
 
 CREATE INDEX tenant_memberships_user_idx
     ON tenant_memberships (user_id, tenant_id);
+
+CREATE TABLE agents (
+    tenant_id            text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    id                   text NOT NULL,
+    name                 text NOT NULL,
+    description          text NOT NULL DEFAULT '',
+    latest_version_number bigint,
+    created_by           text NOT NULL REFERENCES user_accounts(id),
+    created_at           timestamptz NOT NULL,
+    updated_at           timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, id),
+    CONSTRAINT agents_name_not_blank CHECK (btrim(name) <> ''),
+    CONSTRAINT agents_latest_version_positive
+        CHECK (latest_version_number IS NULL OR latest_version_number > 0)
+);
+
+CREATE INDEX agents_tenant_updated_idx
+    ON agents (tenant_id, updated_at DESC, id);
+
+CREATE TABLE agent_drafts (
+    tenant_id    text NOT NULL,
+    agent_id     text NOT NULL,
+    spec_revision bigint NOT NULL,
+    spec_jsonb   jsonb NOT NULL,
+    updated_by   text NOT NULL REFERENCES user_accounts(id),
+    updated_at   timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, agent_id),
+    CONSTRAINT agent_drafts_agent_fk
+        FOREIGN KEY (tenant_id, agent_id)
+        REFERENCES agents(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT agent_drafts_revision_positive CHECK (spec_revision > 0),
+    CONSTRAINT agent_drafts_spec_object CHECK (jsonb_typeof(spec_jsonb) = 'object')
+);
+
+CREATE TABLE agent_versions (
+    tenant_id             text NOT NULL,
+    id                    text NOT NULL,
+    agent_id              text NOT NULL,
+    version_number        bigint NOT NULL,
+    source_draft_revision bigint NOT NULL,
+    schema_version        text NOT NULL,
+    spec_jsonb            jsonb NOT NULL,
+    spec_digest           text NOT NULL,
+    published_by          text NOT NULL REFERENCES user_accounts(id),
+    published_at          timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, id),
+    CONSTRAINT agent_versions_agent_fk
+        FOREIGN KEY (tenant_id, agent_id)
+        REFERENCES agents(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT agent_versions_number_positive CHECK (version_number > 0),
+    CONSTRAINT agent_versions_source_revision_positive
+        CHECK (source_draft_revision > 0),
+    CONSTRAINT agent_versions_spec_object CHECK (jsonb_typeof(spec_jsonb) = 'object'),
+    CONSTRAINT agent_versions_digest_format
+        CHECK (spec_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT agent_versions_tenant_agent_number_unique
+        UNIQUE (tenant_id, agent_id, version_number),
+    CONSTRAINT agent_versions_tenant_agent_source_revision_unique
+        UNIQUE (tenant_id, agent_id, source_draft_revision)
+);
+
+CREATE INDEX agent_versions_tenant_agent_published_idx
+    ON agent_versions (tenant_id, agent_id, published_at DESC);
+
+CREATE FUNCTION reject_agent_version_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'agent_versions are immutable';
+END
+$$;
+
+CREATE TRIGGER agent_versions_immutable
+BEFORE UPDATE OR DELETE ON agent_versions
+FOR EACH ROW EXECUTE FUNCTION reject_agent_version_mutation();
