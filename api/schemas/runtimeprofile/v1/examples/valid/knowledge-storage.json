@@ -1,0 +1,27 @@
+{
+  "schema_version": "v1",
+  "models": {},
+  "tools": {},
+  "knowledge": {
+    "product_docs": {
+      "kind": "qdrant_openai",
+      "host": "qdrant.example.com",
+      "port": 6334,
+      "tls": true,
+      "collection": "product_docs_v1",
+      "qdrant_api_key_ref": "qdrant-primary",
+      "embedding": {
+        "model": "text-embedding-3-small",
+        "base_url": "https://model.example.com/v1",
+        "api_key_ref": "embedding-provider-primary",
+        "dimensions": 1536
+      }
+    }
+  },
+  "storage": {
+    "conversation_state": {
+      "kind": "postgres_state",
+      "dsn_ref": "state-postgres-primary"
+    }
+  }
+}

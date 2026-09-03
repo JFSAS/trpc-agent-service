@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Control API
   version: 1.0.0
-  description: V1 HTTP contract for Identity, platform administration, Tenant membership, and Agent authoring.
+  description: V1 HTTP contract for Identity, platform administration, Tenant membership, Agent authoring, and Runtime Profile authoring.
 servers:
   - url: /
 tags:
@@ -11,6 +11,7 @@ tags:
   - name: Admin
   - name: Tenant
   - name: Agent
+  - name: Runtime Profile
 paths:
   /healthz:
     get:
@@ -415,6 +416,228 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: createRuntimeProfile
+      summary: Create a Runtime Profile and its initial Draft atomically
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateRuntimeProfileRequest'}
+      responses:
+        '201':
+          description: Runtime Profile and revision 1 empty Draft created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateRuntimeProfileResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    get:
+      operationId: listRuntimeProfiles
+      summary: List Runtime Profiles in the Tenant
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of Runtime Profiles.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfilePage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/RuntimeProfileID'
+    get:
+      operationId: getRuntimeProfile
+      summary: Get a Runtime Profile
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Runtime Profile metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfile'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    patch:
+      operationId: updateRuntimeProfile
+      summary: Update mutable Runtime Profile metadata
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateRuntimeProfileRequest'}
+      responses:
+        '200':
+          description: Updated Runtime Profile metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfile'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/draft:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/RuntimeProfileID'
+    get:
+      operationId: getRuntimeProfileDraft
+      summary: Get the current mutable Runtime Profile Draft
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Current Runtime Profile Draft.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfileDraft'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      operationId: saveRuntimeProfileDraft
+      summary: Compare-and-swap the current Runtime Profile Draft
+      description: The Draft only needs to pass content-safety checks; it may remain incomplete for publication.
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SaveRuntimeProfileDraftRequest'}
+      responses:
+        '200':
+          description: Draft saved at the next Draft revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfileDraft'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/RuntimeProfileSpecInvalid'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/draft/validate:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/RuntimeProfileID'
+    post:
+      operationId: validateRuntimeProfileDraft
+      summary: Validate one exact Runtime Profile Draft revision for publication
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeProfileDraftRevisionRequest'}
+      responses:
+        '200':
+          description: Validation completed; valid may be false.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfileValidationReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/RuntimeProfileID'
+    post:
+      operationId: publishRuntimeProfileRevision
+      summary: Publish an immutable Runtime Profile Revision from one exact Draft revision
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeProfileDraftRevisionRequest'}
+      responses:
+        '200':
+          description: The source Draft revision was already published; the same immutable Profile Revision is returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublishRuntimeProfileRevisionResponse'}
+        '201':
+          description: A new immutable Runtime Profile Revision was published.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublishRuntimeProfileRevisionResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/RuntimeProfileSpecInvalid'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    get:
+      operationId: listRuntimeProfileRevisions
+      summary: List immutable Revisions of a Runtime Profile
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of immutable Runtime Profile Revision metadata summaries; complete specs are available from the single-revision endpoint.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfileRevisionPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/revisions/{revision_number}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/RuntimeProfileID'
+      - $ref: '#/components/parameters/ProfileRevisionNumber'
+    get:
+      operationId: getRuntimeProfileRevision
+      summary: Get one immutable Runtime Profile Revision including its canonical spec
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Immutable Runtime Profile Revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfileRevision'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /v1/admin/capabilities:
     get:
       operationId: getAdminCapabilities
@@ -591,8 +814,18 @@ components:
       in: path
       required: true
       schema: {type: string, minLength: 1}
+    RuntimeProfileID:
+      name: profile_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
     VersionNumber:
       name: version_number
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+    ProfileRevisionNumber:
+      name: revision_number
       in: path
       required: true
       schema: {type: integer, minimum: 1}
@@ -640,6 +873,11 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/AgentValidationErrorResponse'}
+    RuntimeProfileSpecInvalid:
+      description: The RuntimeProfileSpec cannot be stored safely or published.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/RuntimeProfileValidationErrorResponse'}
     InternalError:
       description: The request could not be completed.
       content:
@@ -784,6 +1022,165 @@ components:
             code: {type: string, enum: [AGENT_SPEC_INVALID]}
             message: {type: string}
         validation: {$ref: '#/components/schemas/ValidationReport'}
+    CreateRuntimeProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+    UpdateRuntimeProfileRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+    RuntimeProfile:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, name, description, latest_revision_number, created_by, created_at, updated_at]
+      properties:
+        id: {type: string, minLength: 1}
+        tenant_id: {type: string, minLength: 1}
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+        latest_revision_number: {type: integer, minimum: 1, nullable: true}
+        created_by: {type: string, minLength: 1}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    RuntimeProfileDraft:
+      type: object
+      additionalProperties: false
+      required: [profile_id, tenant_id, revision, spec, updated_by, updated_at]
+      properties:
+        profile_id: {type: string, minLength: 1}
+        tenant_id: {type: string, minLength: 1}
+        revision: {type: integer, minimum: 1}
+        spec:
+          type: object
+          description: A content-safe Draft document that may be incomplete or fail publication validation.
+        updated_by: {type: string, minLength: 1}
+        updated_at: {type: string, format: date-time}
+    RuntimeProfileSpec:
+      $ref: '../../../schemas/runtimeprofile/v1/runtime-profile-spec.schema.json'
+    RuntimeProfileRevision:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, profile_id, revision_number, source_draft_revision, schema_version, spec, spec_digest, published_by, published_at]
+      properties:
+        id: {type: string, minLength: 1}
+        tenant_id: {type: string, minLength: 1}
+        profile_id: {type: string, minLength: 1}
+        revision_number: {type: integer, minimum: 1}
+        source_draft_revision: {type: integer, minimum: 1}
+        schema_version: {type: string, enum: [v1]}
+        spec: {$ref: '#/components/schemas/RuntimeProfileSpec'}
+        spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        published_by: {type: string, minLength: 1}
+        published_at: {type: string, format: date-time}
+    RuntimeProfileRevisionSummary:
+      type: object
+      description: Metadata-only list projection of an immutable Runtime Profile Revision; it never contains spec.
+      additionalProperties: false
+      required: [id, tenant_id, profile_id, revision_number, source_draft_revision, schema_version, spec_digest, published_by, published_at]
+      properties:
+        id: {type: string, minLength: 1}
+        tenant_id: {type: string, minLength: 1}
+        profile_id: {type: string, minLength: 1}
+        revision_number: {type: integer, minimum: 1}
+        source_draft_revision: {type: integer, minimum: 1}
+        schema_version: {type: string, enum: [v1]}
+        spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        published_by: {type: string, minLength: 1}
+        published_at: {type: string, format: date-time}
+    CreateRuntimeProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [profile, draft]
+      properties:
+        profile: {$ref: '#/components/schemas/RuntimeProfile'}
+        draft: {$ref: '#/components/schemas/RuntimeProfileDraft'}
+    SaveRuntimeProfileDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, spec]
+      properties:
+        expected_revision: {type: integer, minimum: 1}
+        spec:
+          type: object
+          description: A content-safe Draft document that may be incomplete or fail publication validation.
+    RuntimeProfileDraftRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision: {type: integer, minimum: 1}
+    RuntimeProfileValidationDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, severity, pointer, resource_kind, resource_key, message]
+      properties:
+        code: {type: string, minLength: 1}
+        severity: {type: string, enum: [error, warning]}
+        pointer: {type: string}
+        resource_kind: {type: string, enum: [model, tool, knowledge, storage], nullable: true}
+        resource_key: {type: string, nullable: true}
+        message: {type: string}
+    RuntimeProfileValidationReport:
+      type: object
+      additionalProperties: false
+      required: [valid, schema_version, draft_revision, diagnostics]
+      properties:
+        valid: {type: boolean}
+        schema_version:
+          type: string
+          description: The declared schema version string exactly as supplied; empty when the field is missing or is not a string. Unsupported string values are preserved.
+        draft_revision: {type: integer, minimum: 1}
+        diagnostics:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeProfileValidationDiagnostic'}
+    PublishRuntimeProfileRevisionResponse:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision: {$ref: '#/components/schemas/RuntimeProfileRevision'}
+    RuntimeProfilePage:
+      type: object
+      additionalProperties: false
+      required: [runtime_profiles, offset, limit, total]
+      properties:
+        runtime_profiles:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeProfile'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    RuntimeProfileRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [revisions, offset, limit, total]
+      properties:
+        revisions:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeProfileRevisionSummary'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    RuntimeProfileValidationErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error, validation]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [RUNTIME_PROFILE_SPEC_INVALID]}
+            message: {type: string}
+        validation: {$ref: '#/components/schemas/RuntimeProfileValidationReport'}
     LoginRequest:
       type: object
       additionalProperties: false

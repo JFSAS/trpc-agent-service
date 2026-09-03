@@ -1,13 +1,46 @@
-// Package runtimeprofile composes reusable runtime configuration capabilities.
+// Package runtimeprofile composes Runtime Profile authoring, validation, and
+// immutable publication capabilities.
 package runtimeprofile
 
-// Dependencies lists process-owned dependencies required by the runtime profile module.
-type Dependencies struct{}
+import (
+	"errors"
+	"time"
 
-// Module is the assembled runtime profile module.
-type Module struct{}
+	"github.com/gin-gonic/gin"
 
-// NewModule assembles the runtime profile module without starting process resources.
-func NewModule(Dependencies) *Module {
-	return &Module{}
+	httpadapter "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/inbound/http"
+	postgresadapter "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/outbound/postgres"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
+)
+
+// Dependencies lists process-owned dependencies required by the Runtime
+// Profile module.
+type Dependencies struct {
+	DB           postgresadapter.DB
+	Routes       gin.IRouter
+	Authenticate gin.HandlerFunc
+	TenantAccess application.TenantAccess
+}
+
+// Module is the assembled Runtime Profile module.
+type Module struct {
+	Service *application.Service
+}
+
+// NewModule assembles the Runtime Profile module without starting process
+// resources.
+func NewModule(deps Dependencies) (*Module, error) {
+	if deps.DB == nil || deps.Routes == nil || deps.Authenticate == nil || deps.TenantAccess == nil {
+		return nil, errors.New("runtime profile: database, routes, authentication, and tenant access are required")
+	}
+	store := postgresadapter.NewStore(deps.DB)
+	service := application.NewService(application.Dependencies{
+		Store: store, TenantAccess: deps.TenantAccess,
+		NewProfileID:  func() (string, error) { return generateID("rpf") },
+		NewRevisionID: func() (string, error) { return generateID("rpr") },
+		Now:           time.Now,
+	})
+	protected := deps.Routes.Group("", deps.Authenticate)
+	httpadapter.NewHandler(service).Register(protected)
+	return &Module{Service: service}, nil
 }

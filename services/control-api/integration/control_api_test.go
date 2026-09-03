@@ -23,6 +23,7 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
 	identityapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity/application"
 	sharedpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/postgres"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant"
 	tenantapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/migrations"
@@ -80,6 +81,12 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := agent.NewModule(agent.Dependencies{
+		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
+		TenantAccess: tenantAccess{tenants: tenantModule.Service},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
 		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 		TenantAccess: tenantAccess{tenants: tenantModule.Service},
 	}); err != nil {
@@ -149,6 +156,9 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 		http.StatusNoContent, nil)
 
 	testAgentV1Lifecycle(t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie)
+	testRuntimeProfileV1Lifecycle(
+		t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie,
+	)
 }
 
 func testAgentV1Lifecycle(

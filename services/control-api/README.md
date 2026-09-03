@@ -1,9 +1,11 @@
 # Control API
 
 Control API is the management backend for the Agent platform. It owns global
-identity, platform administration, Tenant membership, and Agent authoring. Runtime
-Profile, Deployment, and Channel Binding remain later management capabilities. It is
-not part of the message execution hot path.
+identity, platform administration, Tenant membership, and Agent authoring.
+Runtime Profile V1 implements reusable resource authoring, deterministic validation,
+and immutable Profile Revision publication. Deployment and Channel Binding remain
+later management capabilities. Control API is not part of the message execution hot
+path.
 
 ## Implemented V1
 
@@ -48,8 +50,31 @@ not part of the message execution hot path.
   AgentSpec validation/canonicalization, idempotent publication, and immutable
   AgentVersion snapshots.
 
+### Runtime Profile authoring and publication
+
+- `POST|GET /v1/tenants/{tenant_id}/runtime-profiles`
+- `GET|PATCH /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}`
+- `GET|PUT /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/draft`
+- `POST /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/draft/validate`
+- `POST|GET /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/revisions`
+- `GET /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/revisions/{revision_number}`
+- Tenant-scoped membership authorization, optimistic Draft revisions, deterministic
+  RuntimeProfileSpec validation and canonicalization, delayed-retry-safe idempotent
+  publication, and immutable ProfileRevision snapshots.
+- Revision collection reads return metadata-only summaries without `spec`; the
+  single-revision read returns a full `RuntimeProfileRevision` after re-canonicalizing
+  its Spec and checking its Schema Version and Digest.
+- RuntimeProfileSpec V1 is a closed protocol with exactly one accepted Kind in each
+  category: `openai_compatible`, `mcp_streamable_http`, `qdrant_openai`, and
+  `postgres_state`.
+
 The implementation contract is
 [`api/openapi/control/v1/openapi.yaml`](../../api/openapi/control/v1/openapi.yaml).
+The Runtime Profile ownership and protocol contracts are
+[`runtime-profile.md`](../../docs/architecture-next/control-api/runtime-profile.md) and
+[`runtime-profile-spec.md`](../../docs/architecture-next/control-api/runtime-profile-spec.md).
+Runtime Profile V1 does not publish NATS events, generate a Deployment or
+RuntimeManifest, or construct Worker/tRPC-Agent-Go runtime objects.
 
 ## Configuration
 
@@ -81,7 +106,7 @@ services/control-api/
 │   ├── admin/              # Platform Operator and cross-domain admin commands
 │   ├── tenant/             # Tenant and Membership rules
 │   ├── agent/              # Agent, Draft, validation, immutable Version
-│   ├── runtimeprofile/     # later vertical slice
+│   ├── runtimeprofile/     # Profile, Draft, validation, immutable Revision
 │   ├── deployment/         # later vertical slice
 │   ├── channelbinding/     # later vertical slice
 │   ├── infra/              # shared process connections and mechanics

@@ -5,22 +5,25 @@ Workload、服务本地 `internal/`、领域模块和不可变运行快照组织
 
 ## 当前状态
 
-Control API 的首个可运行版本已经覆盖四个核心子领域：
+Control API 的首个可运行版本已经覆盖五个核心子领域：
 
 - Identity：登录、Session 校验、`/me`、登出和强制首次修改密码。
 - Admin：Platform Operator 授权、全局用户管理、Tenant 开通和首个 Operator 引导。
 - Tenant：Tenant 查询、Owner 添加或移除已有平台用户、Membership 授权。
 - Agent：Agent 管理、单一 Draft、AgentSpec 校验和不可变 Version 发布。
+- Runtime Profile：可复用运行资源配置、单一 Draft、RuntimeProfileSpec 校验和不可变
+  ProfileRevision 发布。
 - PostgreSQL `0001_baseline.sql`、Gin 进程组装、OpenAPI 和真实 PostgreSQL 集成测试。
 
-Runtime Profile、Deployment 和 Channel Binding 当前只保留边界骨架，继续按纵向
-切片实现；Gateway、Worker 和 Local IM Provider 仍属于后续 Workload。
+Runtime Profile V1 已冻结并实现四个资源 Kind、10 个 HTTP API、强延迟发布幂等和
+Tenant 隔离。它只完成控制面的配置编辑、校验与不可变发布；Deployment、
+RuntimeManifest、Worker Adapter、Gateway 和 Local IM Provider 仍属于后续纵向切片。
 
 ## 生产 Workload
 
 | Workload | 职责 | 状态 |
 | --- | --- | --- |
-| `control-api` | Identity、Admin、Tenant、Agent 及后续控制面领域 | Identity/Admin/Tenant/Agent V1 |
+| `control-api` | Identity、Admin、Tenant、Agent、Runtime Profile 及后续控制面领域 | Identity/Admin/Tenant/Agent/Runtime Profile V1 |
 | `channel-gateway` | IM Webhook、Run Admission、运行投影和回复投递 | 待设计 |
 | `agent-worker` | 消费 Run、执行 Agent、完成 Run、产生 ReplyIntent | 待设计 |
 | `local-im-provider` | 与外部 IM Adapter 统一的本地调试服务 | 待设计 |
@@ -51,3 +54,6 @@ just build
 Control API 的详细目录说明见
 [`services/control-api/README.md`](services/control-api/README.md)。架构约束见
 [`docs/architecture-next/constraints.md`](docs/architecture-next/constraints.md)。
+Runtime Profile V1 已实现契约见
+[`Runtime Profile V1`](docs/architecture-next/control-api/runtime-profile.md) 和
+[`RuntimeProfileSpec V1`](docs/architecture-next/control-api/runtime-profile-spec.md)。

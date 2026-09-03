@@ -153,3 +153,78 @@ $$;
 CREATE TRIGGER agent_versions_immutable
 BEFORE UPDATE OR DELETE ON agent_versions
 FOR EACH ROW EXECUTE FUNCTION reject_agent_version_mutation();
+
+CREATE TABLE runtime_profiles (
+    tenant_id             text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    id                    text NOT NULL,
+    name                  text NOT NULL,
+    description           text NOT NULL DEFAULT '',
+    latest_revision_number bigint,
+    created_by            text NOT NULL REFERENCES user_accounts(id),
+    created_at            timestamptz NOT NULL,
+    updated_at            timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, id),
+    CONSTRAINT runtime_profiles_name_not_blank CHECK (btrim(name) <> ''),
+    CONSTRAINT runtime_profiles_latest_revision_positive
+        CHECK (latest_revision_number IS NULL OR latest_revision_number > 0)
+);
+
+CREATE INDEX runtime_profiles_tenant_updated_idx
+    ON runtime_profiles (tenant_id, updated_at DESC, id);
+
+CREATE TABLE runtime_profile_drafts (
+    tenant_id     text NOT NULL,
+    profile_id    text NOT NULL,
+    spec_revision bigint NOT NULL,
+    spec_jsonb    jsonb NOT NULL,
+    updated_by    text NOT NULL REFERENCES user_accounts(id),
+    updated_at    timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, profile_id),
+    CONSTRAINT runtime_profile_drafts_profile_fk
+        FOREIGN KEY (tenant_id, profile_id)
+        REFERENCES runtime_profiles(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT runtime_profile_drafts_revision_positive CHECK (spec_revision > 0),
+    CONSTRAINT runtime_profile_drafts_spec_object CHECK (jsonb_typeof(spec_jsonb) = 'object')
+);
+
+CREATE TABLE runtime_profile_revisions (
+    tenant_id             text NOT NULL,
+    id                    text NOT NULL,
+    profile_id            text NOT NULL,
+    revision_number       bigint NOT NULL,
+    source_draft_revision bigint NOT NULL,
+    schema_version        text NOT NULL,
+    spec_jsonb            jsonb NOT NULL,
+    spec_digest           text NOT NULL,
+    published_by          text NOT NULL REFERENCES user_accounts(id),
+    published_at          timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, id),
+    CONSTRAINT runtime_profile_revisions_profile_fk
+        FOREIGN KEY (tenant_id, profile_id)
+        REFERENCES runtime_profiles(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT runtime_profile_revisions_number_positive CHECK (revision_number > 0),
+    CONSTRAINT runtime_profile_revisions_source_revision_positive
+        CHECK (source_draft_revision > 0),
+    CONSTRAINT runtime_profile_revisions_spec_object
+        CHECK (jsonb_typeof(spec_jsonb) = 'object'),
+    CONSTRAINT runtime_profile_revisions_digest_format
+        CHECK (spec_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT runtime_profile_revisions_tenant_profile_number_unique
+        UNIQUE (tenant_id, profile_id, revision_number),
+    CONSTRAINT runtime_profile_revisions_tenant_profile_source_unique
+        UNIQUE (tenant_id, profile_id, source_draft_revision)
+);
+
+CREATE INDEX runtime_profile_revisions_tenant_profile_published_idx
+    ON runtime_profile_revisions (tenant_id, profile_id, published_at DESC);
+
+CREATE FUNCTION reject_runtime_profile_revision_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'runtime_profile_revisions are immutable';
+END
+$$;
+
+CREATE TRIGGER runtime_profile_revisions_immutable
+BEFORE UPDATE OR DELETE ON runtime_profile_revisions
+FOR EACH ROW EXECUTE FUNCTION reject_runtime_profile_revision_mutation();

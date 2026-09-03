@@ -14,10 +14,10 @@ test-integration:
     go test -count=1 ./services/control-api/integration ./services/control-api/internal/bootstrap
 
 openapi:
-    go test ./api/openapi/control/v1 ./services/control-api/internal/agent/domain
+    go test ./api/openapi/control/v1 ./services/control-api/internal/agent/domain ./services/control-api/internal/runtimeprofile/domain
 
 test-race:
-    go test -race ./services/control-api/internal/identity/... ./services/control-api/internal/tenant/... ./services/control-api/internal/admin/... ./services/control-api/internal/agent/... ./services/control-api/internal/bootstrap
+    go test -race ./services/control-api/internal/identity/... ./services/control-api/internal/tenant/... ./services/control-api/internal/admin/... ./services/control-api/internal/agent/... ./services/control-api/internal/runtimeprofile/... ./services/control-api/internal/bootstrap
 
 vet:
     go vet ./services/control-api/... ./api/...

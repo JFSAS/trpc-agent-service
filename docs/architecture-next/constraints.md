@@ -1,8 +1,9 @@
 # 下一代架构级约束
 
 - **设计状态**：已接受
-- **实现状态**：Control API 的 Identity、Admin、Tenant V1 与 PostgreSQL 基线已实现
-- **确认日期**：2026-08-31
+- **实现状态**：Control API 的 Identity、Admin、Tenant、Agent、Runtime Profile V1 与
+  PostgreSQL 基线已实现
+- **确认日期**：2026-09-03
 - **适用范围**：新建的生产代码、协议、数据库迁移、镜像和部署配置
 
 本文只记录当前已经确认、后续实现不得默默绕过的架构级约束。尚未确认的
@@ -284,31 +285,59 @@ V1 使用 Expected Draft Revision 实现乐观并发，并以
 已经发布的 Version 禁止更新。V1 不引入并行 Draft、审批流或 Draft/Published/Deployed
 混合状态机。
 
-AgentSpec 只能表达逻辑行为与 Model/Tool Slot 需求，不绑定具体 ProfileRevision、
-Environment 或 Secret。Runtime Profile 绑定和 RuntimeManifest 生成属于
+AgentSpec 只能表达逻辑行为与 Model/Tool/Knowledge Slot 需求，不绑定具体
+ProfileRevision、Environment 或 Secret。Runtime Profile 绑定和 RuntimeManifest 生成属于
 Deployment 发布阶段；实际 tRPC-Agent-Go 对象只能由 Worker 根据固定
 RuntimeManifest 组装。详细设计见 [`control-api/agent.md`](control-api/agent.md)。
+
+### ARC-212：Runtime Profile V1 终止于不可变 ProfileRevision
+
+`runtimeprofile` 拥有 Tenant 范围内稳定的 Runtime Profile、当前唯一的 ProfileDraft、
+RuntimeProfileSpec 校验和不可变 ProfileRevision 发布。V1 已实现 10 个 Tenant-scoped
+HTTP API，覆盖 Profile 元数据、Draft 保存与校验以及 Revision 发布与读取。
+
+RuntimeProfileSpec V1 是关闭协议，只接受四种 Resource Kind：Model 的
+`openai_compatible`、Tool 的 `mcp_streamable_http`、Knowledge 的
+`qdrant_openai` 和 Storage 的 `postgres_state`。Kind 的严格字段、SecretRef 位置、
+数量与字符串上限由版本化 JSON Schema、Go Domain 类型和 Fixture 共同约束；禁止以
+开放配置 Blob 或 SDK Option 扩展 V1。
+
+发布幂等键是 `(TenantID, ProfileID, SourceDraftRevision)`。已经发布 Source Draft
+Revision N 后，即使当前 Draft 已前进到 N+1，对 N 的延迟重试仍必须返回原
+ProfileRevision；只有 N 尚未发布且不再是当前 Draft 时才返回冲突。任何向调用方、
+Deployment Compiler 或其他子领域暴露完整 ProfileRevision Spec 的读取，
+都必须重新 Canonicalize，并核对 Schema Version 与 Spec Digest；持久化层返回的
+`spec_jsonb` 不能直接视为可信 Canonical Spec。只返回 Revision 元数据的 Summary
+读取必须使用不包含 `spec_jsonb` 的专用投影，不得加载完整 Spec，也不得执行完整
+Spec Canonicalization。
+
+Runtime Profile V1 不创建 DeploymentRevision 或 RuntimeManifest，不发布 NATS/Outbox
+事件，不访问 Worker，也不构造 tRPC-Agent-Go 对象。详细契约见
+[`control-api/runtime-profile.md`](control-api/runtime-profile.md) 与
+[`control-api/runtime-profile-spec.md`](control-api/runtime-profile-spec.md)。
 
 ## 4. Runtime Profile、Deployment 与 Channel Binding
 
 ### ARC-301：三个模块必须分开
 
-- Runtime Profile 管理可复用、Tenant 范围内的 Model、Tool、Storage 和
-  `SecretRef` 配置及其不可变修订。
+- Runtime Profile 管理可复用、Tenant 范围内的 Model、Tool、Knowledge、Storage
+  资源配置、这些资源引用的 `SecretRef` 及其不可变修订。
 - Deployment 选择 Environment、AgentVersion 和 ProfileRevision，并生成不可变
   `RuntimeManifest`。
 - Channel Binding 管理外部 Bot/Channel 与 DeploymentRevision 的绑定，并发布
   Gateway 所需的运行路由投影。
 
 三个模块禁止共享一个可任意读写的配置 Blob。它们通过稳定 ID、不可变 Revision
-和 Application Port 协作。
+和 Application Port 协作。Runtime Profile V1 已实现契约见
+[`control-api/runtime-profile.md`](control-api/runtime-profile.md) 与
+[`control-api/runtime-profile-spec.md`](control-api/runtime-profile-spec.md)。
 
 ### ARC-302：运行时只消费不可变快照
 
-Agent Draft 和可变 Profile 禁止进入运行链路。发布流程必须产生不可变的
-AgentVersion、ProfileRevision、DeploymentRevision 和 RuntimeManifest。
+AgentDraft 和 ProfileDraft 禁止进入运行链路。Deployment 必须选择明确且不可变的
+AgentVersion 与 ProfileRevision，并生成不可变的 DeploymentRevision 和 RuntimeManifest。
 
-Gateway 只持有运行所需的最小投影，不得投影 Agent Draft、编辑器状态或原始
+Gateway 只持有运行所需的最小投影，不得投影 AgentDraft、编辑器状态或原始
 Profile 管理数据。Gateway 在接纳 Run 时必须固定 RuntimeManifest 的 ID、Revision
 和 Digest；Worker 不负责选择 Agent 或解析当前生效配置。
 
@@ -349,9 +378,9 @@ Channel Binding 建立。禁止信任请求 Body、Query 或事件 Payload 中�
 
 ### ARC-502：只传播 SecretRef
 
-AgentSpec、Runtime Profile、RuntimeManifest、事件、日志和 Trace 中只能传播
-`SecretRef` 或脱敏元数据，禁止传播明文模型密钥、IM Token、数据库密码或其他
-凭证。
+AgentSpec、Runtime Profile、RuntimeManifest、事件、日志和 Trace 在需要引用凭据时，
+只能传播 `SecretRef` 或脱敏元数据，禁止传播明文模型密钥、IM Token、数据库密码
+或其他凭证。非秘密资源配置不受本条限制。
 
 ## 7. Local IM 与 Web
 
@@ -391,7 +420,9 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 以下内容尚未因本文而自动确定：
 
 - V1 之后是否引入并行 Draft、发布审批或 Tenant Policy。
-- Runtime Profile 的具体种类、字段和修订策略。
+- Deployment Compiler 对已冻结 Profile Schema/Resource Kind 的 RuntimeManifest 映射，
+  Environment 中 SecretRef 的解析与授权规则，以及 Worker 的 RuntimeManifest
+  Schema/Adapter Kind 兼容规则。
 - Channel Gateway 与 Worker 的数据库表所有权和完成 Run 的精确事务边界。
 - Platform Operator 全部丢失后的 Break-glass 恢复、密码恢复、MFA、Session
   过期策略与 PostgreSQL RLS。

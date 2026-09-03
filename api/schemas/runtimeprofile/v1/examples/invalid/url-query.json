@@ -1,0 +1,16 @@
+{
+  "schema_version": "v1",
+  "models": {},
+  "tools": {
+    "web_search": {
+      "kind": "mcp_streamable_http",
+      "server_url": "https://tools.example.com/mcp?token=forbidden",
+      "toolset_name": "internet",
+      "tool_name": "search",
+      "auth": {"kind": "none"},
+      "capability": "web.search"
+    }
+  },
+  "knowledge": {},
+  "storage": {}
+}

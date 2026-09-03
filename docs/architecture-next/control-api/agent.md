@@ -52,19 +52,19 @@ V1 的最终发布结果不是两份彼此独立的资源，而是：
 
 `agent` 不拥有：
 
-- Model、Tool、Storage 或 SecretRef 的具体配置与修订。
+- Model、Tool、Knowledge、Storage 或 SecretRef 的具体配置与修订。
 - Environment、ProfileRevision、DeploymentRevision 或 RuntimeManifest。
 - IM Channel Binding、Run Admission、Run、Attempt 或 ReplyIntent。
 - tRPC-Agent-Go 运行对象的构造、Worker 执行或回复投递。
 
-AgentSpec 只能声明逻辑 Model/Tool Slot 和能力需求。Runtime Profile 提供具体绑定，
-Deployment 选择 AgentVersion 与 ProfileRevision、校验二者兼容性并生成
-RuntimeManifest。
+AgentSpec 只能声明逻辑 Model/Tool/Knowledge Slot 和能力需求。ProfileRevision 提供
+具名的具体 Profile Resource；Deployment 选择 AgentVersion 与 ProfileRevision，显式
+建立 Slot 到 Resource 的绑定、校验兼容性并生成 RuntimeManifest。
 
 ```text
 AgentVersion(Canonical AgentSpec)
                     +
-ProfileRevision(具体 Model/Tool/Storage/SecretRef)
+ProfileRevision(具体 Model/Tool/Knowledge/Storage/SecretRef)
                     +
 Environment
                     |
@@ -79,7 +79,9 @@ Environment
 ```
 
 因此 Agent 发布不进入运行热路径，不创建 Run，不向 Worker 发送消息，也不发布
-Deployment Outbox 事件。
+Deployment Outbox 事件。具体资源边界见
+[`runtime-profile.md`](runtime-profile.md) 与
+[`runtime-profile-spec.md`](runtime-profile-spec.md)。
 
 ## 4. V1 纵向切片
 
@@ -159,8 +161,9 @@ V1 将校验分为三层：
 
 1. **Draft 保存校验**：JSON 对象、大小、Expected Revision 与敏感字段边界。
 2. **Agent 发布校验**：Schema、Root、节点引用、组合结构、Slot 引用和领域不变量。
-3. **Deployment 兼容性校验**：ProfileRevision 是否满足 Model/Tool Slot、环境中的
-   SecretRef 是否可解析，以及能否生成目标 RuntimeManifest。
+3. **Deployment 兼容性校验**：Agent Slot 是否全部显式绑定到 ProfileRevision 中的
+   Model/Tool/Knowledge Resource，Environment 是否能解析 SecretRef，以及能否生成
+   目标 RuntimeManifest。
 
 Agent 发布成功只证明 AgentSpec 在不依赖具体运行环境的情况下成立，不证明任意
 ProfileRevision 都能部署它。跨领域兼容性必须留在 Deployment 发布阶段。
@@ -298,7 +301,7 @@ Runtime Profile、Deployment 与 Worker 切片。
 
 - 多个并行 Draft、Draft 分支或多人实时协同编辑。
 - 发布审批、Agent Marketplace、标签和复杂归档状态机。
-- Runtime Profile 绑定和 RuntimeManifest 生成。
+- Agent Slot 到 Profile Resource 的 Deployment Binding 和 RuntimeManifest 生成。
 - Graph、任意表达式、Reducer、Condition 或可执行代码 Registry。
 - Worker tRPC Agent 组装、Run 执行与 IM 回复。
 - AgentVersion 发布 NATS 事件或直接触发 Deployment。

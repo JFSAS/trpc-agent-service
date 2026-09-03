@@ -28,6 +28,10 @@
   AgentVersion 发布；运行配置绑定与执行不属于该切片。
 - [AgentSpec V1](control-api/agent-spec.md)：节点协议、三层校验、稳定诊断、
   Canonicalization、Digest 与 Schema 演进规则。
+- [Runtime Profile 子领域](control-api/runtime-profile.md)：已实现的可复用运行资源、单一
+  Draft、10 个 API、强延迟幂等发布事务与 Deployment 边界。
+- [RuntimeProfileSpec V1](control-api/runtime-profile-spec.md)：已冻结并实现的四种 Resource
+  Kind、SecretRef、校验分层、Canonicalization、Schema 与 Fixture。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
 - [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与
@@ -51,5 +55,6 @@ docs/architecture-next/
 └── operations/         # 构建、部署、迁移和可观测性
 ```
 
-只有在结论已经确认且有实际内容时才创建对应文件。架构约束变化时，应先更新
-`constraints.md`，再修改实现或新增 ADR。
+只有在已有实质讨论内容时才创建对应文件，禁止预先创建空文档。尚未确认的结论
+必须明确标记为“草案”；架构约束变化时，应先更新 `constraints.md`，再修改实现或
+新增 ADR。

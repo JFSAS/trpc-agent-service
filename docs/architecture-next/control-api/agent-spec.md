@@ -4,8 +4,8 @@
 - **所属子领域**：Control API / Agent
 - **协议位置**：`api/schemas/agentspec/v1/`
 - **适用对象**：AgentDraft 与不可变 AgentVersion 中的 AgentSpec 文档
-- **不适用对象**：RuntimeProfile、DeploymentRevision、RuntimeManifest、Worker
-  运行实例与编辑器视图状态
+- **不适用对象**：RuntimeProfileSpec、ProfileDraft、ProfileRevision、Environment、
+  DeploymentRevision、RuntimeManifest、Worker 运行实例与编辑器视图状态
 
 ## 1. 目的
 
@@ -19,7 +19,8 @@ AgentSpec V1 必须同时满足以下目标：
 2. Draft 可以暂时不完整，但只有通过发布校验的 Canonical AgentSpec 才能进入
    AgentVersion。
 3. Control API 可以在不构造实际 tRPC-Agent-Go 对象的情况下完成环境无关校验。
-4. RuntimeProfile 可以在不修改 AgentVersion 的情况下为逻辑槽位提供具体绑定。
+4. ProfileRevision 可以提供具体资源，Deployment 可在不修改 AgentVersion 的情况下
+   把逻辑 Slot 显式绑定到这些资源。
 5. 未知字段、框架专属 Option 和任意可执行表达式不能偷偷进入协议。
 6. 编辑器布局变化不能改变 AgentSpec 的运行语义或 Digest。
 
@@ -30,7 +31,7 @@ AgentSpec V1 不定义：
 - Graph、Edge、Reducer、Join、Condition 或任意表达式语言。
 - Tenant 上传的 Go 代码、插件、回调函数或节点模板。
 - 具体模型 Provider、Base URL、API Key、Token、Password 或其他 Credential。
-- RuntimeProfileRevision、Environment、DeploymentRevision 或 RuntimeManifest。
+- ProfileDraft、ProfileRevision、Environment、DeploymentRevision 或 RuntimeManifest。
 - Worker 并发、超时、队列 Consumer、资源限制和执行状态。
 - 节点坐标、视口、选择、折叠和面板状态等 Editor State。
 - 多 Draft 分支、合并、审批或实时协同编辑。
@@ -214,10 +215,11 @@ agent researcher     # 不允许空格
 
 | 字段 | 类型 | 必填 | 约束 |
 | --- | --- | --- | --- |
-| `capabilities` | `string[]` | 是 | 至少一个、不得重复、必须是平台注册能力 |
+| `capabilities` | `string[]` | 是 | 至少一个、不得重复、满足 Capability 语法 |
 
-AgentSpec 不包含 Provider、实际模型名、Endpoint 或 Credential。Deployment 发布时由
-ProfileRevision 将 `primary` 绑定到具体 Model Revision，并验证能力是否满足。
+AgentSpec 不包含 Provider、实际模型名、Endpoint 或 Credential。Deployment 发布时将
+`primary` 显式绑定到 ProfileRevision 中的具体 Model Resource，并验证 Capability
+是否满足。
 
 ### 6.2 Tool Requirement
 
@@ -235,7 +237,7 @@ ProfileRevision 将 `primary` 绑定到具体 Model Revision，并验证能力�
 
 | 字段 | 类型 | 必填 | 约束 |
 | --- | --- | --- | --- |
-| `capability` | `string` | 是 | 必须是平台注册的 Tool Capability |
+| `capability` | `string` | 是 | 必须满足 Capability 语法 |
 
 AgentSpec 不记录 Tool Server URL、认证头、Token 或进程启动参数。
 
@@ -251,7 +253,8 @@ AgentSpec 不记录 Tool Server URL、认证头、Token 或进程启动参数。
 }
 ```
 
-AgentSpec 只声明逻辑能力，具体索引、数据库、集合和认证配置由 ProfileRevision 提供。
+AgentSpec 只声明逻辑能力；具体 Knowledge Resource、索引引用、Storage 依赖和
+SecretRef 由 ProfileRevision 提供，绑定由 Deployment 建立。
 
 ## 7. Node 判别联合
 
@@ -361,7 +364,7 @@ NodeID 才是稳定引用身份，`name` 可以修改且不承担引用作用。
 - `max_iterations` 必填，范围为 1 到 32。
 - V1 不接受 `stop_policy_ref`、`condition_ref` 或任意表达式。
 - `max_iterations` 是硬上限；是否在标准 Agent 完成信号后提前终止，由固定的
-  Runtime Contract 定义，不允许每份 AgentSpec 自定义。
+  Worker 执行语义定义，不允许每份 AgentSpec 自定义。
 - 多步骤 Body 必须显式建模为 `sequence`，而不是让 Loop 同时拥有多个 Child。
 
 ## 8. 明确禁止的字段
@@ -414,7 +417,7 @@ mapping
 | Draft Revision | 否，服务端递增 | 不适用 | 否 |
 | Version Number | 否，服务端分配 | 否 | 否 |
 | Spec Digest | 否，服务端计算 | 否 | 结果本身 |
-| Runtime/Profile 绑定 | 不属于 AgentSpec | 通过新修订发布 | 否 |
+| Deployment Binding | 不属于 AgentSpec | 通过新 DeploymentRevision 修改 | 否 |
 
 修改已发布 AgentVersion 的正确流程是：读取旧 Version 的 Spec，保存为新的 Draft
 Revision，完成修改后发布新的 AgentVersion。禁止更新旧 Version 的 `spec_jsonb`。
@@ -488,12 +491,15 @@ V1 平台限制：
 
 L3 不属于 Agent 发布校验，由 Deployment 发布执行：
 
-- ProfileRevision 是否为全部被引用 Slot 提供具体绑定。
+- AgentVersion 的全部 Slot 是否显式绑定到 ProfileRevision 中存在的 Resource。
 - 绑定的 Model 是否满足声明的 Capability。
 - Tool 和 Knowledge Capability 是否匹配。
 - Environment 中的 SecretRef 是否可解析。
 - Generation 参数是否被具体 Model 支持。
-- Runtime Contract 与目标 Worker 是否兼容。
+- Deployment Compiler 是否支持所选 AgentSpec/RuntimeProfileSpec Schema Version，
+  并能把实际使用的 Resource Kind 编译为 RuntimeManifest Adapter Kind/Version。
+- 目标 Worker 是否支持生成的 RuntimeManifest Schema Version，以及其中的运行
+  Adapter Kind/Version；Worker 不直接消费 AgentSpec 或 RuntimeProfileSpec。
 - 是否可以生成完整且不可变的 RuntimeManifest。
 
 因此：
@@ -503,6 +509,9 @@ AgentVersion 发布成功
 ≠
 它可以搭配任意 ProfileRevision 部署
 ```
+
+Runtime Profile 的资源与校验边界见
+[`runtime-profile-spec.md`](runtime-profile-spec.md)。
 
 ## 11. Validation Report
 
@@ -859,11 +868,14 @@ services/control-api/internal/agent/domain/validation.go
 ## 18. Schema 演进
 
 - `v1` 发布后其语义不可静默修改。
-- 兼容性说明和新的可选能力也必须经过 Fixture、Validator 和 Runtime Contract 测试。
+- 兼容性说明和新的可选能力也必须经过 Fixture、Validator 与 Deployment Compiler
+  映射测试；若输出的 RuntimeManifest 改变，还必须经过 Worker Manifest 兼容性测试。
 - 破坏性字段变化发布 `v2`，而不是修改历史 AgentVersion。
 - Draft 可以通过显式、可测试且用户确认的迁移转换到新版本。
-- 已发布 AgentVersion 不原地迁移；Deployment 必须使用其记录的 Schema Version。
-- 不再支持的 Version 必须明确报告 incompatible，不能在 Worker 中静默降级。
+- 已发布 AgentVersion 不原地迁移；Deployment Compiler 必须使用记录的 AgentSpec
+  Schema Version，并拒绝自己不支持的 Version。
+- Worker 只接收 RuntimeManifest；不受支持的 Manifest Schema/Adapter Kind/Version
+  必须明确报告 incompatible，不能静默降级。
 
 ## 19. 待后续协议解决的问题
 
@@ -872,6 +884,8 @@ services/control-api/internal/agent/domain/validation.go
 - Delegation 型 SubAgent 与固定组合节点之间的区别。
 - Graph State、Reducer、Condition、Join 和平台 Runtime Registry。
 - 结构化输入输出与跨节点 Mapping。
-- Model、Tool、Knowledge Capability Registry 的版本策略。
-- Loop 标准提前终止信号的 Runtime Contract 精确定义。
-- AgentSpec Compiler 与 Worker Runtime Fingerprint 的归属和兼容窗口。
+- Model、Tool、Knowledge Capability Registry 的版本策略；V1 当前只校验语法并在
+  Deployment 中做精确字符串集合匹配。
+- Loop 标准提前终止信号的 Worker 执行语义精确定义。
+- Deployment Compiler 的 AgentSpec 支持窗口与 RuntimeManifest 映射策略，以及 Worker
+  的 Manifest Schema/Adapter Kind/Version 支持窗口与滚动升级策略。

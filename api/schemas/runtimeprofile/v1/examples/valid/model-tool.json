@@ -1,0 +1,27 @@
+{
+  "schema_version": "v1",
+  "models": {
+    "primary": {
+      "kind": "openai_compatible",
+      "model": "gpt-5.4-mini",
+      "base_url": "https://model.example.com/v1",
+      "api_key_ref": "model-provider-primary",
+      "capabilities": ["chat", "tool_call"]
+    }
+  },
+  "tools": {
+    "web_search": {
+      "kind": "mcp_streamable_http",
+      "server_url": "https://tools.example.com/mcp",
+      "toolset_name": "internet",
+      "tool_name": "search",
+      "auth": {
+        "kind": "bearer",
+        "secret_ref": "tool-search-credential"
+      },
+      "capability": "web.search"
+    }
+  },
+  "knowledge": {},
+  "storage": {}
+}
