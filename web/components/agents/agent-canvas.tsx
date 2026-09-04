@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 
 import { getNodeReferences, nodeIDFromDiagnostic, type AgentSpecDiagnostic } from "../../lib/agent-spec-v1";
 import type { AgentEditorAction, AgentEditorState, CanvasPoint } from "../../lib/agent-editor-state";
@@ -27,6 +27,7 @@ export function AgentCanvas({
   onAction: (action: AgentEditorAction) => void;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
+  const nodeElements = useRef(new Map<string, HTMLElement>());
   const diagnosticNodeIDs = useMemo(
     () => new Set(diagnostics.map(nodeIDFromDiagnostic).filter((value): value is string => Boolean(value))),
     [diagnostics],
@@ -38,6 +39,11 @@ export function AgentCanvas({
       height: Math.max(430, ...points.map((point) => point.y + NODE_HEIGHT + 60)),
     };
   }, [state.positions]);
+
+  useEffect(() => {
+    if (drag || !state.selectedNodeID) return;
+    nodeElements.current.get(state.selectedNodeID)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [drag, state.selectedNodeID, state.focusRevision]);
 
   useEffect(() => {
     if (!drag) return;
@@ -107,6 +113,10 @@ export function AgentCanvas({
                 aria-pressed={selected}
                 data-node-id={nodeID}
                 key={nodeID}
+                ref={(element) => {
+                  if (element) nodeElements.current.set(nodeID, element);
+                  else nodeElements.current.delete(nodeID);
+                }}
                 onClick={() => onAction({ type: "node.select", nodeID })}
                 onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
                   if (event.key === "Enter" || event.key === " ") onAction({ type: "node.select", nodeID });

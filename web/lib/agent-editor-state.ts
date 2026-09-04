@@ -20,15 +20,19 @@ export interface AgentEditorState {
   spec: AgentSpecV1;
   selectedNodeID: string | null;
   positions: Record<string, CanvasPoint>;
+  focusRevision?: number;
 }
 
 export type RequirementKind = "models" | "tools" | "knowledge";
+export type NodeAddMode = "child" | "wrap-selected" | "wrap-root";
 
 export type AgentEditorAction =
   | { type: "spec.replace"; spec: AgentSpecV1 }
   | { type: "node.select"; nodeID: string | null }
   | { type: "node.move"; nodeID: string; position: CanvasPoint }
-  | { type: "node.add"; nodeID: string; kind: AgentNodeKind; parentID?: string | null }
+  | { type: "node.add"; nodeID: string; kind: AgentNodeKind; parentID?: string | null; mode?: NodeAddMode; targetID?: string | null }
+  | { type: "node.reparent"; nodeID: string; parentID: string }
+  | { type: "layout.reset" }
   | { type: "node.delete"; nodeID: string }
   | { type: "node.replace"; nodeID: string; node: AgentNodeV1 }
   | { type: "root.set"; nodeID: string }
@@ -54,6 +58,7 @@ export function reconcileAgentEditorState(state: AgentEditorState, spec: AgentSp
     Object.keys(spec.nodes).map((nodeID) => [nodeID, state.positions[nodeID] ?? defaults[nodeID]]),
   );
   return {
+    ...state,
     spec: cloneAgentSpec(spec),
     selectedNodeID: state.selectedNodeID && spec.nodes[state.selectedNodeID]
       ? state.selectedNodeID
@@ -70,7 +75,7 @@ export function agentEditorReducer(state: AgentEditorState, action: AgentEditorA
       return reconcileAgentEditorState(state, action.spec);
     case "node.select":
       return action.nodeID === null || state.spec.nodes[action.nodeID]
-        ? { ...state, selectedNodeID: action.nodeID }
+        ? { ...state, selectedNodeID: action.nodeID, focusRevision: (state.focusRevision ?? 0) + 1 }
         : state;
     case "node.move":
       if (!state.spec.nodes[action.nodeID]) return state;
@@ -85,7 +90,11 @@ export function agentEditorReducer(state: AgentEditorState, action: AgentEditorA
         },
       };
     case "node.add":
-      return addNode(state, action.nodeID, action.kind, action.parentID ?? null);
+      return action.mode ? addNodeExplicitly(state, action) : addNode(state, action.nodeID, action.kind, action.parentID ?? null);
+    case "node.reparent":
+      return reparentNode(state, action.nodeID, action.parentID);
+    case "layout.reset":
+      return { ...state, positions: createDefaultNodePositions(state.spec), focusRevision: (state.focusRevision ?? 0) + 1 };
     case "node.delete":
       return deleteNode(state, action.nodeID);
     case "node.replace": {
@@ -180,7 +189,7 @@ export function createDefaultNodePositions(spec: AgentSpecV1): Record<string, Ca
   }
   const result: Record<string, CanvasPoint> = {};
   for (const [nodeDepth, nodeIDs] of [...levels.entries()].sort(([left], [right]) => left - right)) {
-    nodeIDs.sort().forEach((nodeID, index) => {
+    nodeIDs.forEach((nodeID, index) => {
       result[nodeID] = { x: 34 + index * 218, y: 30 + nodeDepth * 146 };
     });
   }
@@ -361,6 +370,102 @@ function addNode(state: AgentEditorState, nodeID: string, kind: AgentNodeKind, p
     selectedNodeID: nodeID,
     positions: { ...state.positions, [nodeID]: { x: 34, y } },
   };
+}
+
+export function getNodeParentIDs(spec: AgentSpecV1, nodeID: string): string[] {
+  return Object.entries(spec.nodes).filter(([, node]) => getNodeReferences(node).includes(nodeID)).map(([id]) => id);
+}
+
+export function getNodeReparentError(spec: AgentSpecV1, nodeID: string, parentID: string): string | null {
+  if (!spec.nodes[nodeID]) return "节点不存在。";
+  if (nodeID === spec.root) return "Root 不能移动到其他节点下；请使用包装 Root。";
+  const parent = spec.nodes[parentID];
+  if (!parent || parent.kind === "llm") return "目标父节点必须是 sequence、parallel 或空 loop。";
+  if (isNodeReachable(spec, nodeID, parentID)) return "目标是当前节点或其后代，会产生结构环。";
+  if (getNodeParentIDs(spec, nodeID).includes(parentID)) return "节点已经属于这个父节点。";
+  if (parent.kind === "loop" && parent.body) return "Loop 已有 Body；请先把原 Body 移到其他父节点。";
+  if ((parent.kind === "sequence" || parent.kind === "parallel") && parent.children.length >= AGENT_SPEC_LIMITS.children) {
+    return `父节点最多包含 ${AGENT_SPEC_LIMITS.children} 个子节点。`;
+  }
+  return null;
+}
+
+export function getNodeAddError(state: AgentEditorState, action: Extract<AgentEditorAction, { type: "node.add" }>): string | null {
+  const { spec } = state;
+  if (!isAgentSpecIdentifier(action.nodeID)) return "节点 ID 必须以小写字母开头，只含小写字母、数字、下划线或连字符，最多 64 字符。";
+  if (spec.nodes[action.nodeID]) return "节点 ID 已存在，请使用新的 ID。";
+  if (Object.keys(spec.nodes).length >= AGENT_SPEC_LIMITS.nodes) return `最多添加 ${AGENT_SPEC_LIMITS.nodes} 个节点。`;
+  if (action.mode === "child") {
+    const parent = action.parentID ? spec.nodes[action.parentID] : undefined;
+    if (!parent || (parent.kind !== "sequence" && parent.kind !== "parallel")) return "添加子节点需要选择 sequence 或 parallel 父节点。";
+    if (action.kind === "loop") return "Loop 需要已有 Body，请选择包装选中节点或包装 Root。";
+    if (parent.children.length >= AGENT_SPEC_LIMITS.children) return `父节点最多包含 ${AGENT_SPEC_LIMITS.children} 个子节点。`;
+  } else {
+    if (action.kind === "llm") return "LLM 不能包装节点，请选择 sequence、parallel 或 loop。";
+    const targetID = action.mode === "wrap-root" ? spec.root : action.targetID ?? state.selectedNodeID;
+    if (!targetID || !spec.nodes[targetID]) return "请选择要包装的已有节点。";
+    const parents = getNodeParentIDs(spec, targetID);
+    if ((targetID === spec.root && parents.length > 0) || (targetID !== spec.root && parents.length !== 1)) {
+      return "请先将待包装节点连接到唯一父节点。";
+    }
+  }
+  return null;
+}
+
+function addNodeExplicitly(state: AgentEditorState, action: Extract<AgentEditorAction, { type: "node.add" }>): AgentEditorState {
+  if (getNodeAddError(state, action)) return state;
+  const spec = cloneAgentSpec(state.spec);
+  const { nodeID, kind } = action;
+  if (action.mode === "child") {
+    const parent = spec.nodes[action.parentID!];
+    if (parent.kind !== "sequence" && parent.kind !== "parallel") return state;
+    if (kind === "llm") {
+      const modelSlot = Object.keys(spec.requirements.models)[0] ?? "primary";
+      spec.requirements.models[modelSlot] ??= { capabilities: ["chat"] };
+      spec.nodes[nodeID] = { kind, name: "新 LLM 节点", instruction: "描述该节点需要完成的任务。", model_slot: modelSlot, tool_slots: [], knowledge_slots: [] };
+    } else if (kind === "sequence" || kind === "parallel") {
+      spec.nodes[nodeID] = { kind, name: kind === "sequence" ? "顺序编排" : "并行编排", children: [] };
+    }
+    parent.children.push(nodeID);
+  } else {
+    const targetID = action.mode === "wrap-root" ? spec.root : action.targetID ?? state.selectedNodeID!;
+    if (kind === "loop") spec.nodes[nodeID] = { kind, name: "循环编排", body: targetID, max_iterations: 3 };
+    else if (kind === "sequence" || kind === "parallel") spec.nodes[nodeID] = { kind, name: kind === "sequence" ? "顺序编排" : "并行编排", children: [targetID] };
+    if (targetID === spec.root) spec.root = nodeID;
+    else {
+      const parent = spec.nodes[getNodeParentIDs(state.spec, targetID)[0]];
+      if (parent.kind === "loop") parent.body = nodeID;
+      else if (parent.kind === "sequence" || parent.kind === "parallel") parent.children = parent.children.map((id) => id === targetID ? nodeID : id);
+    }
+  }
+  const y = Math.max(0, ...Object.values(state.positions).map((position) => position.y)) + 146;
+  return { spec, selectedNodeID: nodeID, positions: { ...state.positions, [nodeID]: { x: 34, y } } };
+}
+
+function reparentNode(state: AgentEditorState, nodeID: string, parentID: string): AgentEditorState {
+  if (getNodeReparentError(state.spec, nodeID, parentID)) return state;
+  const spec = cloneAgentSpec(state.spec);
+  for (const node of Object.values(spec.nodes)) {
+    if (node.kind === "sequence" || node.kind === "parallel") node.children = node.children.filter((id) => id !== nodeID);
+    else if (node.kind === "loop" && node.body === nodeID) node.body = "";
+  }
+  const parent = spec.nodes[parentID];
+  if (parent.kind === "loop") parent.body = nodeID;
+  else if (parent.kind === "sequence" || parent.kind === "parallel") parent.children.push(nodeID);
+  return withSpec(state, spec);
+}
+
+function isNodeReachable(spec: AgentSpecV1, from: string, target: string): boolean {
+  const pending = [from];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current === target) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (spec.nodes[current]) pending.push(...getNodeReferences(spec.nodes[current]));
+  }
+  return false;
 }
 
 function deleteNode(state: AgentEditorState, nodeID: string): AgentEditorState {

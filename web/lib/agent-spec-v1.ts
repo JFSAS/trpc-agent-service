@@ -135,8 +135,89 @@ export function isAgentSpecV1(value: unknown): value is AgentSpecV1 {
 }
 
 /**
- * Mirrors the versioned JSON Schema closely enough to gate the visual and raw
- * JSON projections. Domain-semantic diagnostics live in agent-editor-state.ts.
+ * Checks only the typed V1 structure the canvas can preserve and render. Empty
+ * or temporarily invalid field values remain editable; publishing still uses
+ * the strict shape and domain-semantic validators. Unknown fields stay in JSON
+ * so visual edits cannot silently remove data the editor does not understand.
+ */
+export function isRenderableAgentSpecV1(value: unknown): value is AgentSpecV1 {
+  return hasRenderableFields(value, ["schema_version", "root", "requirements", "nodes"])
+    && value.schema_version === AGENT_SPEC_SCHEMA_VERSION
+    && typeof value.root === "string"
+    && isRenderableRequirements(value.requirements)
+    && isRenderableMap(value.nodes, isRenderableNode);
+}
+
+function isRenderableStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && Array.from(value).every((item) => typeof item === "string");
+}
+
+function isRenderableRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasRenderableFields(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): value is Record<string, unknown> {
+  return isRenderableRecord(value)
+    && required.every((field) => Object.prototype.hasOwnProperty.call(value, field))
+    && Object.keys(value).every((field) => required.includes(field) || optional.includes(field));
+}
+
+function isRenderableMap(value: unknown, isEntry: (entry: unknown) => boolean): boolean {
+  return isRenderableRecord(value)
+    && Object.values(value).every(isEntry);
+}
+
+function isRenderableRequirements(value: unknown): boolean {
+  const isCapability = (entry: unknown) => hasRenderableFields(entry, ["capability"])
+    && typeof entry.capability === "string";
+  return hasRenderableFields(value, ["models", "tools", "knowledge"])
+    && isRenderableMap(value.models, (entry) => hasRenderableFields(entry, ["capabilities"])
+      && isRenderableStringArray(entry.capabilities))
+    && isRenderableMap(value.tools, isCapability)
+    && isRenderableMap(value.knowledge, isCapability);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isRenderableNode(value: unknown): boolean {
+  if (!isRenderableRecord(value) || ("name" in value && typeof value.name !== "string")) return false;
+  switch (value.kind) {
+    case "llm":
+      return hasRenderableFields(value, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], ["name", "generation"])
+        && typeof value.instruction === "string"
+        && typeof value.model_slot === "string"
+        && isRenderableStringArray(value.tool_slots)
+        && isRenderableStringArray(value.knowledge_slots)
+        && (!("generation" in value) || (
+          hasRenderableFields(value.generation, [], ["temperature", "max_output_tokens"])
+          && (!("temperature" in value.generation) || isFiniteNumber(value.generation.temperature))
+          && (!("max_output_tokens" in value.generation) || isFiniteNumber(value.generation.max_output_tokens))
+        ));
+    case "sequence":
+    case "parallel":
+      return hasRenderableFields(value, ["kind", "children"], ["name"])
+        && isRenderableStringArray(value.children);
+    case "loop":
+      return hasRenderableFields(value, ["kind", "body", "max_iterations"], ["name"])
+        && typeof value.body === "string"
+        && isFiniteNumber(value.max_iterations);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Mirrors the versioned JSON Schema for strict publish validation. Canvas
+ * eligibility uses isRenderableAgentSpecV1 so field edits can remain incomplete.
+ * Domain-semantic diagnostics live in agent-editor-state.ts.
  */
 export function validateAgentSpecShape(value: unknown): AgentSpecDiagnostic[] {
   const diagnostics: AgentSpecDiagnostic[] = [];

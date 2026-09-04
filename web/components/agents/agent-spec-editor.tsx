@@ -5,11 +5,9 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 
 import type { AgentSpecDocument, ValidationDiagnostic } from "../../lib/control-api";
 import {
-  AGENT_NODE_KINDS,
   createSingleLLMAgentSpec,
-  isAgentSpecV1,
+  isRenderableAgentSpecV1,
   isEmptyAgentSpec,
-  type AgentNodeKind,
   type AgentNodeV1,
   type AgentSpecDiagnostic,
 } from "../../lib/agent-spec-v1";
@@ -22,11 +20,14 @@ import {
   validateAgentSpecLocally,
   type AgentEditorAction,
   type AgentEditorState,
-  type RequirementKind,
 } from "../../lib/agent-editor-state";
 import { Button } from "../ui";
 import { AgentCanvas } from "./agent-canvas";
 import { DiagnosticsPanel } from "./diagnostics-panel";
+import { CsvInput, NumberInput } from "./editor-inputs";
+import { RequirementsEditor } from "./requirements-editor";
+import { NodeToolbar, NodeStructureFields } from "./node-structure-editor";
+import styles from "./agent-spec-editor.module.css";
 
 export function AgentSpecEditor({
   value,
@@ -43,10 +44,10 @@ export function AgentSpecEditor({
 }) {
   const valueKey = useMemo(() => JSON.stringify(value), [value]);
   const [mode, setMode] = useState<"canvas" | "json">(
-    isAgentSpecV1(value) || isEmptyAgentSpec(value) ? "canvas" : "json",
+    isRenderableAgentSpecV1(value) || isEmptyAgentSpec(value) ? "canvas" : "json",
   );
   const [state, setState] = useState<AgentEditorState | null>(() =>
-    isAgentSpecV1(value) ? createAgentEditorState(value) : null,
+    isRenderableAgentSpecV1(value) ? createAgentEditorState(value) : null,
   );
   const [jsonSource, setJSONSource] = useState(() => JSON.stringify(value, null, 2));
   const [jsonError, setJSONError] = useState("");
@@ -54,7 +55,7 @@ export function AgentSpecEditor({
   useEffect(() => {
     setJSONSource(JSON.stringify(value, null, 2));
     setJSONError("");
-    if (isAgentSpecV1(value)) {
+    if (isRenderableAgentSpecV1(value)) {
       setState((current) => current
         ? agentEditorReducer(current, { type: "spec.replace", spec: value })
         : createAgentEditorState(value));
@@ -120,7 +121,7 @@ export function AgentSpecEditor({
       }
       setJSONError("");
       onChange(parsed as Record<string, unknown>);
-      if (isAgentSpecV1(parsed)) {
+      if (isRenderableAgentSpecV1(parsed)) {
         setState((current) => current
           ? agentEditorReducer(current, { type: "spec.replace", spec: parsed })
           : createAgentEditorState(parsed));
@@ -149,7 +150,7 @@ export function AgentSpecEditor({
   }
 
   return (
-    <section style={shellStyle}>
+    <section className={styles.shell} style={shellStyle}>
       <header style={headerStyle}>
         <div><strong style={{ display: "block", fontSize: 14 }}>AgentSpec V1 编辑器</strong><small style={{ color: "#778292" }}>画布生成 Spec；后端负责最终校验、规范化和发布。</small></div>
         <div style={{ display: "flex", gap: 6 }}>
@@ -163,14 +164,14 @@ export function AgentSpecEditor({
           <DiagnosticsPanel diagnostics={allDiagnostics} />
         </div>
       ) : (
-        <div className="agent-spec-editor-grid" style={visualGridStyle}>
+        <div className={`agent-spec-editor-grid ${styles.grid}`}>
           <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
             <NodeToolbar disabled={disabled} dispatch={dispatch} state={state} />
             <AgentCanvas disabled={disabled} diagnostics={allDiagnostics} onAction={dispatch} state={state} />
             <DiagnosticsPanel diagnostics={allDiagnostics} onSelectNode={(nodeID) => dispatch({ type: "node.select", nodeID })} />
           </div>
           <aside style={{ alignContent: "start", display: "grid", gap: 12, minWidth: 0 }}>
-            <NodeInspector disabled={disabled} dispatch={dispatch} state={state} />
+            <NodeInspector key={state.selectedNodeID} disabled={disabled} dispatch={dispatch} state={state} />
             <RequirementsEditor disabled={disabled} dispatch={dispatch} state={state} />
           </aside>
         </div>
@@ -198,26 +199,6 @@ function JSONEditor({ source, onChange, onApply, error, disabled }: {
   );
 }
 
-function NodeToolbar({ state, dispatch, disabled }: {
-  state: AgentEditorState;
-  dispatch(action: AgentEditorAction): void;
-  disabled: boolean;
-}) {
-  const [nodeID, setNodeID] = useState("");
-  const [kind, setKind] = useState<AgentNodeKind>("llm");
-  const selected = state.selectedNodeID ? state.spec.nodes[state.selectedNodeID] : undefined;
-  const canOwnChildren = selected?.kind === "sequence" || selected?.kind === "parallel";
-  const validID = /^[a-z][a-z0-9_-]{0,63}$/.test(nodeID) && !state.spec.nodes[nodeID];
-  return (
-    <div style={toolbarStyle}>
-      <input aria-label="新节点 ID" disabled={disabled} onChange={(event) => setNodeID(event.target.value)} placeholder="节点 ID，例如 review" style={inputStyle} value={nodeID} />
-      <select aria-label="新节点类型" disabled={disabled} onChange={(event) => setKind(event.target.value as AgentNodeKind)} style={inputStyle} value={kind}>{AGENT_NODE_KINDS.map((item) => <option key={item}>{item}</option>)}</select>
-      <Button disabled={disabled || !validID} onClick={() => { dispatch({ type: "node.add", nodeID, kind, parentID: canOwnChildren ? state.selectedNodeID : null }); setNodeID(""); }}><Plus size={13} />添加节点</Button>
-      <small style={{ color: "#778292", flex: 1, minWidth: 180 }}>{canOwnChildren ? `LLM 会附加到 ${state.selectedNodeID}；组合节点会包装 Root。` : "组合节点会包装当前 Root。"}</small>
-    </div>
-  );
-}
-
 function NodeInspector({ state, dispatch, disabled }: {
   state: AgentEditorState;
   dispatch(action: AgentEditorAction): void;
@@ -227,17 +208,15 @@ function NodeInspector({ state, dispatch, disabled }: {
   const node = nodeID ? state.spec.nodes[nodeID] : undefined;
   if (!nodeID || !node) return <section style={panelStyle}>请选择画布节点。</section>;
   const replace = (next: AgentNodeV1) => dispatch({ type: "node.replace", nodeID, node: next });
-  const candidates = Object.keys(state.spec.nodes).filter((item) => item !== nodeID);
   return (
     <section aria-label="节点属性" style={panelStyle}>
       <header style={panelHeaderStyle}>
         <div><strong>{nodeID}</strong><small style={{ color: "#778292", display: "block", marginTop: 3 }}>{node.kind}</small></div>
-        <div style={{ display: "flex", gap: 5 }}>{state.spec.root !== nodeID && <Button disabled={disabled} onClick={() => dispatch({ type: "root.set", nodeID })} variant="ghost">设为 Root</Button>}<Button aria-label={`删除节点 ${nodeID}`} disabled={disabled || Object.keys(state.spec.nodes).length <= 1} onClick={() => dispatch({ type: "node.delete", nodeID })} variant="danger"><Trash2 size={13} /></Button></div>
+        <Button aria-label={`删除节点 ${nodeID}`} disabled={disabled || Object.keys(state.spec.nodes).length <= 1} onClick={() => dispatch({ type: "node.delete", nodeID })} variant="danger"><Trash2 size={13} /></Button>
       </header>
-      <label style={fieldStyle}><span>显示名称</span><input disabled={disabled} onChange={(event) => replace({ ...node, name: event.target.value || undefined } as AgentNodeV1)} value={node.name ?? ""} /></label>
+      <label className="field"><span>显示名称</span><input disabled={disabled} onChange={(event) => replace({ ...node, name: event.target.value || undefined } as AgentNodeV1)} value={node.name ?? ""} /></label>
       {node.kind === "llm" && <LLMFields disabled={disabled} node={node} replace={replace} state={state} />}
-      {(node.kind === "sequence" || node.kind === "parallel") && <label style={fieldStyle}><span>Children（逗号分隔、有序）</span><input disabled={disabled} onChange={(event) => replace({ ...node, children: csv(event.target.value) })} value={node.children.join(", ")} /><small>引用已有节点 ID；顺序即执行顺序。</small></label>}
-      {node.kind === "loop" && <><label style={fieldStyle}><span>Body</span><select disabled={disabled} onChange={(event) => dispatch({ type: "loop.body.set", nodeID, body: event.target.value })} value={node.body}>{candidates.map((item) => <option key={item}>{item}</option>)}</select></label><label style={fieldStyle}><span>最大迭代次数</span><input disabled={disabled} min={1} max={32} onChange={(event) => replace({ ...node, max_iterations: Number(event.target.value) })} type="number" value={node.max_iterations} /></label></>}
+      <NodeStructureFields disabled={disabled} dispatch={dispatch} nodeID={nodeID} state={state} />
     </section>
   );
 }
@@ -249,49 +228,19 @@ function LLMFields({ node, state, replace, disabled }: {
   disabled: boolean;
 }) {
   return <>
-    <label style={fieldStyle}><span>Instruction</span><textarea disabled={disabled} onChange={(event) => replace({ ...node, instruction: event.target.value })} rows={5} value={node.instruction} /></label>
-    <label style={fieldStyle}><span>Model Slot</span><select disabled={disabled} onChange={(event) => replace({ ...node, model_slot: event.target.value })} value={node.model_slot}>{Object.keys(state.spec.requirements.models).map((slot) => <option key={slot}>{slot}</option>)}</select></label>
-    <label style={fieldStyle}><span>Tool Slots（逗号分隔）</span><input disabled={disabled} onChange={(event) => replace({ ...node, tool_slots: csv(event.target.value) })} value={node.tool_slots.join(", ")} /></label>
-    <label style={fieldStyle}><span>Knowledge Slots（逗号分隔）</span><input disabled={disabled} onChange={(event) => replace({ ...node, knowledge_slots: csv(event.target.value) })} value={node.knowledge_slots.join(", ")} /></label>
-    <div style={{ display: "grid", gap: 7, gridTemplateColumns: "1fr 1fr" }}>
-      <label style={fieldStyle}><span>Temperature</span><input disabled={disabled} max={2} min={0} onChange={(event) => replace({ ...node, generation: generation(event.target.value, node.generation?.max_output_tokens) })} step={0.1} type="number" value={node.generation?.temperature ?? ""} /></label>
-      <label style={fieldStyle}><span>Max Tokens</span><input disabled={disabled} max={262144} min={1} onChange={(event) => replace({ ...node, generation: generation(node.generation?.temperature, event.target.value) })} type="number" value={node.generation?.max_output_tokens ?? ""} /></label>
+    <label className="field"><span>Instruction</span><textarea disabled={disabled} onChange={(event) => replace({ ...node, instruction: event.target.value })} rows={5} style={{ font: "inherit" }} value={node.instruction} /></label>
+    <label className="field"><span>Model Slot</span><select disabled={disabled} onChange={(event) => replace({ ...node, model_slot: event.target.value })} value={node.model_slot}>{Object.keys(state.spec.requirements.models).map((slot) => <option key={slot}>{slot}</option>)}</select></label>
+    <label className="field"><span>Tool Slots（逗号分隔）</span><CsvInput disabled={disabled} onValueChange={(tool_slots) => replace({ ...node, tool_slots })} value={node.tool_slots} /></label>
+    <label className="field"><span>Knowledge Slots（逗号分隔）</span><CsvInput disabled={disabled} onValueChange={(knowledge_slots) => replace({ ...node, knowledge_slots })} value={node.knowledge_slots} /></label>
+    <div style={{ display: "grid", gap: 7, gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
+      <label className="field"><span>Temperature</span><NumberInput disabled={disabled} max={2} min={0} onValueChange={(temperature) => replace({ ...node, generation: generation(temperature, node.generation?.max_output_tokens) })} step={0.1} value={node.generation?.temperature} /></label>
+      <label className="field"><span>Max Tokens</span><NumberInput disabled={disabled} max={262144} min={1} onValueChange={(tokens) => replace({ ...node, generation: generation(node.generation?.temperature, tokens) })} value={node.generation?.max_output_tokens} /></label>
     </div>
   </>;
 }
 
-function RequirementsEditor({ state, dispatch, disabled }: {
-  state: AgentEditorState;
-  dispatch(action: AgentEditorAction): void;
-  disabled: boolean;
-}) {
-  return <section aria-label="资源需求槽位" style={panelStyle}><header style={panelHeaderStyle}><div><strong>Requirements</strong><small style={{ color: "#778292", display: "block", marginTop: 3 }}>只声明逻辑槽位，不填写密钥</small></div></header><RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.models} kind="models" /><RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.tools} kind="tools" /><RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.knowledge} kind="knowledge" /></section>;
-}
-
-function RequirementGroup({ kind, entries, dispatch, disabled }: {
-  kind: RequirementKind;
-  entries: Record<string, { capabilities: string[] } | { capability: string }>;
-  dispatch(action: AgentEditorAction): void;
-  disabled: boolean;
-}) {
-  const [slot, setSlot] = useState("");
-  const [capability, setCapability] = useState(kind === "models" ? "chat" : "");
-  const title = kind === "models" ? "Models" : kind === "tools" ? "Tools" : "Knowledge";
-  function update(slotID: string, next: string) {
-    if (kind === "models") dispatch({ type: "requirement.model.set", slot: slotID, capabilities: csv(next) });
-    else dispatch({ type: "requirement.capability.set", kind, slot: slotID, capability: next });
-  }
-  return <div style={{ display: "grid", gap: 6 }}><span style={{ color: "#344054", fontSize: 10, fontWeight: 700 }}>{title}</span>{Object.entries(entries).map(([slotID, item]) => <div key={slotID} style={requirementStyle}><code>{slotID}</code><input aria-label={`${slotID} capability`} disabled={disabled} onChange={(event) => update(slotID, event.target.value)} value={"capabilities" in item ? item.capabilities.join(", ") : item.capability} /><button aria-label={`删除 ${slotID}`} disabled={disabled} onClick={() => dispatch({ type: "requirement.delete", kind, slot: slotID })} style={trashStyle}><Trash2 size={12} /></button></div>)}<div style={requirementStyle}><input aria-label={`${title} 新 Slot ID`} disabled={disabled} onChange={(event) => setSlot(event.target.value)} placeholder="slot_id" value={slot} /><input aria-label={`${title} 新 Capability`} disabled={disabled} onChange={(event) => setCapability(event.target.value)} placeholder={kind === "models" ? "chat, tool_call" : "web.search"} value={capability} /><Button aria-label={`添加 ${title} Slot`} disabled={disabled || !slot} onClick={() => { update(slot, capability); setSlot(""); setCapability(kind === "models" ? "chat" : ""); }} variant="secondary"><Plus size={12} /></Button></div></div>;
-}
-
-function generation(temperatureInput: string | number | undefined, tokenInput: string | number | undefined) {
-  const temperature = temperatureInput === "" || temperatureInput === undefined ? undefined : Number(temperatureInput);
-  const max_output_tokens = tokenInput === "" || tokenInput === undefined ? undefined : Number(tokenInput);
+function generation(temperature: number | undefined, max_output_tokens: number | undefined) {
   return temperature === undefined && max_output_tokens === undefined ? undefined : { temperature, max_output_tokens };
-}
-
-function csv(value: string): string[] {
-  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
 }
 
 function findSensitiveAgentSpecField(value: unknown, pointer = ""): string | null {
@@ -320,14 +269,8 @@ function findSensitiveAgentSpecField(value: unknown, pointer = ""): string | nul
 }
 
 const shellStyle: CSSProperties = { background: "#fff", border: "1px solid #e5eaf1", borderRadius: 11, overflow: "hidden" };
-const headerStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid #e5eaf1", display: "flex", gap: 12, justifyContent: "space-between", padding: "13px 14px" };
-const visualGridStyle: CSSProperties = { alignItems: "start", display: "grid", gap: 12, gridTemplateColumns: "minmax(0,1fr) minmax(270px,330px)", padding: 12 };
+const headerStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid #e5eaf1", display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between", padding: "13px 14px" };
 const emptyStyle: CSSProperties = { alignItems: "center", background: "#fff", border: "1px solid #e5eaf1", borderRadius: 11, display: "flex", flexDirection: "column", gap: 13, justifyContent: "center", minHeight: 430, padding: 30, textAlign: "center" };
-const toolbarStyle: CSSProperties = { alignItems: "center", background: "#fff", border: "1px solid #e5eaf1", borderRadius: 10, display: "flex", flexWrap: "wrap", gap: 8, padding: 10 };
 const panelStyle: CSSProperties = { background: "#fff", border: "1px solid #e5eaf1", borderRadius: 10, display: "grid", gap: 12, minWidth: 0, padding: 13 };
 const panelHeaderStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid #edf0f4", display: "flex", justifyContent: "space-between", paddingBottom: 10 };
-const fieldStyle: CSSProperties = { color: "#344054", display: "grid", fontSize: 10, fontWeight: 650, gap: 6 };
-const inputStyle: CSSProperties = { background: "#fff", border: "1px solid #d8e0ea", borderRadius: 7, height: 34, minWidth: 120, padding: "0 9px" };
-const requirementStyle: CSSProperties = { alignItems: "center", display: "grid", gap: 6, gridTemplateColumns: "minmax(62px,.7fr) minmax(90px,1.3fr) auto" };
-const trashStyle: CSSProperties = { alignItems: "center", background: "transparent", border: 0, color: "#667085", display: "inline-flex", height: 26, justifyContent: "center", width: 26 };
 const jsonStyle: CSSProperties = { background: "#0f1724", border: "1px solid #26364a", borderRadius: 9, color: "#dbeafe", font: "11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace", minHeight: 420, padding: 15, resize: "vertical", width: "100%" };

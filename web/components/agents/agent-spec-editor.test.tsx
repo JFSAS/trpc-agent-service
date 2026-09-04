@@ -98,6 +98,8 @@ describe("AgentSpecEditor", () => {
     render(<AgentSpecEditor onChange={onChange} value={createSingleLLMAgentSpec()} />);
 
     async function addNode(nodeID: string, kind: "llm" | "sequence" | "parallel" | "loop") {
+      await user.selectOptions(screen.getByLabelText("节点操作"), kind === "llm" ? "child" : "wrap-root");
+      if (nodeID === "worker") await user.selectOptions(screen.getByLabelText("新节点父节点"), "fanout");
       await user.type(screen.getByLabelText("新节点 ID"), nodeID);
       await user.selectOptions(screen.getByLabelText("新节点类型"), kind);
       await user.click(screen.getByRole("button", { name: /添加节点/ }));
@@ -123,6 +125,9 @@ describe("AgentSpecEditor", () => {
     const generated = onChange.mock.calls.at(-1)?.[0];
     expect(isAgentSpecV1(generated)).toBe(true);
     const spec = generated as AgentSpecV1;
+    expect(Object.keys(spec.nodes).sort()).toEqual(["assistant", "fanout", "flow", "retry", "review", "worker"]);
+    expect(spec.nodes.flow).toEqual(expect.objectContaining({ children: ["assistant", "review"] }));
+    expect(spec.nodes.fanout).toEqual(expect.objectContaining({ children: ["flow", "worker"] }));
     expect(Object.values(spec.nodes).map((node) => node.kind)).toEqual(
       expect.arrayContaining(["llm", "sequence", "parallel", "loop"]),
     );

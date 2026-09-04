@@ -61,4 +61,85 @@ describe("Agent editor state", () => {
       expect.objectContaining({ code: "AGENT_SPEC_NODE_REFERENCE_NOT_FOUND", node_id: "main", pointer: "/nodes/main/children/1" }),
     ]));
   });
+
+  it("adds nested containers explicitly without wrapping Root or leaving orphan nodes", () => {
+    let state = createAgentEditorState(createSingleLLMAgentSpec());
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "flow", kind: "sequence", mode: "wrap-root" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "fanout", kind: "parallel", mode: "child", parentID: "flow" });
+    expect(state.spec.root).toBe("flow");
+    expect(state.spec.nodes.flow).toMatchObject({ children: ["assistant", "fanout"] });
+    expect(state.spec.nodes.fanout).toMatchObject({ children: [] });
+    const before = state;
+    expect(agentEditorReducer(state, { type: "node.add", nodeID: "orphan", kind: "llm", mode: "child", parentID: "assistant" })).toBe(before);
+    expect(agentEditorReducer(state, { type: "node.add", nodeID: "retry", kind: "loop", mode: "child", parentID: "flow" })).toBe(before);
+  });
+
+  it("wraps a selected nested node in place and preserves the parent's child order", () => {
+    let state = createAgentEditorState(createSingleLLMAgentSpec());
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "flow", kind: "sequence", mode: "wrap-root" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "review", kind: "llm", mode: "child", parentID: "flow" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "retry", kind: "loop", mode: "wrap-selected", targetID: "assistant" });
+    expect(state.spec.root).toBe("flow");
+    expect(state.spec.nodes.flow).toMatchObject({ children: ["retry", "review"] });
+    expect(state.spec.nodes.retry).toMatchObject({ body: "assistant" });
+    expect(validateAgentSpecLocally(state.spec).filter((item) => item.severity === "error")).toEqual([]);
+  });
+
+  it("reparents nodes atomically while rejecting cycles, root moves and occupied loops", () => {
+    let state = createAgentEditorState(createSingleLLMAgentSpec());
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "flow", kind: "sequence", mode: "wrap-root" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "fanout", kind: "parallel", mode: "child", parentID: "flow" });
+    state = agentEditorReducer(state, { type: "node.reparent", nodeID: "assistant", parentID: "fanout" });
+    expect(state.spec.nodes.flow).toMatchObject({ children: ["fanout"] });
+    expect(state.spec.nodes.fanout).toMatchObject({ children: ["assistant"] });
+    expect(agentEditorReducer(state, { type: "node.reparent", nodeID: "flow", parentID: "fanout" })).toBe(state);
+    expect(agentEditorReducer(state, { type: "node.reparent", nodeID: "fanout", parentID: "assistant" })).toBe(state);
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "retry", kind: "loop", mode: "wrap-selected", targetID: "assistant" });
+    expect(agentEditorReducer(state, { type: "node.reparent", nodeID: "fanout", parentID: "retry" })).toBe(state);
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "review", kind: "llm", mode: "child", parentID: "flow" });
+    expect(agentEditorReducer(state, { type: "node.reparent", nodeID: "review", parentID: "retry" })).toBe(state);
+    expect(validateAgentSpecLocally(state.spec).filter((item) => item.severity === "error")).toEqual([]);
+  });
+
+  it("reorders children and resets canvas layout without changing the Spec", () => {
+    let state = createAgentEditorState(createSingleLLMAgentSpec());
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "flow", kind: "sequence", mode: "wrap-root" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "review", kind: "llm", mode: "child", parentID: "flow" });
+    state = agentEditorReducer(state, { type: "child.move", parentID: "flow", from: 1, to: 0 });
+    expect(state.spec.nodes.flow).toMatchObject({ children: ["review", "assistant"] });
+    state = agentEditorReducer(state, { type: "node.move", nodeID: "assistant", position: { x: 999, y: 999 } });
+    const laidOut = agentEditorReducer(state, { type: "layout.reset" });
+    expect(laidOut.spec).toBe(state.spec);
+    expect(laidOut.positions.assistant).not.toEqual({ x: 999, y: 999 });
+    expect(laidOut.positions.review.x).toBeLessThan(laidOut.positions.assistant.x);
+  });
+
+  it("keeps wrapping inside a loop and moves its body without creating extra parents", () => {
+    let state = createAgentEditorState(createSingleLLMAgentSpec());
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "flow", kind: "sequence", mode: "wrap-root" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "retry", kind: "loop", mode: "wrap-selected", targetID: "assistant" });
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "nested", kind: "sequence", mode: "wrap-selected", targetID: "assistant" });
+    expect(state.spec.nodes.retry).toMatchObject({ body: "nested" });
+    expect(state.spec.nodes.nested).toMatchObject({ children: ["assistant"] });
+    state = agentEditorReducer(state, { type: "node.reparent", nodeID: "nested", parentID: "flow" });
+    expect(state.spec.nodes.retry).toMatchObject({ body: "" });
+    state = agentEditorReducer(state, { type: "node.reparent", nodeID: "assistant", parentID: "retry" });
+    expect(state.spec.nodes.retry).toMatchObject({ body: "assistant" });
+    expect(state.spec.nodes.nested).toMatchObject({ children: [] });
+    expect(state.spec.nodes.flow).toMatchObject({ children: ["retry", "nested"] });
+  });
+
+  it("rejects invalid IDs, duplicate IDs, invalid wrapping and full parents without mutating state", () => {
+    let state = createAgentEditorState(createSingleLLMAgentSpec());
+    state = agentEditorReducer(state, { type: "node.add", nodeID: "flow", kind: "sequence", mode: "wrap-root" });
+    for (const nodeID of ["Bad ID", "assistant"]) {
+      expect(agentEditorReducer(state, { type: "node.add", nodeID, kind: "llm", mode: "child", parentID: "flow" })).toBe(state);
+    }
+    expect(agentEditorReducer(state, { type: "node.add", nodeID: "wrapper", kind: "llm", mode: "wrap-root" })).toBe(state);
+    expect(agentEditorReducer(state, { type: "node.add", nodeID: "wrapper", kind: "sequence", mode: "wrap-selected", targetID: "missing" })).toBe(state);
+    for (let index = 1; index < 64; index++) {
+      state = agentEditorReducer(state, { type: "node.add", nodeID: `child_${index}`, kind: "llm", mode: "child", parentID: "flow" });
+    }
+    expect(agentEditorReducer(state, { type: "node.add", nodeID: "overflow", kind: "llm", mode: "child", parentID: "flow" })).toBe(state);
+  });
 });
