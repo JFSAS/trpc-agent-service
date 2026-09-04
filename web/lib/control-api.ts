@@ -1,3 +1,5 @@
+import type { AgentSpecV1 } from "./agent-spec-v1";
+
 export type User = {
   id: string;
   username: string;
@@ -39,11 +41,91 @@ export type Membership = {
   created_at: string;
 };
 
+export type Agent = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string;
+  latest_version_number: number | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Drafts are persisted before they are necessarily publication-valid. The
+ * initial Draft returned by the API is `{}`, so callers must narrow it before
+ * rendering a complete AgentSpec V1 document.
+ */
+export type AgentSpecDocument = AgentSpecV1 | Record<string, unknown>;
+
+export type AgentDraft = {
+  agent_id: string;
+  tenant_id: string;
+  revision: number;
+  spec: AgentSpecDocument;
+  updated_by: string;
+  updated_at: string;
+};
+
+export type AgentVersion = {
+  id: string;
+  tenant_id: string;
+  agent_id: string;
+  version_number: number;
+  source_draft_revision: number;
+  schema_version: "v1";
+  spec: AgentSpecV1;
+  spec_digest: string;
+  published_by: string;
+  published_at: string;
+};
+
+export type AgentPage = {
+  agents: Agent[];
+  offset: number;
+  limit: number;
+  total: number;
+};
+
+export type AgentVersionPage = {
+  versions: AgentVersion[];
+  offset: number;
+  limit: number;
+  total: number;
+};
+
+export type ValidationDiagnostic = {
+  code: string;
+  severity: "error" | "warning";
+  pointer: string;
+  node_id: string | null;
+  message: string;
+};
+
+export type ValidationReport = {
+  valid: boolean;
+  schema_version: string;
+  draft_revision: number;
+  diagnostics: ValidationDiagnostic[];
+};
+
+export type CreateAgentResponse = {
+  agent: Agent;
+  draft: AgentDraft;
+};
+
+export type PublishAgentVersionResponse = {
+  version: AgentVersion;
+  validation: ValidationReport;
+};
+
 export class ControlApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly validation?: ValidationReport,
   ) {
     super(message);
     this.name = "ControlApiError";
@@ -61,11 +143,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null) as {
       error?: { code?: string; message?: string };
+      validation?: ValidationReport;
     } | null;
     throw new ControlApiError(
       response.status,
       body?.error?.code ?? "HTTP_ERROR",
       body?.error?.message ?? `Control API returned HTTP ${response.status}`,
+      body?.validation,
     );
   }
 
@@ -146,6 +230,83 @@ export const controlApi = {
     return request<void>(
       `/v1/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`,
       { method: "DELETE" },
+    );
+  },
+  createAgent(tenantId: string, input: { name: string; description?: string }) {
+    return request<CreateAgentResponse>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents`,
+      json("POST", input),
+    );
+  },
+  listAgents(tenantId: string, page: { offset: number; limit: number }) {
+    const query = new URLSearchParams({ offset: String(page.offset), limit: String(page.limit) });
+    return request<AgentPage>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents?${query}`,
+    );
+  },
+  getAgent(tenantId: string, agentId: string) {
+    return request<Agent>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}`,
+    );
+  },
+  updateAgent(
+    tenantId: string,
+    agentId: string,
+    input: { name?: string; description?: string },
+  ) {
+    return request<Agent>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}`,
+      json("PATCH", input),
+    );
+  },
+  getAgentDraft(tenantId: string, agentId: string) {
+    return request<AgentDraft>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/draft`,
+    );
+  },
+  saveAgentDraft(
+    tenantId: string,
+    agentId: string,
+    input: { expected_revision: number; spec: AgentSpecDocument },
+  ) {
+    return request<AgentDraft>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/draft`,
+      json("PUT", input),
+    );
+  },
+  validateAgentDraft(
+    tenantId: string,
+    agentId: string,
+    input: { expected_revision: number },
+  ) {
+    return request<ValidationReport>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/draft/validate`,
+      json("POST", input),
+    );
+  },
+  publishAgentVersion(
+    tenantId: string,
+    agentId: string,
+    input: { expected_revision: number },
+  ) {
+    return request<PublishAgentVersionResponse>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions`,
+      json("POST", input),
+    );
+  },
+  listAgentVersions(
+    tenantId: string,
+    agentId: string,
+    page: { offset: number; limit: number },
+  ) {
+    const query = new URLSearchParams({ offset: String(page.offset), limit: String(page.limit) });
+    return request<AgentVersionPage>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions?${query}`,
+    );
+  },
+  getAgentVersion(tenantId: string, agentId: string, versionNumber: number) {
+    return request<AgentVersion>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(String(versionNumber))}`,
     );
   },
 };
