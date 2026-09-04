@@ -9,11 +9,12 @@ import (
 
 func normalizeSpec(spec Spec) Spec {
 	normalized := Spec{
-		SchemaVersion: spec.SchemaVersion,
-		Models:        make(map[string]ModelResource, len(spec.Models)),
-		Tools:         make(map[string]ToolResource, len(spec.Tools)),
-		Knowledge:     make(map[string]KnowledgeResource, len(spec.Knowledge)),
-		Storage:       make(map[string]StorageResource, len(spec.Storage)),
+		SchemaVersion:             spec.SchemaVersion,
+		CredentialProtocolVersion: spec.CredentialProtocolVersion,
+		Models:                    make(map[string]ModelResource, len(spec.Models)),
+		Tools:                     make(map[string]ToolResource, len(spec.Tools)),
+		Knowledge:                 make(map[string]KnowledgeResource, len(spec.Knowledge)),
+		Storage:                   make(map[string]StorageResource, len(spec.Storage)),
 	}
 	for key, resource := range spec.Models {
 		resource.Capabilities = append([]string{}, resource.Capabilities...)

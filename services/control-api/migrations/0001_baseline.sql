@@ -228,3 +228,67 @@ $$;
 CREATE TRIGGER runtime_profile_revisions_immutable
 BEFORE UPDATE OR DELETE ON runtime_profile_revisions
 FOR EACH ROW EXECUTE FUNCTION reject_runtime_profile_revision_mutation();
+
+-- Profile owns the current encrypted value. Published specs contain only its ID.
+CREATE TABLE runtime_profile_credentials (
+    tenant_id           text NOT NULL,
+    profile_id          text NOT NULL,
+    id                  text NOT NULL,
+    category            text NOT NULL CHECK (btrim(category) <> ''),
+    resource_name       text NOT NULL CHECK (btrim(resource_name) <> ''),
+    purpose             text NOT NULL CHECK (btrim(purpose) <> ''),
+    audience_digest     text NOT NULL CHECK (btrim(audience_digest) <> ''),
+    credential_revision bigint NOT NULL CHECK (credential_revision > 0),
+    status              text NOT NULL CHECK (status IN ('active', 'cleared')),
+    ciphertext          bytea,
+    created_by          text NOT NULL REFERENCES user_accounts(id),
+    updated_by          text NOT NULL REFERENCES user_accounts(id),
+    created_at          timestamptz NOT NULL,
+    updated_at          timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, profile_id, id),
+    CONSTRAINT runtime_profile_credentials_profile_fk
+        FOREIGN KEY (tenant_id, profile_id)
+        REFERENCES runtime_profiles(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT runtime_profile_credentials_value_state CHECK (
+        (status = 'active' AND ciphertext IS NOT NULL AND octet_length(ciphertext) > 0)
+        OR (status = 'cleared' AND ciphertext IS NULL)
+    )
+);
+
+CREATE FUNCTION protect_runtime_profile_credential_identity() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.tenant_id, NEW.profile_id, NEW.id, NEW.category, NEW.resource_name,
+           NEW.purpose, NEW.audience_digest, NEW.created_by, NEW.created_at)
+       IS DISTINCT FROM
+       ROW(OLD.tenant_id, OLD.profile_id, OLD.id, OLD.category, OLD.resource_name,
+           OLD.purpose, OLD.audience_digest, OLD.created_by, OLD.created_at) THEN
+        RAISE EXCEPTION 'profile credential identity and purpose are immutable';
+    END IF;
+    IF OLD.status <> 'active' THEN
+        RAISE EXCEPTION 'cleared profile credential is terminal';
+    END IF;
+    IF NEW.credential_revision <> OLD.credential_revision + 1 THEN
+        RAISE EXCEPTION 'profile credential revision must advance by one';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER runtime_profile_credentials_protected
+BEFORE UPDATE ON runtime_profile_credentials
+FOR EACH ROW EXECUTE FUNCTION protect_runtime_profile_credential_identity();
+
+CREATE TABLE runtime_profile_credential_receipts (
+    tenant_id       text NOT NULL,
+    profile_id      text NOT NULL,
+    actor_user_id   text NOT NULL REFERENCES user_accounts(id),
+    idempotency_key text NOT NULL CHECK (btrim(idempotency_key) <> ''),
+    request_mac     text NOT NULL CHECK (btrim(request_mac) <> ''),
+    result_jsonb    jsonb NOT NULL CHECK (jsonb_typeof(result_jsonb) = 'object'),
+    created_at     timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, profile_id, actor_user_id, idempotency_key),
+    CONSTRAINT runtime_profile_credential_receipts_profile_fk
+        FOREIGN KEY (tenant_id, profile_id)
+        REFERENCES runtime_profiles(tenant_id, id) ON DELETE CASCADE
+);

@@ -35,7 +35,12 @@ func (h *Handler) publishProfileRevision(c *gin.Context) {
 	if result.Created {
 		status = http.StatusCreated
 	}
-	c.JSON(status, publishProfileRevisionResponse{Revision: profileRevisionView(result.Revision)})
+	view, err := application.PublishedProfileRead(result.Revision)
+	if err != nil {
+		handleApplicationError(c, err)
+		return
+	}
+	c.JSON(status, publishProfileRevisionResponse{Revision: view})
 }
 
 func (h *Handler) getProfileRevision(c *gin.Context) {
@@ -48,14 +53,14 @@ func (h *Handler) getProfileRevision(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "revision_number is invalid")
 		return
 	}
-	revision, err := h.service.GetProfileRevision(
+	revision, err := h.service.GetCredentialRevision(
 		c.Request.Context(), c.Param("tenant_id"), c.Param("profile_id"), identity.UserID, revisionNumber,
 	)
 	if err != nil {
 		handleApplicationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, profileRevisionView(revision))
+	c.JSON(http.StatusOK, revision)
 }
 
 func (h *Handler) listProfileRevisions(c *gin.Context) {

@@ -111,8 +111,10 @@ func New(ctx context.Context, config Config) (*App, error) {
 	}
 	runtimeProfileModule, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
 		DB: pool, Routes: router,
-		Authenticate: identityModule.AuthenticationMiddleware(),
-		TenantAccess: activeTenantMemberLookup{tenants: tenantModule.Service},
+		Authenticate:  identityModule.AuthenticationMiddleware(),
+		CredentialKey: config.ProfileCredentialKey,
+		OwnerAccess:   activeTenantMemberLookup{tenants: tenantModule.Service},
+		TenantAccess:  activeTenantMemberLookup{tenants: tenantModule.Service},
 	})
 	if err != nil {
 		pool.Close()

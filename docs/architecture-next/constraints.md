@@ -290,29 +290,42 @@ ProfileRevision、Environment 或 Secret。Runtime Profile 绑定和 RuntimeMani
 Deployment 发布阶段；实际 tRPC-Agent-Go 对象只能由 Worker 根据固定
 RuntimeManifest 组装。详细设计见 [`control-api/agent.md`](control-api/agent.md)。
 
-### ARC-212：Runtime Profile V1 终止于不可变 ProfileRevision
+### ARC-212：Runtime Profile V1 拥有资源发布与私有凭据边界
 
 `runtimeprofile` 拥有 Tenant 范围内稳定的 Runtime Profile、当前唯一的 ProfileDraft、
-RuntimeProfileSpec 校验和不可变 ProfileRevision 发布。V1 已实现 10 个 Tenant-scoped
-HTTP API，覆盖 Profile 元数据、Draft 保存与校验以及 Revision 发布与读取。
+RuntimeProfileSpec 校验、不可变 ProfileRevision 发布和 Profile 私有凭据。V1 已实现 11 个
+Tenant-scoped HTTP 操作，覆盖元数据、Draft 保存与校验、Revision 发布与读取及显式
+live 凭据更新。公开 Write、内部 Canonical Spec 和公开 Read 使用独立 DTO：用户直接
+录入 write-only 凭据，内部 Spec 只包含服务器生成的 CredentialID，公开读取不返回
+Spec、内部 ID、值或密文。当前加密值与 Receipt 由 Profile 私有表保存。
 
 RuntimeProfileSpec V1 是关闭协议，只接受四种 Resource Kind：Model 的
 `openai_compatible`、Tool 的 `mcp_streamable_http`、Knowledge 的
-`qdrant_openai` 和 Storage 的 `postgres_state`。Kind 的严格字段、SecretRef 位置、
-数量与字符串上限由版本化 JSON Schema、Go Domain 类型和 Fixture 共同约束；禁止以
+`qdrant_openai` 和 Storage 的 `postgres_state`；MCP Capability 固定为 `web.search`。
+Kind 的严格字段、内部凭据关联位置、数量与字符串上限由版本化 JSON Schema、
+Go Domain 类型和 Fixture 共同约束；禁止以
 开放配置 Blob 或 SDK Option 扩展 V1。
 
 发布幂等键是 `(TenantID, ProfileID, SourceDraftRevision)`。已经发布 Source Draft
 Revision N 后，即使当前 Draft 已前进到 N+1，对 N 的延迟重试仍必须返回原
-ProfileRevision；只有 N 尚未发布且不再是当前 Draft 时才返回冲突。任何向调用方、
-Deployment Compiler 或其他子领域暴露完整 ProfileRevision Spec 的读取，
+ProfileRevision；只有 N 尚未发布且不再是当前 Draft 时才返回冲突。发布响应使用固定
+脱敏 DTO，不附动态 credential_states。任何完整 ProfileRevision 的读取，包括生成公开
+详情的内部来源以及向 Deployment Compiler 或其他子领域暴露完整 Spec 的读取，
 都必须重新 Canonicalize，并核对 Schema Version 与 Spec Digest；持久化层返回的
 `spec_jsonb` 不能直接视为可信 Canonical Spec。只返回 Revision 元数据的 Summary
 读取必须使用不包含 `spec_jsonb` 的专用投影，不得加载完整 Spec，也不得执行完整
 Spec Canonicalization。
 
+普通 Draft 凭据 replace 使用 COW 新建关联；clear 只解除 Draft 关联。显式 live 更新
+使用独立 Credential CAS，不修改已发布配置与 Digest；live clear 后该 ID 不原地恢复。
+凭据写入、清除、含关联资源删除和 live 更新要求 Tenant OWNER，并在事务及 Receipt
+重放时复核。Profile 发布仍是静态校验，不读取 AgentVersion、live 状态或 Provider。
+
 Runtime Profile V1 不创建 DeploymentRevision 或 RuntimeManifest，不发布 NATS/Outbox
-事件，不访问 Worker，也不构造 tRPC-Agent-Go 对象。详细契约见
+事件，也不构造 tRPC-Agent-Go 对象。Profile 已提供 CheckUsable、ResolveForAttempt 和
+可选内部 runtimehttp Adapter；默认 bootstrap 未注入执行授权拥有方与工作负载认证，
+不注册内部取值路由。真实 Deployment、Run/Attempt 授权与 Worker 接线仍待后续任务。
+详细契约见
 [`control-api/runtime-profile.md`](control-api/runtime-profile.md) 与
 [`control-api/runtime-profile-spec.md`](control-api/runtime-profile-spec.md)。
 
@@ -321,11 +334,20 @@ Runtime Profile V1 不创建 DeploymentRevision 或 RuntimeManifest，不发布 
 ### ARC-301：三个模块必须分开
 
 - Runtime Profile 管理可复用、Tenant 范围内的 Model、Tool、Knowledge、Storage
-  资源配置、这些资源引用的 `SecretRef` 及其不可变修订。
-- Deployment 选择 Environment、AgentVersion 和 ProfileRevision，并生成不可变
-  `RuntimeManifest`。
+  资源配置、内部凭据关联与不可变修订，并拥有当前凭据的加密值、状态和写入事务。
+- Deployment 选择 AgentVersion 和 ProfileRevision，按资源类别和名称精确匹配、校验，
+  将解析结果固定到不可变 `RuntimeManifest`；用户不需要额外的 Slot → Resource 映射表。
 - Channel Binding 管理外部 Bot/Channel 与 DeploymentRevision 的绑定，并发布
   Gateway 所需的运行路由投影。
+
+V1 不引入 Environment 实体、表、管理 API、`environment_id` 或隐藏的 `default`，
+也不引入 Overlay、环境继承或多层配置合并。测试与生产使用不同 RuntimeProfile。
+凭据由 Profile 在 Tenant/Profile 作用域内管理，固定 CredentialID、类别、资源名、
+用途和目的范围；用户不手填 SecretRef 或内部 ID。Profile 发布只校验 Canonical 配置与
+关联形状，不解密、不探测 Provider。Deployment 经 Profile 的 CheckUsable port 检查
+所选发布关联是否可用；Worker 取值还需真实执行拥有方验证当前 Attempt/lease/Manifest
+授权。后两条真实调用链尚待接线。Capability 只验证已按类别和名称匹配的资源，
+不用于搜索候选资源，也不进行模糊名称匹配。
 
 三个模块禁止共享一个可任意读写的配置 Blob。它们通过稳定 ID、不可变 Revision
 和 Application Port 协作。Runtime Profile V1 已实现契约见
@@ -340,6 +362,10 @@ AgentVersion 与 ProfileRevision，并生成不可变的 DeploymentRevision 和 
 Gateway 只持有运行所需的最小投影，不得投影 AgentDraft、编辑器状态或原始
 Profile 管理数据。Gateway 在接纳 Run 时必须固定 RuntimeManifest 的 ID、Revision
 和 Digest；Worker 不负责选择 Agent 或解析当前生效配置。
+
+不可变快照固定资源配置与凭据关联，不固定 live 凭据值。后续 Worker 按固定 Manifest
+的最小凭据集合和当前有效 Attempt 授权，经 Profile 内部接口一次性解析；值只进入
+该 Attempt 的内存初始化批次，不写回 Manifest 或通过业务事件传播。
 
 ## 5. PostgreSQL Outbox 与 NATS Relay
 
@@ -376,11 +402,18 @@ Channel Binding 建立。禁止信任请求 Body、Query 或事件 Payload 中�
 所有 Aggregate、Repository 查询、唯一约束、Outbox 事件、运行投影、日志和审计
 记录都必须包含并校验 Tenant 范围。仅在表中增加 `tenant_id` 字段不构成隔离完成。
 
-### ARC-502：只传播 SecretRef
+### ARC-502：凭据值不进入配置快照或公开读模型
 
-AgentSpec、Runtime Profile、RuntimeManifest、事件、日志和 Trace 在需要引用凭据时，
-只能传播 `SecretRef` 或脱敏元数据，禁止传播明文模型密钥、IM Token、数据库密码
-或其他凭证。非秘密资源配置不受本条限制。
+AgentSpec 不包含凭据值或具体凭据关联；内部 Canonical ProfileRevision 与后续
+RuntimeManifest 只固定所需内部关联及用途，不包含明文、密文或 live 状态。公开
+Profile 读取只返回非秘密 config 与允许的状态元数据，不返回内部 CredentialID。
+日志、Trace、审计、业务 Outbox 和 NATS 事件均不记录或传播凭据值。
+
+Profile 运行凭据的明文只允许出现在受限 write-only 输入、拥有方的加解密过程，以及经过可信
+工作负载认证和当前 Run/Attempt 授权的内部批量解析响应。后续运行接线必须使用
+加密传输，Worker 只在当前 Attempt 内存中消费；内部接口不是公开 GET，也不因
+工作负载身份或客户端自述 tenant_id 自动授权。当前默认未注册该内部路由。
+Profile 只持久化加密当前值，外部主 Key 必须由部署配置注入，禁止硬编码或缺省生成。
 
 ## 7. Local IM 与 Web
 
@@ -420,9 +453,9 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 以下内容尚未因本文而自动确定：
 
 - V1 之后是否引入并行 Draft、发布审批或 Tenant Policy。
-- Deployment Compiler 对已冻结 Profile Schema/Resource Kind 的 RuntimeManifest 映射，
-  Environment 中 SecretRef 的解析与授权规则，以及 Worker 的 RuntimeManifest
-  Schema/Adapter Kind 兼容规则。
+- Deployment Compiler 对当前 Profile Schema/Resource Kind 的 RuntimeManifest 映射、
+  Storage 运行角色选择与 CheckUsable 调用；真实 Run/Attempt 当前授权拥有方、工作负载
+  认证与 Worker 内部批量解析接线，以及 RuntimeManifest Schema/Adapter Kind 兼容规则。
 - Channel Gateway 与 Worker 的数据库表所有权和完成 Run 的精确事务边界。
 - Platform Operator 全部丢失后的 Break-glass 恢复、密码恢复、MFA、Session
   过期策略与 PostgreSQL RLS。

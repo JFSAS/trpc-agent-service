@@ -3,6 +3,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,14 +40,16 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer adminPool.Close()
+	t.Cleanup(adminPool.Close)
 	schema := fmt.Sprintf("control_v1_test_%d", time.Now().UnixNano())
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
 		t.Fatalf("create test schema: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = adminPool.Exec(context.Background(), "DROP SCHEMA "+quotedSchema+" CASCADE")
+		if _, err := adminPool.Exec(context.Background(), "DROP SCHEMA "+quotedSchema+" CASCADE"); err != nil {
+			t.Errorf("drop test schema: %v", err)
+		}
 	})
 
 	config, err := pgxpool.ParseConfig(databaseURL)
@@ -86,9 +89,14 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	credentialKey := make([]byte, 32)
+	if _, err := rand.Read(credentialKey); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
 		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 		TenantAccess: tenantAccess{tenants: tenantModule.Service},
+		OwnerAccess:  tenantAccess{tenants: tenantModule.Service}, CredentialKey: credentialKey,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -427,6 +435,17 @@ func (access tenantAccess) IsActiveMember(ctx context.Context, tenantID, userID 
 		return false, err
 	}
 	return true, nil
+}
+
+func (access tenantAccess) IsActiveOwner(ctx context.Context, tenantID, userID string) (bool, error) {
+	membership, err := access.tenants.GetTenant(ctx, tenantID, userID)
+	if errors.Is(err, tenantapp.ErrTenantForbidden) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return membership.Membership.Role == "OWNER", nil
 }
 
 type accountLookup struct {

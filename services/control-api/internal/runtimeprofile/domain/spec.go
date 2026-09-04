@@ -3,7 +3,8 @@ package domain
 import "encoding/json"
 
 const (
-	SchemaVersionV1 = "v1"
+	SchemaVersionV1             = "v1"
+	CredentialProtocolVersionV1 = "v1"
 
 	MaxDocumentBytes      = 512 * 1024
 	MaxModelResources     = 16
@@ -38,19 +39,20 @@ const (
 
 // Spec is the typed, validated representation of RuntimeProfileSpec V1.
 type Spec struct {
-	SchemaVersion string                       `json:"schema_version"`
-	Models        map[string]ModelResource     `json:"models"`
-	Tools         map[string]ToolResource      `json:"tools"`
-	Knowledge     map[string]KnowledgeResource `json:"knowledge"`
-	Storage       map[string]StorageResource   `json:"storage"`
+	SchemaVersion             string                       `json:"schema_version"`
+	CredentialProtocolVersion string                       `json:"credential_protocol_version"`
+	Models                    map[string]ModelResource     `json:"models"`
+	Tools                     map[string]ToolResource      `json:"tools"`
+	Knowledge                 map[string]KnowledgeResource `json:"knowledge"`
+	Storage                   map[string]StorageResource   `json:"storage"`
 }
 
 type ModelResource struct {
-	Kind         ModelKind `json:"kind"`
-	Model        string    `json:"model"`
-	BaseURL      string    `json:"base_url"`
-	APIKeyRef    string    `json:"api_key_ref"`
-	Capabilities []string  `json:"capabilities"`
+	Kind               ModelKind `json:"kind"`
+	Model              string    `json:"model"`
+	BaseURL            string    `json:"base_url"`
+	APIKeyCredentialID string    `json:"api_key_credential_id"`
+	Capabilities       []string  `json:"capabilities"`
 }
 
 func (r ModelResource) ProvidedCapabilities() []string {
@@ -71,21 +73,21 @@ func (r ToolResource) ProvidedCapabilities() []string {
 }
 
 // ToolAuth is a closed discriminated union. The bearer branch contains one
-// SecretRef; the none branch contains no inactive credential field.
+// CredentialID; the none branch contains no inactive credential field.
 type ToolAuth struct {
-	Kind      AuthKind
-	SecretRef string
+	Kind         AuthKind
+	CredentialID string
 }
 
 func (a *ToolAuth) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Kind      AuthKind `json:"kind"`
-		SecretRef string   `json:"secret_ref"`
+		Kind         AuthKind `json:"kind"`
+		CredentialID string   `json:"credential_id"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	*a = ToolAuth{Kind: wire.Kind, SecretRef: wire.SecretRef}
+	*a = ToolAuth{Kind: wire.Kind, CredentialID: wire.CredentialID}
 	return nil
 }
 
@@ -93,9 +95,9 @@ func (a ToolAuth) MarshalJSON() ([]byte, error) {
 	switch a.Kind {
 	case AuthKindBearer:
 		return json.Marshal(struct {
-			Kind      AuthKind `json:"kind"`
-			SecretRef string   `json:"secret_ref"`
-		}{a.Kind, a.SecretRef})
+			Kind         AuthKind `json:"kind"`
+			CredentialID string   `json:"credential_id"`
+		}{a.Kind, a.CredentialID})
 	default:
 		return json.Marshal(struct {
 			Kind AuthKind `json:"kind"`
@@ -104,13 +106,13 @@ func (a ToolAuth) MarshalJSON() ([]byte, error) {
 }
 
 type KnowledgeResource struct {
-	Kind            KnowledgeKind     `json:"kind"`
-	Host            string            `json:"host"`
-	Port            int64             `json:"port"`
-	TLS             bool              `json:"tls"`
-	Collection      string            `json:"collection"`
-	QdrantAPIKeyRef string            `json:"qdrant_api_key_ref,omitempty"`
-	Embedding       EmbeddingResource `json:"embedding"`
+	Kind                     KnowledgeKind     `json:"kind"`
+	Host                     string            `json:"host"`
+	Port                     int64             `json:"port"`
+	TLS                      bool              `json:"tls"`
+	Collection               string            `json:"collection"`
+	QdrantAPIKeyCredentialID string            `json:"qdrant_api_key_credential_id,omitempty"`
+	Embedding                EmbeddingResource `json:"embedding"`
 }
 
 func (KnowledgeResource) ProvidedCapabilities() []string {
@@ -118,15 +120,25 @@ func (KnowledgeResource) ProvidedCapabilities() []string {
 }
 
 type EmbeddingResource struct {
-	Model      string `json:"model"`
-	BaseURL    string `json:"base_url"`
-	APIKeyRef  string `json:"api_key_ref"`
-	Dimensions int64  `json:"dimensions"`
+	Model              string `json:"model"`
+	BaseURL            string `json:"base_url"`
+	APIKeyCredentialID string `json:"api_key_credential_id"`
+	Dimensions         int64  `json:"dimensions"`
 }
 
 type StorageResource struct {
-	Kind   StorageKind `json:"kind"`
-	DSNRef string      `json:"dsn_ref"`
+	Kind            StorageKind        `json:"kind"`
+	DSNCredentialID string             `json:"dsn_credential_id"`
+	Destination     StorageDestination `json:"destination"`
+}
+
+// StorageDestination declares the non-secret, fixed PostgreSQL connection target.
+type StorageDestination struct {
+	Host     string `json:"host"`
+	Port     int64  `json:"port"`
+	Database string `json:"database"`
+	Username string `json:"username"`
+	SSLMode  string `json:"sslmode"`
 }
 
 func (StorageResource) ProvidedCapabilities() []string {

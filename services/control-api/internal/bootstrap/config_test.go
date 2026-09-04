@@ -1,11 +1,16 @@
 package bootstrap
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestLoadConfigUsesV1Defaults(t *testing.T) {
+	key := configTestEnvironment(t)
 	t.Setenv("CONTROL_DATABASE_URL", "postgres://control:secret@localhost/control")
 	t.Setenv("CONTROL_HTTP_ADDRESS", "")
 	t.Setenv("CONTROL_SESSION_LIFETIME", "")
@@ -17,6 +22,9 @@ func TestLoadConfigUsesV1Defaults(t *testing.T) {
 	config, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !bytes.Equal(config.ProfileCredentialKey, key) {
+		t.Fatal("credential key was not decoded exactly")
 	}
 	if config.HTTPAddress != ":8080" {
 		t.Fatalf("HTTPAddress = %q, want :8080", config.HTTPAddress)
@@ -36,29 +44,57 @@ func TestLoadConfigUsesV1Defaults(t *testing.T) {
 }
 
 func TestLoadConfigRequiresDatabaseURL(t *testing.T) {
+	configTestEnvironment(t)
 	t.Setenv("CONTROL_DATABASE_URL", "")
 
-	if _, err := LoadConfig(); err == nil {
-		t.Fatal("LoadConfig() error = nil, want missing database URL error")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "CONTROL_DATABASE_URL") {
+		t.Fatal("expected missing database URL error")
 	}
 }
 
 func TestLoadConfigRejectsInvalidSessionLifetime(t *testing.T) {
+	configTestEnvironment(t)
 	t.Setenv("CONTROL_DATABASE_URL", "postgres://control:secret@localhost/control")
 	t.Setenv("CONTROL_SESSION_LIFETIME", "tomorrow")
 
-	if _, err := LoadConfig(); err == nil {
-		t.Fatal("LoadConfig() error = nil, want invalid lifetime error")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "CONTROL_SESSION_LIFETIME") {
+		t.Fatal("expected invalid session lifetime error")
 	}
 }
 
 func TestLoadConfigRequiresBootstrapPasswordInAutoMode(t *testing.T) {
+	configTestEnvironment(t)
 	t.Setenv("CONTROL_DATABASE_URL", "postgres://control:secret@localhost/control")
 	t.Setenv("CONTROL_BOOTSTRAP_MODE", "auto")
 	t.Setenv("CONTROL_BOOTSTRAP_USERNAME", "root")
 	t.Setenv("CONTROL_BOOTSTRAP_PASSWORD", "")
 
-	if _, err := LoadConfig(); err == nil {
-		t.Fatal("LoadConfig() error = nil, want bootstrap password error")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "CONTROL_BOOTSTRAP_PASSWORD") {
+		t.Fatal("expected missing bootstrap password error")
 	}
+}
+
+func TestLoadConfigRequiresProfileCredentialKey(t *testing.T) {
+	configTestEnvironment(t)
+	t.Setenv("CONTROL_DATABASE_URL", "postgres://localhost/test")
+	for _, value := range []string{"", "not-base64", "YWJj"} {
+		t.Setenv("CONTROL_PROFILE_CREDENTIAL_KEY", value)
+		if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "CONTROL_PROFILE_CREDENTIAL_KEY") {
+			t.Fatal("expected missing or invalid credential key error")
+		}
+	}
+}
+
+func configTestEnvironment(t *testing.T) []byte {
+	t.Helper()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONTROL_PROFILE_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(key))
+	t.Setenv("CONTROL_DATABASE_URL", "postgres://localhost/control_test")
+	t.Setenv("CONTROL_BOOTSTRAP_MODE", "disabled")
+	t.Setenv("CONTROL_SESSION_LIFETIME", "")
+	t.Setenv("CONTROL_SESSION_COOKIE_SECURE", "")
+	return key
 }

@@ -1,7 +1,8 @@
 # 部署目录结构
 
 - **设计状态**：已接受
-- **实现状态**：尚未建立部署目录；本文只确认目录及所有权
+- **实现状态**：Control API + PostgreSQL 的 Compose 基线与 local overlay 已建立；
+  NATS、可观测性 overlay 和 Helm 仍为后续目标
 - **确认日期**：2026-08-31
 - **适用范围**：本地 Compose、NATS 基础设施、可观测性配置和 Kubernetes Helm 部署
 
@@ -39,7 +40,8 @@ deploy/
   Release Tag，不声明 `build:`，并统一定义内部网络、命名 Volume、健康检查和 Secret
   挂载。它不挂载源码，也不向宿主机暴露 PostgreSQL、NATS 等内部服务端口。
 - `compose.local.yaml` 是本地开发 overlay，只增加 `build:`、回环端口、调试变量和
-  本地 Secret 文件。它不能改变 Workload 职责、事件语义或运行拓扑。
+  本地配置覆盖。当前 Control API 直接使用环境变量，不要求 Secret 文件；它不能改变
+  Workload 职责、事件语义或运行拓扑。
 - `compose.observability.yaml` 是可选的可观测性 overlay，增加 Collector、Prometheus、
   Tempo、Loki、Grafana 等组件；未启用时不影响业务服务运行。
 
@@ -109,9 +111,29 @@ Domain、Application、Repository 或业务 Adapter。
 - 本地生成的证书、Credential、Bootstrap Password 和 Token。
 - Compose 容器日志、备份包和调试 Dump。
 
-仓库只保存安全的 `.env.example`、Secret 名称、SecretRef 和配置 Schema。运行时数据与
-Secret 必须位于 Git 忽略目录、Docker Volume、Kubernetes Secret 或外部 Secret
-Manager 中。
+仓库只保存无真实值的配置示例、环境变量名称和配置 Schema。运行时数据与 Secret
+必须位于 Git 忽略目录、Docker Volume、Kubernetes Secret 或外部配置管理中。
+这里的部署配置不引入业务 Environment 实体或独立 Secret 管理子领域。
+
+### 4.1 Profile 凭据加密 Key
+
+Control API 进程和当前 Compose 都必需 `CONTROL_PROFILE_CREDENTIAL_KEY`，其值是
+外部生成的随机 32 字节经标准 base64 编码后的字符串。进程严格解码并校验长度；
+缺失或非法即启动失败，Compose 缺值也会在插值校验阶段失败。代码不生成默认 Key，
+即使当前还没有 Profile 记录也必须配置。
+
+- Key 属于进程部署配置，不属于 ProfileWrite、Canonical Spec 或数据库明文记录。
+- Profile 使用它派生 AES-256-GCM 加密 Key 与用途分域 MAC Key；当前只保存加密当前值，
+  不建设 KMS 或自动 Key 轮换。
+- 同一数据库的所有 Control API 副本必须使用同一个 Key；重启、重新构建和升级时
+  复用它。随意更换 Key 会使既有密文及关联/幂等 MAC 不再可用。
+- 数据库备份与 Key 分开保管，但恢复凭据需要两者；只恢复数据库不足以恢复取值能力。
+- Key 不写入仓库、镜像、日志或文档实际值，也不通过 `docker compose config` 完整输出
+  传播；现有 `just compose-config` 使用 `--quiet`。
+
+[Compose 启动说明](../../../deploy/compose/README.md) 给出当前命令与外部注入方式。
+这项必需配置只启用控制面的加密存储，不会自动启用内部 Worker 取值路由；该路由
+仍需真实执行授权 verifier 与可信工作负载认证成对接线。
 
 ## 5. 操作入口与一致性
 
@@ -136,7 +158,9 @@ Compose 与 Helm 必须满足：
 - 本地 Compose 默认使用 `auto` 完成一次性 Platform Operator bootstrap，并直接通过
   `CONTROL_BOOTSTRAP_USERNAME` 和 `CONTROL_BOOTSTRAP_PASSWORD` 提供简单的本地凭证；
   已有 Operator 时 bootstrap 保持幂等。
-- 当前 Compose 不加入 NATS、Gateway、Worker、Local IM 或可观测性组件。
+- `CONTROL_PROFILE_CREDENTIAL_KEY` 由外部环境变量注入，没有内置值或启动时自动生成。
+- 当前 Compose 不加入 NATS、Gateway、Worker、Local IM 或可观测性组件，也不启用
+  尚未接入真实 Run/Attempt 授权的内部凭据解析路由。
 
 `compose.observability.yaml`、NATS 声明和 Helm Chart 继续保留为目标结构，等相应
 Workload 进入实现阶段后再分别补充。当前切片必须通过 Compose 配置校验、镜像构建、

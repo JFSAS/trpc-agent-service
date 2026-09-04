@@ -29,9 +29,11 @@
 - [AgentSpec V1](control-api/agent-spec.md)：节点协议、三层校验、稳定诊断、
   Canonicalization、Digest 与 Schema 演进规则。
 - [Runtime Profile 子领域](control-api/runtime-profile.md)：已实现的可复用运行资源、单一
-  Draft、10 个 API、强延迟幂等发布事务与 Deployment 边界。
-- [RuntimeProfileSpec V1](control-api/runtime-profile-spec.md)：已冻结并实现的四种 Resource
-  Kind、SecretRef、校验分层、Canonicalization、Schema 与 Fixture。
+  Draft、11 个管理 API、强延迟幂等发布、私有凭据与 Deployment 边界。
+- [RuntimeProfileSpec V1](control-api/runtime-profile-spec.md)：当前四种 Resource Kind、
+  Write/Canonical/Read 分离、内部 CredentialID、校验、Digest、Schema 与 Fixture。
+- [Runtime Profile 凭据](control-api/runtime-profile-credentials.md)：直接录入、加密存储、
+  Draft COW、live 更新与已实现的消费边界；真实 Run/Attempt 与 Worker 接线仍待后续。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
 - [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与

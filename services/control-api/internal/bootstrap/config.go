@@ -2,6 +2,7 @@
 package bootstrap
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 // Config contains the process configuration required by Control API V1.
 type Config struct {
+	ProfileCredentialKey []byte
 	HTTPAddress          string
 	DatabaseURL          string
 	SessionLifetime      time.Duration
@@ -32,6 +34,10 @@ func LoadConfig() (Config, error) {
 		return Config{}, errors.New("CONTROL_DATABASE_URL is required")
 	}
 
+	credentialKey, err := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(os.Getenv("CONTROL_PROFILE_CREDENTIAL_KEY")))
+	if err != nil || len(credentialKey) != 32 {
+		return Config{}, errors.New("CONTROL_PROFILE_CREDENTIAL_KEY must be a base64-encoded 32-byte key")
+	}
 	sessionLifetime, err := durationEnvironment("CONTROL_SESSION_LIFETIME", 24*time.Hour)
 	if err != nil {
 		return Config{}, err
@@ -51,6 +57,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	return Config{
+		ProfileCredentialKey: credentialKey,
 		HTTPAddress:          stringEnvironment("CONTROL_HTTP_ADDRESS", ":8080"),
 		DatabaseURL:          databaseURL,
 		SessionLifetime:      sessionLifetime,

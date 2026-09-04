@@ -6,6 +6,7 @@ import (
 
 	identityapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity/application"
 	tenantapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant/application"
+	tenantdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant/domain"
 )
 
 type activeAccountLookup struct {
@@ -38,4 +39,15 @@ func (lookup activeTenantMemberLookup) IsActiveMember(
 		return false, err
 	}
 	return true, nil
+}
+
+func (lookup activeTenantMemberLookup) IsActiveOwner(ctx context.Context, tenantID, userID string) (bool, error) {
+	membership, err := lookup.tenants.GetTenant(ctx, tenantID, userID)
+	if errors.Is(err, tenantapp.ErrTenantForbidden) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return membership.Membership.Role == tenantdomain.MembershipRoleOwner, nil
 }

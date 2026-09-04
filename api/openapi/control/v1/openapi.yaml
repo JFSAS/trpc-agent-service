@@ -12,6 +12,12 @@ tags:
   - name: Tenant
   - name: Agent
   - name: Runtime Profile
+    description: >-
+      Tenant-scoped concrete resource authoring with write-only credentials and
+      redacted read views. Deployment matches exact resource category and name;
+      no Environment or user resource mapping table is required. Draft credential
+      actions and published-association updates require Idempotency-Key. Internal
+      Canonical Spec and Credential IDs are never part of the public HTTP contract.
 paths:
   /healthz:
     get:
@@ -508,37 +514,39 @@ paths:
       security: [{cookieAuth: []}]
       responses:
         '200':
-          description: Current Runtime Profile Draft.
+          description: Current redacted Runtime Profile Draft with credential states.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RuntimeProfileDraft'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
     put:
       operationId: saveRuntimeProfileDraft
       summary: Compare-and-swap the current Runtime Profile Draft
-      description: The Draft only needs to pass content-safety checks; it may remain incomplete for publication.
+      description: Save non-secret typed config and write-only credential actions atomically. Requires Idempotency-Key; only Tenant Owners can change credentials. Legacy spec and internal Credential IDs are rejected.
       tags: [Runtime Profile]
       security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/ProfileIdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/SaveRuntimeProfileDraftRequest'}
+            schema: {$ref: '#/components/schemas/RuntimeProfileWrite'}
       responses:
         '200':
-          description: Draft saved at the next Draft revision.
+          description: Stable idempotent receipt for the saved Draft revision.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/RuntimeProfileDraft'}
+              schema: {$ref: '#/components/schemas/RuntimeProfileDraftWriteResult'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
-        '422': {$ref: '#/components/responses/RuntimeProfileSpecInvalid'}
         '500': {$ref: '#/components/responses/InternalError'}
   /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/draft/validate:
     parameters:
@@ -547,6 +555,9 @@ paths:
     post:
       operationId: validateRuntimeProfileDraft
       summary: Validate one exact Runtime Profile Draft revision for publication
+      description: >-
+        Runs static document validation, including credential protocol and association ID shape, without exposing values or contacting providers.
+        No AgentVersion or Environment is required.
       tags: [Runtime Profile]
       security: [{cookieAuth: []}]
       requestBody:
@@ -573,6 +584,12 @@ paths:
     post:
       operationId: publishRuntimeProfileRevision
       summary: Publish an immutable Runtime Profile Revision from one exact Draft revision
+      description: >-
+        Publishes concrete resource configuration independently of any AgentVersion.
+        Credential protocol and association ID shape are statically validated; active state
+        is checked later by runtime usability and resolution, not by publication.
+        Publication freezes internal associations and destination, not rotating secret
+        values. The response is redacted and excludes dynamic credential states.
       tags: [Runtime Profile]
       security: [{cookieAuth: []}]
       requestBody:
@@ -608,7 +625,7 @@ paths:
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
-          description: Page of immutable Runtime Profile Revision metadata summaries; complete specs are available from the single-revision endpoint.
+          description: Page of immutable Runtime Profile Revision metadata summaries; redacted configuration is available from the single-revision endpoint.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RuntimeProfileRevisionPage'}
@@ -624,12 +641,12 @@ paths:
       - $ref: '#/components/parameters/ProfileRevisionNumber'
     get:
       operationId: getRuntimeProfileRevision
-      summary: Get one immutable Runtime Profile Revision including its canonical spec
+      summary: Get one redacted Runtime Profile Revision and current credential state
       tags: [Runtime Profile]
       security: [{cookieAuth: []}]
       responses:
         '200':
-          description: Immutable Runtime Profile Revision.
+          description: Integrity-checked immutable configuration projected to a redacted read view.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RuntimeProfileRevision'}
@@ -637,6 +654,36 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/credentials/update:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/RuntimeProfileID'
+    post:
+      operationId: updateUsedRuntimeProfileCredential
+      summary: Replace or clear one credential used by a published Profile Revision
+      description: Owner-only and idempotent. Expected credential revision and association token prevent stale or mismatched updates. Secret values never appear in responses.
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/ProfileIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeProfileCredentialUpdate'}
+      responses:
+        '200':
+          description: Stable credential update receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeProfileCredentialUpdateResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
   /v1/admin/capabilities:
     get:
@@ -814,6 +861,12 @@ components:
       in: path
       required: true
       schema: {type: string, minLength: 1}
+    ProfileIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable key for one logical credential mutation; reuse with an identical payload on retry. Reusing with another payload returns 409.
+      schema: {type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]+$'}
     RuntimeProfileID:
       name: profile_id
       in: path
@@ -874,7 +927,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/AgentValidationErrorResponse'}
     RuntimeProfileSpecInvalid:
-      description: The RuntimeProfileSpec cannot be stored safely or published.
+      description: The internal RuntimeProfileSpec failed publication validation; diagnostics contain no credential values.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/RuntimeProfileValidationErrorResponse'}
@@ -1049,36 +1102,478 @@ components:
         created_by: {type: string, minLength: 1}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    RuntimeProfileModelConfig:
+      type: "object"
+      additionalProperties: false
+      description: "Non-secret model fields; incomplete values may be saved as Draft."
+      properties:
+        kind:
+          type: "string"
+          description: "Publication accepts openai_compatible only."
+        model:
+          type: "string"
+        base_url:
+          type: "string"
+        capabilities:
+          type: "array"
+          items:
+            type: "string"
+    RuntimeProfileToolAuthConfig:
+      type: "object"
+      additionalProperties: false
+      properties:
+        kind:
+          type: "string"
+          description: "Publication accepts none or bearer only."
+    RuntimeProfileToolConfig:
+      type: "object"
+      additionalProperties: false
+      properties:
+        kind:
+          type: "string"
+          description: "Publication accepts mcp_streamable_http only."
+        server_url:
+          type: "string"
+        toolset_name:
+          type: "string"
+        tool_name:
+          type: "string"
+        auth:
+          $ref: "#/components/schemas/RuntimeProfileToolAuthConfig"
+        capability:
+          type: "string"
+          description: "Publication remains fixed to web.search, not an arbitrary MCP capability."
+    RuntimeProfileEmbeddingConfig:
+      type: "object"
+      additionalProperties: false
+      properties:
+        model:
+          type: "string"
+        base_url:
+          type: "string"
+        dimensions:
+          type: "integer"
+    RuntimeProfileKnowledgeConfig:
+      type: "object"
+      additionalProperties: false
+      properties:
+        kind:
+          type: "string"
+          description: "Publication accepts qdrant_openai only."
+        host:
+          type: "string"
+        port:
+          type: "integer"
+        tls:
+          type: "boolean"
+        collection:
+          type: "string"
+        embedding:
+          $ref: "#/components/schemas/RuntimeProfileEmbeddingConfig"
+    RuntimeProfileStorageDestination:
+      type: object
+      additionalProperties: false
+      description: Non-secret fixed PostgreSQL destination. Draft fields may be incomplete; publication requires all five fields, port 1..65535 and sslmode disable/require/verify-full. Password and arbitrary driver options are never fields here.
+      properties:
+        host: {type: string}
+        port: {type: integer}
+        database: {type: string}
+        username: {type: string}
+        sslmode: {type: string}
+    RuntimeProfileStorageConfig:
+      type: "object"
+      additionalProperties: false
+      properties:
+        kind:
+          type: "string"
+          description: "Publication accepts postgres_state only."
+        destination:
+          $ref: "#/components/schemas/RuntimeProfileStorageDestination"
+    RuntimeProfileConfig:
+      type: "object"
+      additionalProperties: false
+      description: "Non-secret typed editor configuration. Draft resource fields may be incomplete or fail publication validation. Credential values and internal IDs are never accepted here. Canonical publication retains the closed V1 kind/capability rules."
+      required: ["models", "tools", "knowledge", "storage"]
+      properties:
+        models:
+          type: "object"
+          additionalProperties:
+            $ref: "#/components/schemas/RuntimeProfileModelConfig"
+          maxProperties: 16
+        tools:
+          type: "object"
+          additionalProperties:
+            $ref: "#/components/schemas/RuntimeProfileToolConfig"
+          maxProperties: 64
+        knowledge:
+          type: "object"
+          additionalProperties:
+            $ref: "#/components/schemas/RuntimeProfileKnowledgeConfig"
+          maxProperties: 32
+        storage:
+          type: "object"
+          additionalProperties:
+            $ref: "#/components/schemas/RuntimeProfileStorageConfig"
+          maxProperties: 16
+    RuntimeProfileCredentialAction:
+      oneOf:
+        - type: "object"
+          additionalProperties: false
+          required: ["action"]
+          properties:
+            action:
+              type: "string"
+              enum: ["keep", "clear"]
+            expected_credential_revision:
+              type: "integer"
+              minimum: 0
+              maximum: 0
+        - type: "object"
+          additionalProperties: false
+          required: ["action", "value"]
+          properties:
+            action:
+              type: "string"
+              enum: ["replace"]
+            value:
+              type: "string"
+              minLength: 1
+              maxLength: 65536
+              writeOnly: true
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+            expected_credential_revision:
+              type: "integer"
+              minimum: 0
+              maximum: 0
+      description: "Omitted actions keep existing associations. Draft actions use expected_draft_revision for CAS; expected_credential_revision may only be zero. Draft replace creates a fresh internal association; keep/clear never include a value. Value is write-only."
+    RuntimeProfileCredentialActions:
+      type: "object"
+      additionalProperties: false
+      properties:
+        models:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              api_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+        tools:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              bearer_token:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+        knowledge:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              qdrant_api_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              embedding_api_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+        storage:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              dsn:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+    RuntimeProfileWrite:
+      type: "object"
+      additionalProperties: false
+      description: "Write-only Draft command. Exact field names and object shapes are enforced; duplicate keys and null are rejected. Values never enter the response or Canonical Spec. Internal Credential IDs and legacy *_ref/spec fields are not public inputs."
+      required: ["expected_draft_revision", "credential_protocol_version", "config"]
+      properties:
+        expected_draft_revision:
+          type: "integer"
+          minimum: 1
+        credential_protocol_version:
+          type: "string"
+          enum: ["v1"]
+        config:
+          $ref: "#/components/schemas/RuntimeProfileConfig"
+        credentials:
+          $ref: "#/components/schemas/RuntimeProfileCredentialActions"
+    RuntimeProfileDraftWriteResult:
+      type: "object"
+      additionalProperties: false
+      description: "Stable idempotent receipt; use GET Draft for the current redacted view."
+      required: ["profile_id", "draft_revision", "updated_at"]
+      properties:
+        profile_id:
+          type: "string"
+          minLength: 1
+        draft_revision:
+          type: "integer"
+          minimum: 1
+        updated_at:
+          type: "string"
+          format: "date-time"
+    RuntimeProfileCredentialState:
+      type: "object"
+      additionalProperties: false
+      description: "Non-secret current state. The opaque association token targets a revision association; it is not an internal Credential ID."
+      required: ["configured", "status", "credential_revision"]
+      properties:
+        configured:
+          type: "boolean"
+        status:
+          type: "string"
+          enum: ["unconfigured", "active", "cleared"]
+        credential_revision:
+          type: "integer"
+          minimum: 0
+        association_token:
+          type: "string"
+          minLength: 64
+          maxLength: 64
+          pattern: "^[0-9a-f]{64}$"
+    RuntimeProfileCredentialStates:
+      type: "object"
+      additionalProperties: false
+      properties:
+        models:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              api_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+        tools:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              bearer_token:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+        knowledge:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              qdrant_api_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              embedding_api_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+        storage:
+          type: "object"
+          additionalProperties:
+            type: "object"
+            additionalProperties: false
+            properties:
+              dsn:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
     RuntimeProfileDraft:
-      type: object
+      type: "object"
       additionalProperties: false
-      required: [profile_id, tenant_id, revision, spec, updated_by, updated_at]
+      description: "Redacted Draft view. No canonical spec, plaintext, ciphertext or internal credential IDs are returned."
+      required: ["tenant_id", "profile_id", "schema_version", "credential_protocol_version", "config", "draft_revision", "updated_at"]
       properties:
-        profile_id: {type: string, minLength: 1}
-        tenant_id: {type: string, minLength: 1}
-        revision: {type: integer, minimum: 1}
-        spec:
-          type: object
-          description: A content-safe Draft document that may be incomplete or fail publication validation.
-        updated_by: {type: string, minLength: 1}
-        updated_at: {type: string, format: date-time}
-    RuntimeProfileSpec:
-      $ref: '../../../schemas/runtimeprofile/v1/runtime-profile-spec.schema.json'
+        tenant_id:
+          type: "string"
+          minLength: 1
+        profile_id:
+          type: "string"
+          minLength: 1
+        schema_version:
+          type: "string"
+          enum: ["v1"]
+        credential_protocol_version:
+          type: "string"
+          enum: ["v1"]
+        config:
+          $ref: "#/components/schemas/RuntimeProfileConfig"
+        draft_revision:
+          type: "integer"
+          minimum: 1
+        credential_states:
+          $ref: "#/components/schemas/RuntimeProfileCredentialStates"
+        updated_by:
+          type: "string"
+        updated_at:
+          type: "string"
+          format: "date-time"
+    RuntimeProfilePublishedRevision:
+      type: "object"
+      additionalProperties: false
+      description: "Static redacted publication result. spec_digest identifies internal Canonical Spec, not the redacted config; dynamic credential state is deliberately absent for immutable publication retry results."
+      required: ["tenant_id", "profile_id", "schema_version", "credential_protocol_version", "config", "id", "revision_number", "source_draft_revision", "spec_digest", "published_by", "published_at"]
+      properties:
+        tenant_id:
+          type: "string"
+          minLength: 1
+        profile_id:
+          type: "string"
+          minLength: 1
+        schema_version:
+          type: "string"
+          enum: ["v1"]
+        credential_protocol_version:
+          type: "string"
+          enum: ["v1"]
+        config:
+          $ref: "#/components/schemas/RuntimeProfileConfig"
+        id:
+          type: "string"
+          minLength: 1
+        revision_number:
+          type: "integer"
+          minimum: 1
+        source_draft_revision:
+          type: "integer"
+          minimum: 1
+        spec_digest:
+          type: "string"
+          pattern: "^sha256:[0-9a-f]{64}$"
+        published_by:
+          type: "string"
+        published_at:
+          type: "string"
+          format: "date-time"
     RuntimeProfileRevision:
-      type: object
+      type: "object"
       additionalProperties: false
-      required: [id, tenant_id, profile_id, revision_number, source_draft_revision, schema_version, spec, spec_digest, published_by, published_at]
+      description: "Redacted immutable configuration plus current credential state. Complete internal Canonical Spec is integrity-checked before projection, but is never returned."
+      required: ["tenant_id", "profile_id", "schema_version", "credential_protocol_version", "config", "id", "revision_number", "source_draft_revision", "spec_digest", "published_by", "published_at"]
       properties:
-        id: {type: string, minLength: 1}
-        tenant_id: {type: string, minLength: 1}
-        profile_id: {type: string, minLength: 1}
-        revision_number: {type: integer, minimum: 1}
-        source_draft_revision: {type: integer, minimum: 1}
-        schema_version: {type: string, enum: [v1]}
-        spec: {$ref: '#/components/schemas/RuntimeProfileSpec'}
-        spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
-        published_by: {type: string, minLength: 1}
-        published_at: {type: string, format: date-time}
+        tenant_id:
+          type: "string"
+          minLength: 1
+        profile_id:
+          type: "string"
+          minLength: 1
+        schema_version:
+          type: "string"
+          enum: ["v1"]
+        credential_protocol_version:
+          type: "string"
+          enum: ["v1"]
+        config:
+          $ref: "#/components/schemas/RuntimeProfileConfig"
+        id:
+          type: "string"
+          minLength: 1
+        revision_number:
+          type: "integer"
+          minimum: 1
+        source_draft_revision:
+          type: "integer"
+          minimum: 1
+        spec_digest:
+          type: "string"
+          pattern: "^sha256:[0-9a-f]{64}$"
+        published_by:
+          type: "string"
+        published_at:
+          type: "string"
+          format: "date-time"
+        credential_states:
+          $ref: "#/components/schemas/RuntimeProfileCredentialStates"
+    CreateRuntimeProfileResponse:
+      type: "object"
+      additionalProperties: false
+      required: ["profile", "draft"]
+      properties:
+        profile:
+          $ref: "#/components/schemas/RuntimeProfile"
+        draft:
+          $ref: "#/components/schemas/RuntimeProfileDraft"
+    RuntimeProfileDraftRevisionRequest:
+      type: "object"
+      additionalProperties: false
+      required: ["expected_revision"]
+      properties:
+        expected_revision:
+          type: "integer"
+          minimum: 1
+    RuntimeProfilePublishedCredentialTarget:
+      type: "object"
+      additionalProperties: false
+      required: ["profile_revision_number", "category", "resource_name", "purpose_field", "association_token"]
+      oneOf:
+        - properties:
+            category: {type: string, enum: [models]}
+            purpose_field: {type: string, enum: [api_key]}
+        - properties:
+            category: {type: string, enum: [tools]}
+            purpose_field: {type: string, enum: [bearer_token]}
+        - properties:
+            category: {type: string, enum: [knowledge]}
+            purpose_field: {type: string, enum: [qdrant_api_key, embedding_api_key]}
+        - properties:
+            category: {type: string, enum: [storage]}
+            purpose_field: {type: string, enum: [dsn]}
+      properties:
+        profile_revision_number:
+          type: "integer"
+          minimum: 1
+        category:
+          type: "string"
+          enum: ["models", "tools", "knowledge", "storage"]
+        resource_name:
+          type: "string"
+          pattern: "^[a-z][a-z0-9_-]{0,63}$"
+        purpose_field:
+          type: "string"
+          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn"]
+        association_token:
+          type: "string"
+          minLength: 64
+          maxLength: 64
+          pattern: "^[0-9a-f]{64}$"
+    RuntimeProfileCredentialUpdate:
+      oneOf:
+        - type: "object"
+          additionalProperties: false
+          required: ["target", "action", "expected_credential_revision", "value"]
+          properties:
+            target:
+              $ref: "#/components/schemas/RuntimeProfilePublishedCredentialTarget"
+            action:
+              type: "string"
+              enum: ["replace"]
+            expected_credential_revision:
+              type: "integer"
+              minimum: 1
+            value:
+              type: "string"
+              minLength: 1
+              maxLength: 65536
+              writeOnly: true
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+        - type: "object"
+          additionalProperties: false
+          required: ["target", "action", "expected_credential_revision"]
+          properties:
+            target:
+              $ref: "#/components/schemas/RuntimeProfilePublishedCredentialTarget"
+            action:
+              type: "string"
+              enum: ["clear"]
+            expected_credential_revision:
+              type: "integer"
+              minimum: 1
+      description: "Owner-only update of a credential association used by a published Revision. Rotation does not modify ProfileRevision or its digest; changing destination requires a new Draft association."
+    RuntimeProfileCredentialUpdateResult:
+      type: "object"
+      additionalProperties: false
+      required: ["credential_revision", "status"]
+      properties:
+        credential_revision:
+          type: "integer"
+          minimum: 1
+        status:
+          type: "string"
+          enum: ["active", "cleared"]
     RuntimeProfileRevisionSummary:
       type: object
       description: Metadata-only list projection of an immutable Runtime Profile Revision; it never contains spec.
@@ -1094,28 +1589,6 @@ components:
         spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
         published_by: {type: string, minLength: 1}
         published_at: {type: string, format: date-time}
-    CreateRuntimeProfileResponse:
-      type: object
-      additionalProperties: false
-      required: [profile, draft]
-      properties:
-        profile: {$ref: '#/components/schemas/RuntimeProfile'}
-        draft: {$ref: '#/components/schemas/RuntimeProfileDraft'}
-    SaveRuntimeProfileDraftRequest:
-      type: object
-      additionalProperties: false
-      required: [expected_revision, spec]
-      properties:
-        expected_revision: {type: integer, minimum: 1}
-        spec:
-          type: object
-          description: A content-safe Draft document that may be incomplete or fail publication validation.
-    RuntimeProfileDraftRevisionRequest:
-      type: object
-      additionalProperties: false
-      required: [expected_revision]
-      properties:
-        expected_revision: {type: integer, minimum: 1}
     RuntimeProfileValidationDiagnostic:
       type: object
       additionalProperties: false
@@ -1145,7 +1618,7 @@ components:
       additionalProperties: false
       required: [revision]
       properties:
-        revision: {$ref: '#/components/schemas/RuntimeProfileRevision'}
+        revision: {$ref: '#/components/schemas/RuntimeProfilePublishedRevision'}
     RuntimeProfilePage:
       type: object
       additionalProperties: false

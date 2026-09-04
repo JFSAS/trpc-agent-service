@@ -105,17 +105,17 @@ func validatePatternString(
 	}
 	valid := false
 	switch patternName {
-	case "secret":
-		valid = secretRefPattern.MatchString(text)
+	case "credential":
+		valid = credentialIDPattern.MatchString(text)
 	case "tool":
 		valid = toolNamePattern.MatchString(text)
 	}
 	if !valid {
 		code := "RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER"
 		message := "identifier does not match the RuntimeProfileSpec V1 format"
-		if patternName == "secret" {
-			code = "RUNTIME_PROFILE_SPEC_SECRET_REF_INVALID"
-			message = "SecretRef does not match the RuntimeProfileSpec V1 format"
+		if patternName == "credential" {
+			code = "RUNTIME_PROFILE_SPEC_CREDENTIAL_ID_INVALID"
+			message = "CredentialID does not match the RuntimeProfileSpec V1 format"
 		}
 		*diagnostics = append(*diagnostics, contextualDiagnostic(
 			code, SeverityError, fieldPointer, message,
@@ -181,6 +181,14 @@ func integerValue(value any) (int64, bool) {
 }
 
 func normalizeIntegerLexemes(root map[string]any) {
+	storage, _ := root["storage"].(map[string]any)
+	for _, value := range storage {
+		resource, _ := value.(map[string]any)
+		destination, _ := resource["destination"].(map[string]any)
+		if integer, ok := integerValue(destination["port"]); ok {
+			destination["port"] = json.Number(strconv.FormatInt(integer, 10))
+		}
+	}
 	knowledge, _ := root["knowledge"].(map[string]any)
 	for _, value := range knowledge {
 		resource, _ := value.(map[string]any)

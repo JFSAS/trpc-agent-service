@@ -1,7 +1,6 @@
 package httpadapter
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,14 +13,14 @@ func (h *Handler) getProfileDraft(c *gin.Context) {
 	if !ok {
 		return
 	}
-	draft, err := h.service.GetProfileDraft(
+	draft, err := h.service.GetCredentialDraft(
 		c.Request.Context(), c.Param("tenant_id"), c.Param("profile_id"), identity.UserID,
 	)
 	if err != nil {
 		handleApplicationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, profileDraftView(draft))
+	c.JSON(http.StatusOK, draft)
 }
 
 func (h *Handler) saveProfileDraft(c *gin.Context) {
@@ -29,26 +28,25 @@ func (h *Handler) saveProfileDraft(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request saveProfileDraftRequest
-	if err := decodeStrictJSON(c, &request, maxRuntimeProfileSpecRequestBytes); err != nil ||
-		request.ExpectedRevision <= 0 || request.Spec == nil {
-		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "expected_revision and spec are required")
+	data, err := readCredentialBody(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "credential draft request is invalid")
 		return
 	}
-	draft, report, err := h.service.SaveProfileDraft(c.Request.Context(), application.SaveProfileDraftCommand{
-		TenantID: c.Param("tenant_id"), ProfileID: c.Param("profile_id"),
-		ActorUserID: identity.UserID, ExpectedRevision: request.ExpectedRevision,
-		Spec: request.Spec,
+	defer clear(data)
+	input, err := application.DecodeProfileWrite(data)
+	if err != nil || c.GetHeader("Idempotency-Key") == "" {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "credential draft request is invalid")
+		return
+	}
+	result, err := h.service.SaveCredentialDraft(c.Request.Context(), application.SaveCredentialDraftCommand{
+		TenantID: c.Param("tenant_id"), ProfileID: c.Param("profile_id"), ActorUserID: identity.UserID, IdempotencyKey: c.GetHeader("Idempotency-Key"), Write: input,
 	})
-	if errors.Is(err, application.ErrRuntimeProfileSpecInvalid) {
-		writeValidationError(c, report)
-		return
-	}
 	if err != nil {
 		handleApplicationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, profileDraftView(draft))
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) validateProfileDraft(c *gin.Context) {
@@ -70,4 +68,28 @@ func (h *Handler) validateProfileDraft(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, validationReportView(report))
+}
+
+func (h *Handler) updateUsedCredential(c *gin.Context) {
+	identity, ok := usableIdentity(c)
+	if !ok {
+		return
+	}
+	data, err := readCredentialBody(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "credential update request is invalid")
+		return
+	}
+	defer clear(data)
+	input, err := application.DecodeCredentialUpdate(data)
+	if err != nil || c.GetHeader("Idempotency-Key") == "" {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "credential update request is invalid")
+		return
+	}
+	result, err := h.service.UpdateUsedProfileCredential(c.Request.Context(), application.UpdateUsedCredentialCommand{TenantID: c.Param("tenant_id"), ProfileID: c.Param("profile_id"), ActorUserID: identity.UserID, IdempotencyKey: c.GetHeader("Idempotency-Key"), Update: input})
+	if err != nil {
+		handleApplicationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }

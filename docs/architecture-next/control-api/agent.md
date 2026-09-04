@@ -52,21 +52,20 @@ V1 的最终发布结果不是两份彼此独立的资源，而是：
 
 `agent` 不拥有：
 
-- Model、Tool、Knowledge、Storage 或 SecretRef 的具体配置与修订。
+- Model、Tool、Knowledge、Storage 的具体配置、Profile 私有凭据关联、值与修订。
 - Environment、ProfileRevision、DeploymentRevision 或 RuntimeManifest。
 - IM Channel Binding、Run Admission、Run、Attempt 或 ReplyIntent。
 - tRPC-Agent-Go 运行对象的构造、Worker 执行或回复投递。
 
 AgentSpec 只能声明逻辑 Model/Tool/Knowledge Slot 和能力需求。ProfileRevision 提供
-具名的具体 Profile Resource；Deployment 选择 AgentVersion 与 ProfileRevision，显式
-建立 Slot 到 Resource 的绑定、校验兼容性并生成 RuntimeManifest。
+具名的具体 Profile Resource；Deployment 选择 AgentVersion 与 ProfileRevision，按资源
+类别和名称精确匹配、校验兼容性并生成 RuntimeManifest。用户不填写额外映射表，
+Capability 不用于搜索候选资源，名称不进行模糊匹配。Profile 发布仍不读取 AgentVersion。
 
 ```text
 AgentVersion(Canonical AgentSpec)
                     +
-ProfileRevision(具体 Model/Tool/Knowledge/Storage/SecretRef)
-                    +
-Environment
+ProfileRevision(具体 Model/Tool/Knowledge/Storage + 内部凭据关联)
                     |
                     v
              DeploymentRevision
@@ -161,9 +160,15 @@ V1 将校验分为三层：
 
 1. **Draft 保存校验**：JSON 对象、大小、Expected Revision 与敏感字段边界。
 2. **Agent 发布校验**：Schema、Root、节点引用、组合结构、Slot 引用和领域不变量。
-3. **Deployment 兼容性校验**：Agent Slot 是否全部显式绑定到 ProfileRevision 中的
-   Model/Tool/Knowledge Resource，Environment 是否能解析 SecretRef，以及能否生成
-   目标 RuntimeManifest。
+3. **Deployment 兼容性校验**：Agent 的 Model/Tool/Knowledge Slot 是否全部在所选
+   ProfileRevision 中具有同类别同名资源，匹配资源是否满足能力需求，并经 Profile 的
+   CheckUsable application port 检查所需凭据关联是否属于该 Tenant/Profile/Revision、
+   用途与目的范围是否匹配、当前状态是否可用，最后生成目标 RuntimeManifest。
+   V1 不引入独立 Environment，测试与生产使用不同 RuntimeProfile。
+
+AgentSpec 不保存 SecretRef、内部 CredentialID 或凭据值。Profile 拥有直接录入与加密
+存储，Agent 不直接访问其表或解密。上述 Deployment 调用以及后续 Worker 依据真实
+Attempt 授权取值仍待接线；Profile 静态发布不检查 live 状态或 Provider 有效性。
 
 Agent 发布成功只证明 AgentSpec 在不依赖具体运行环境的情况下成立，不证明任意
 ProfileRevision 都能部署它。跨领域兼容性必须留在 Deployment 发布阶段。
@@ -301,7 +306,7 @@ Runtime Profile、Deployment 与 Worker 切片。
 
 - 多个并行 Draft、Draft 分支或多人实时协同编辑。
 - 发布审批、Agent Marketplace、标签和复杂归档状态机。
-- Agent Slot 到 Profile Resource 的 Deployment Binding 和 RuntimeManifest 生成。
+- Deployment 的同类别同名资源匹配、跨对象兼容性校验和 RuntimeManifest 生成。
 - Graph、任意表达式、Reducer、Condition 或可执行代码 Registry。
 - Worker tRPC Agent 组装、Run 执行与 IM 回复。
 - AgentVersion 发布 NATS 事件或直接触发 Deployment。

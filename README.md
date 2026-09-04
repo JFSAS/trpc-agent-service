@@ -12,12 +12,15 @@ Control API 的首个可运行版本已经覆盖五个核心子领域：
 - Tenant：Tenant 查询、Owner 添加或移除已有平台用户、Membership 授权。
 - Agent：Agent 管理、单一 Draft、AgentSpec 校验和不可变 Version 发布。
 - Runtime Profile：可复用运行资源配置、单一 Draft、RuntimeProfileSpec 校验和不可变
-  ProfileRevision 发布。
+  ProfileRevision 发布、Profile 私有加密凭据、Draft COW 与显式 live 更新。
 - PostgreSQL `0001_baseline.sql`、Gin 进程组装、OpenAPI 和真实 PostgreSQL 集成测试。
 
-Runtime Profile V1 已冻结并实现四个资源 Kind、10 个 HTTP API、强延迟发布幂等和
-Tenant 隔离。它只完成控制面的配置编辑、校验与不可变发布；Deployment、
-RuntimeManifest、Worker Adapter、Gateway 和 Local IM Provider 仍属于后续纵向切片。
+Runtime Profile 当前 V1 实现四个资源 Kind、11 个管理 HTTP 操作、独立 Write/Read DTO、
+强延迟发布幂等和 Tenant 隔离。Profile 消费方法与可选内部取值 Adapter 已有代码，
+但默认 bootstrap 不注册内部路由；真实 Deployment、RuntimeManifest、Run/Attempt
+授权拥有方、Worker Adapter、Gateway 和 Local IM Provider 仍属于后续纵向切片。
+Control API 启动必需外部 `CONTROL_PROFILE_CREDENTIAL_KEY`；配置要求及本地命令见
+[Compose 启动说明](deploy/compose/README.md)。
 
 ## 生产 Workload
 

@@ -3,5 +3,6 @@
   "models": {},
   "tools": {},
   "knowledge": {},
-  "storage": {}
+  "storage": {},
+  "credential_protocol_version": "v1"
 }

@@ -1,14 +1,19 @@
 package httpadapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gowebpki/jcs"
 
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
@@ -24,29 +29,43 @@ type updateRuntimeProfileRequest struct {
 	Description *string `json:"description"`
 }
 
-type saveProfileDraftRequest struct {
-	ExpectedRevision int64           `json:"expected_revision"`
-	Spec             json.RawMessage `json:"spec"`
-}
-
 type profileDraftRevisionRequest struct {
 	ExpectedRevision int64 `json:"expected_revision"`
 }
 
 func decodeStrictJSON(c *gin.Context, destination any, maxBytes int64) error {
-	if !strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "application/json") {
+	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	if err != nil || mediaType != "application/json" {
 		return errors.New("content type must be application/json")
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
-	decoder := json.NewDecoder(c.Request.Body)
+	data, err := io.ReadAll(c.Request.Body)
+	defer clear(data)
+	if err != nil || !utf8.Valid(data) {
+		return errors.New("request must contain bounded UTF-8 JSON")
+	}
+	// JSON's duplicate names and encoding/json's case-insensitive struct matching
+	// must not turn an invalid request into a different accepted command.
+	if _, err := jcs.Transform(data); err != nil {
+		return errors.New("request must contain one unambiguous JSON object")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || object == nil {
+		return errors.New("request must be an object")
+	}
+	typ := reflect.TypeOf(destination).Elem()
+	fields := make(map[string]bool, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		fields[strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]] = true
+	}
+	for name, value := range object {
+		if !fields[name] || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errors.New("request has an unknown or null field")
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("request must contain exactly one JSON value")
-	}
-	return nil
+	return decoder.Decode(destination)
 }
 
 func parsePage(c *gin.Context) (application.Page, error) {
@@ -76,4 +95,16 @@ func parseRevisionNumber(c *gin.Context) (int64, error) {
 	return value, nil
 }
 
-const maxRuntimeProfileSpecRequestBytes = domain.MaxDocumentBytes + 8*1024
+func readCredentialBody(c *gin.Context) ([]byte, error) {
+	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return nil, domain.ErrCredentialInput
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(domain.MaxDocumentBytes))
+	data, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		clear(data)
+		return nil, domain.ErrCredentialInput
+	}
+	return data, nil
+}

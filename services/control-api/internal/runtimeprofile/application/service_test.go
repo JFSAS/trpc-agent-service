@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,12 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/outbound/credentialcrypto"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
 )
 
 const validSpec = `{
   "schema_version":"v1",
+  "credential_protocol_version":"v1",
   "models":{},
   "tools":{},
   "knowledge":{},
@@ -27,7 +30,7 @@ var testClock = time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 
 func TestRuntimeProfileV1FullLifecycle(t *testing.T) {
 	store := newMemoryStore()
-	service, _ := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, _ := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	ctx := context.Background()
 
 	created, err := service.CreateRuntimeProfile(ctx, application.CreateRuntimeProfileCommand{
@@ -61,15 +64,13 @@ func TestRuntimeProfileV1FullLifecycle(t *testing.T) {
 		t.Fatalf("profile page = %#v, err = %v", profiles, err)
 	}
 
-	incomplete, storageReport, err := service.SaveProfileDraft(
-		ctx, application.SaveProfileDraftCommand{
-			TenantID: "tnt_a", ProfileID: created.Profile.ID,
-			ActorUserID: "usr_author", ExpectedRevision: 1,
-			Spec: json.RawMessage(`{"models":{}}`),
-		},
-	)
-	if err != nil || incomplete.Revision != 2 || !storageReport.Valid {
-		t.Fatalf("save incomplete = %#v, report = %#v, err = %v", incomplete, storageReport, err)
+	input := emptyProfileWrite(1)
+	input.Config.Models["primary"] = application.ModelConfig{}
+	incomplete, err := service.SaveCredentialDraft(ctx, application.SaveCredentialDraftCommand{
+		TenantID: "tnt_a", ProfileID: created.Profile.ID, ActorUserID: "usr_author", IdempotencyKey: "incomplete", Write: input,
+	})
+	if err != nil || incomplete.DraftRevision != 2 {
+		t.Fatalf("save incomplete = %#v, err=%v", incomplete, err)
 	}
 	report, err := service.ValidateProfileDraft(ctx, application.ValidateProfileDraftCommand{
 		TenantID: "tnt_a", ProfileID: created.Profile.ID,
@@ -79,13 +80,11 @@ func TestRuntimeProfileV1FullLifecycle(t *testing.T) {
 		t.Fatalf("validate incomplete = %#v, err = %v", report, err)
 	}
 
-	draft, _, err := service.SaveProfileDraft(ctx, application.SaveProfileDraftCommand{
-		TenantID: "tnt_a", ProfileID: created.Profile.ID,
-		ActorUserID: "usr_author", ExpectedRevision: 2,
-		Spec: json.RawMessage(validSpec),
+	draft, err := service.SaveCredentialDraft(ctx, application.SaveCredentialDraftCommand{
+		TenantID: "tnt_a", ProfileID: created.Profile.ID, ActorUserID: "usr_author", IdempotencyKey: "complete", Write: emptyProfileWrite(2),
 	})
-	if err != nil || draft.Revision != 3 {
-		t.Fatalf("save valid = %#v, err = %v", draft, err)
+	if err != nil || draft.DraftRevision != 3 {
+		t.Fatalf("save valid = %#v, err=%v", draft, err)
 	}
 	report, err = service.ValidateProfileDraft(ctx, application.ValidateProfileDraftCommand{
 		TenantID: "tnt_a", ProfileID: created.Profile.ID,
@@ -126,28 +125,26 @@ func TestRuntimeProfileV1FullLifecycle(t *testing.T) {
 	}
 }
 
-func TestSaveProfileDraftRejectsUnsafeDocumentWithoutMutation(t *testing.T) {
+func TestSaveCredentialDraftRejectsInvalidInputWithoutMutation(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, _ := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
-
-	_, report, err := service.SaveProfileDraft(
-		context.Background(), application.SaveProfileDraftCommand{
-			TenantID: "tnt_a", ProfileID: "rpf_1", ActorUserID: "usr_author",
-			ExpectedRevision: 1, Spec: json.RawMessage(`{"api_key":"secret"}`),
-		},
-	)
-	if !errors.Is(err, application.ErrRuntimeProfileSpecInvalid) || report.Valid {
-		t.Fatalf("unsafe report = %#v, err = %v", report, err)
+	service, _ := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
+	input := emptyProfileWrite(1)
+	input.CredentialProtocolVersion = "unknown"
+	_, err := service.SaveCredentialDraft(context.Background(), application.SaveCredentialDraftCommand{
+		TenantID: "tnt_a", ProfileID: "rpf_1", ActorUserID: "usr_author", IdempotencyKey: "invalid", Write: input,
+	})
+	if !errors.Is(err, domain.ErrCredentialInput) {
+		t.Fatalf("invalid input error = %v", err)
 	}
 	draft, getErr := store.GetProfileDraft(context.Background(), "tnt_a", "rpf_1")
-	if getErr != nil || draft.Revision != 1 || string(draft.Spec) != `{}` {
-		t.Fatalf("draft mutated = %#v, err = %v", draft, getErr)
+	if getErr != nil || draft.Revision != 1 || string(draft.Spec) != "{}" {
+		t.Fatal("invalid write mutated draft")
 	}
 }
 
 func TestPublishImmediateRetryDoesNotReadDraftOrGenerateID(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, sequences := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, sequences := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 1)
 	command := application.PublishProfileRevisionCommand{
 		TenantID: "tnt_a", ProfileID: "rpf_1", ActorUserID: "usr_author",
@@ -174,7 +171,7 @@ func TestPublishImmediateRetryDoesNotReadDraftOrGenerateID(t *testing.T) {
 
 func TestPublishDelayedRetrySurvivesDraftAdvancement(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, sequences := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, sequences := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 1)
 	command := application.PublishProfileRevisionCommand{
 		TenantID: "tnt_a", ProfileID: "rpf_1", ActorUserID: "usr_author",
@@ -198,7 +195,7 @@ func TestPublishDelayedRetrySurvivesDraftAdvancement(t *testing.T) {
 
 func TestPublishUnpublishedStaleSourceConflicts(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, _ := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, _ := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 1)
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 2)
 
@@ -215,7 +212,7 @@ func TestPublishUnpublishedStaleSourceConflicts(t *testing.T) {
 
 func TestConcurrentSameSourceCreatesOneRevision(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, _ := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, _ := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 1)
 	command := application.PublishProfileRevisionCommand{
 		TenantID: "tnt_a", ProfileID: "rpf_1", ActorUserID: "usr_author",
@@ -259,7 +256,7 @@ func TestConcurrentSameSourceCreatesOneRevision(t *testing.T) {
 
 func TestSameContentFromDifferentSourcesCreatesNewRevision(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, _ := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, _ := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 1)
 	first := publish(t, service, "tnt_a", "rpf_1", "usr_author", 2)
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 2)
@@ -272,7 +269,7 @@ func TestSameContentFromDifferentSourcesCreatesNewRevision(t *testing.T) {
 
 func TestTenantIsolationAndNonNilEmptyPages(t *testing.T) {
 	store := newMemoryStore()
-	service, _ := newTestService(store, map[string]bool{
+	service, _ := newTestService(t, store, map[string]bool{
 		"tnt_a/usr_author": true, "tnt_b/usr_author": true, "tnt_empty/usr_author": true,
 	})
 	ctx := context.Background()
@@ -308,7 +305,7 @@ func TestTenantIsolationAndNonNilEmptyPages(t *testing.T) {
 
 func TestFullRevisionReadEnforcesIntegrityWhileSummaryListDoesNotLoadSpec(t *testing.T) {
 	store := seededStore("tnt_a", "rpf_1")
-	service, _ := newTestService(store, map[string]bool{"tnt_a/usr_author": true})
+	service, _ := newTestService(t, store, map[string]bool{"tnt_a/usr_author": true})
 	saveValidDraft(t, service, "tnt_a", "rpf_1", "usr_author", 1)
 	result := publish(t, service, "tnt_a", "rpf_1", "usr_author", 2)
 	store.corruptRevision("tnt_a", "rpf_1", result.Revision.ID)
@@ -341,15 +338,17 @@ func saveValidDraft(
 	expected int64,
 ) domain.ProfileDraft {
 	t.Helper()
-	draft, _, err := service.SaveProfileDraft(
-		context.Background(), application.SaveProfileDraftCommand{
-			TenantID: tenantID, ProfileID: profileID, ActorUserID: userID,
-			ExpectedRevision: expected, Spec: json.RawMessage(validSpec),
-		},
-	)
+	_, err := service.SaveCredentialDraft(context.Background(), application.SaveCredentialDraftCommand{
+		TenantID: tenantID, ProfileID: profileID, ActorUserID: userID, IdempotencyKey: fmt.Sprintf("save-%d", expected), Write: emptyProfileWrite(expected),
+	})
 	if err != nil {
 		t.Fatalf("save valid draft at %d: %v", expected, err)
 	}
+	draft, err := service.GetProfileDraft(context.Background(), tenantID, profileID, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	return draft
 }
 
@@ -378,12 +377,25 @@ type idSequences struct {
 }
 
 func newTestService(
+	t *testing.T,
 	store *memoryStore,
 	members map[string]bool,
 ) (*application.Service, *idSequences) {
+	t.Helper()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := credentialcrypto.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := &credentialMemoryStore{base: store, records: map[string]domain.ProfileCredential{}, receipts: map[string]application.CredentialReceipt{}}
 	sequences := &idSequences{}
 	return application.NewService(application.Dependencies{
 		Store: store, TenantAccess: accessStub{members: members},
+		Credentials: credentials, Cipher: cipher, OwnerAccess: credentialOwnerStub(members),
+		NewCredentialID: func() (string, error) { return "crd_00000000000000000000000000000001", nil },
 		NewProfileID: func() (string, error) {
 			return fmt.Sprintf("rpf_%d", sequences.profile.Add(1)), nil
 		},
@@ -644,3 +656,10 @@ func pageSlice[T any](values []T, offset, limit int) []T {
 }
 
 var _ application.Store = (*memoryStore)(nil)
+
+func emptyProfileWrite(expected int64) application.ProfileWrite {
+	return application.ProfileWrite{ExpectedDraftRevision: expected, CredentialProtocolVersion: "v1", Config: application.ProfileConfig{
+		Models: map[string]application.ModelConfig{}, Tools: map[string]application.ToolConfig{},
+		Knowledge: map[string]application.KnowledgeConfig{}, Storage: map[string]application.StorageConfig{},
+	}}
+}

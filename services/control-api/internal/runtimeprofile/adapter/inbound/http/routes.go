@@ -17,11 +17,12 @@ type RuntimeProfileService interface {
 	UpdateRuntimeProfile(context.Context, application.UpdateRuntimeProfileCommand) (domain.RuntimeProfile, error)
 	GetRuntimeProfile(context.Context, string, string, string) (domain.RuntimeProfile, error)
 	ListRuntimeProfiles(context.Context, string, string, application.Page) (application.RuntimeProfilePage, error)
-	GetProfileDraft(context.Context, string, string, string) (domain.ProfileDraft, error)
-	SaveProfileDraft(context.Context, application.SaveProfileDraftCommand) (domain.ProfileDraft, domain.ValidationReport, error)
+	GetCredentialDraft(context.Context, string, string, string) (application.ProfileRead, error)
+	SaveCredentialDraft(context.Context, application.SaveCredentialDraftCommand) (application.DraftWriteResult, error)
+	UpdateUsedProfileCredential(context.Context, application.UpdateUsedCredentialCommand) (application.CredentialUpdateResult, error)
 	ValidateProfileDraft(context.Context, application.ValidateProfileDraftCommand) (domain.ValidationReport, error)
 	PublishProfileRevision(context.Context, application.PublishProfileRevisionCommand) (application.PublishProfileRevisionResult, error)
-	GetProfileRevision(context.Context, string, string, string, int64) (domain.ProfileRevision, error)
+	GetCredentialRevision(context.Context, string, string, string, int64) (application.ProfileRead, error)
 	ListProfileRevisions(context.Context, string, string, string, application.Page) (application.ProfileRevisionSummaryPage, error)
 }
 
@@ -41,6 +42,7 @@ func (h *Handler) Register(routes gin.IRoutes) {
 	routes.PATCH("/v1/tenants/:tenant_id/runtime-profiles/:profile_id", h.updateRuntimeProfile)
 	routes.GET("/v1/tenants/:tenant_id/runtime-profiles/:profile_id/draft", h.getProfileDraft)
 	routes.PUT("/v1/tenants/:tenant_id/runtime-profiles/:profile_id/draft", h.saveProfileDraft)
+	routes.POST("/v1/tenants/:tenant_id/runtime-profiles/:profile_id/credentials/update", h.updateUsedCredential)
 	routes.POST("/v1/tenants/:tenant_id/runtime-profiles/:profile_id/draft/validate", h.validateProfileDraft)
 	routes.POST("/v1/tenants/:tenant_id/runtime-profiles/:profile_id/revisions", h.publishProfileRevision)
 	routes.GET("/v1/tenants/:tenant_id/runtime-profiles/:profile_id/revisions", h.listProfileRevisions)

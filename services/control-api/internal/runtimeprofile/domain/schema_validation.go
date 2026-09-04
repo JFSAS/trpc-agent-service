@@ -9,18 +9,18 @@ import (
 )
 
 var (
-	resourceKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	secretRefPattern   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	toolNamePattern    = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	resourceKeyPattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	credentialIDPattern = regexp.MustCompile(`^crd_[0-9a-f]{32}$`)
+	toolNamePattern     = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
 func validateSchemaShape(root map[string]any) []Diagnostic {
 	var diagnostics []Diagnostic
 	validateAllowedFields(root, "", []string{
-		"schema_version", "models", "tools", "knowledge", "storage",
+		"schema_version", "credential_protocol_version", "models", "tools", "knowledge", "storage",
 	}, &diagnostics)
 	requireFields(root, "", []string{
-		"schema_version", "models", "tools", "knowledge", "storage",
+		"schema_version", "credential_protocol_version", "models", "tools", "knowledge", "storage",
 	}, &diagnostics)
 
 	if version, exists := root["schema_version"]; exists {
@@ -32,6 +32,14 @@ func validateSchemaShape(root map[string]any) []Diagnostic {
 				"RUNTIME_PROFILE_SPEC_UNSUPPORTED_VERSION", "/schema_version",
 				"schema_version is not supported",
 			))
+		}
+	}
+	if version, exists := root["credential_protocol_version"]; exists {
+		value, ok := version.(string)
+		if !ok {
+			addTypeDiagnostic("/credential_protocol_version", &diagnostics)
+		} else if value != CredentialProtocolVersionV1 {
+			diagnostics = append(diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_UNSUPPORTED_VERSION", "/credential_protocol_version", "credential_protocol_version is not supported"))
 		}
 	}
 	if value, exists := root["models"]; exists {
@@ -91,14 +99,14 @@ func validateModelResource(_ string, pointer string, object map[string]any, diag
 		return
 	}
 	validateAllowedFields(object, pointer, []string{
-		"kind", "model", "base_url", "api_key_ref", "capabilities",
+		"kind", "model", "base_url", "api_key_credential_id", "capabilities",
 	}, diagnostics)
 	requireFields(object, pointer, []string{
-		"kind", "model", "base_url", "api_key_ref", "capabilities",
+		"kind", "model", "base_url", "api_key_credential_id", "capabilities",
 	}, diagnostics)
 	validateBoundedString(object, "model", pointer, 1, 256, diagnostics)
 	validateHTTPURLField(object, "base_url", pointer, diagnostics)
-	validatePatternString(object, "api_key_ref", pointer, "secret", diagnostics)
+	validatePatternString(object, "api_key_credential_id", pointer, "credential", diagnostics)
 	if value, exists := object["capabilities"]; exists {
 		validateCapabilities(value, pointer+"/capabilities", diagnostics)
 	}
@@ -145,9 +153,9 @@ func validateToolAuth(value any, pointer string, diagnostics *[]Diagnostic) {
 		validateAllowedFields(object, pointer, []string{"kind"}, diagnostics)
 		requireFields(object, pointer, []string{"kind"}, diagnostics)
 	case AuthKindBearer:
-		validateAllowedFields(object, pointer, []string{"kind", "secret_ref"}, diagnostics)
-		requireFields(object, pointer, []string{"kind", "secret_ref"}, diagnostics)
-		validatePatternString(object, "secret_ref", pointer, "secret", diagnostics)
+		validateAllowedFields(object, pointer, []string{"kind", "credential_id"}, diagnostics)
+		requireFields(object, pointer, []string{"kind", "credential_id"}, diagnostics)
+		validatePatternString(object, "credential_id", pointer, "credential", diagnostics)
 	default:
 		*diagnostics = append(*diagnostics, contextualDiagnostic(
 			"RUNTIME_PROFILE_SPEC_UNSUPPORTED_KIND", SeverityError, pointer+"/kind",
@@ -162,7 +170,7 @@ func validateKnowledgeResource(_ string, pointer string, object map[string]any, 
 		return
 	}
 	validateAllowedFields(object, pointer, []string{
-		"kind", "host", "port", "tls", "collection", "qdrant_api_key_ref", "embedding",
+		"kind", "host", "port", "tls", "collection", "qdrant_api_key_credential_id", "embedding",
 	}, diagnostics)
 	requireFields(object, pointer, []string{
 		"kind", "host", "port", "tls", "collection", "embedding",
@@ -171,8 +179,8 @@ func validateKnowledgeResource(_ string, pointer string, object map[string]any, 
 	validateIntegerField(object, "port", pointer, 1, 65535, diagnostics)
 	validateBooleanField(object, "tls", pointer, diagnostics)
 	validateBoundedString(object, "collection", pointer, 1, 128, diagnostics)
-	if _, exists := object["qdrant_api_key_ref"]; exists {
-		validatePatternString(object, "qdrant_api_key_ref", pointer, "secret", diagnostics)
+	if _, exists := object["qdrant_api_key_credential_id"]; exists {
+		validatePatternString(object, "qdrant_api_key_credential_id", pointer, "credential", diagnostics)
 	}
 	if value, exists := object["embedding"]; exists {
 		validateEmbedding(value, pointer+"/embedding", diagnostics)
@@ -186,14 +194,14 @@ func validateEmbedding(value any, pointer string, diagnostics *[]Diagnostic) {
 		return
 	}
 	validateAllowedFields(object, pointer, []string{
-		"model", "base_url", "api_key_ref", "dimensions",
+		"model", "base_url", "api_key_credential_id", "dimensions",
 	}, diagnostics)
 	requireFields(object, pointer, []string{
-		"model", "base_url", "api_key_ref", "dimensions",
+		"model", "base_url", "api_key_credential_id", "dimensions",
 	}, diagnostics)
 	validateBoundedString(object, "model", pointer, 1, 256, diagnostics)
 	validateHTTPURLField(object, "base_url", pointer, diagnostics)
-	validatePatternString(object, "api_key_ref", pointer, "secret", diagnostics)
+	validatePatternString(object, "api_key_credential_id", pointer, "credential", diagnostics)
 	validateIntegerField(object, "dimensions", pointer, 1, 65536, diagnostics)
 }
 
@@ -202,9 +210,35 @@ func validateStorageResource(_ string, pointer string, object map[string]any, di
 	if !ok || kind != string(StorageKindPostgresState) {
 		return
 	}
-	validateAllowedFields(object, pointer, []string{"kind", "dsn_ref"}, diagnostics)
-	requireFields(object, pointer, []string{"kind", "dsn_ref"}, diagnostics)
-	validatePatternString(object, "dsn_ref", pointer, "secret", diagnostics)
+	validateAllowedFields(object, pointer, []string{"kind", "dsn_credential_id", "destination"}, diagnostics)
+	requireFields(object, pointer, []string{"kind", "dsn_credential_id", "destination"}, diagnostics)
+	validatePatternString(object, "dsn_credential_id", pointer, "credential", diagnostics)
+	if value, exists := object["destination"]; exists {
+		validateStorageDestination(value, pointer+"/destination", diagnostics)
+	}
+}
+
+func validateStorageDestination(value any, pointer string, diagnostics *[]Diagnostic) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		addTypeDiagnostic(pointer, diagnostics)
+		return
+	}
+	fields := []string{"host", "port", "database", "username", "sslmode"}
+	validateAllowedFields(object, pointer, fields, diagnostics)
+	requireFields(object, pointer, fields, diagnostics)
+	validateBoundedString(object, "host", pointer, 1, 253, diagnostics)
+	validateBoundedString(object, "database", pointer, 1, 128, diagnostics)
+	validateBoundedString(object, "username", pointer, 1, 128, diagnostics)
+	validateIntegerField(object, "port", pointer, 1, 65535, diagnostics)
+	if value, exists := object["sslmode"]; exists {
+		mode, ok := value.(string)
+		if !ok {
+			addTypeDiagnostic(pointer+"/sslmode", diagnostics)
+		} else if mode != "disable" && mode != "require" && mode != "verify-full" {
+			*diagnostics = append(*diagnostics, contextualDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_VALUE", SeverityError, pointer+"/sslmode", "sslmode must be disable, require, or verify-full"))
+		}
+	}
 }
 
 func validateResourceKind(

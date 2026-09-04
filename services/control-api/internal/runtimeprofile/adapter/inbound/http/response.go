@@ -1,7 +1,6 @@
 package httpadapter
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -32,43 +31,9 @@ func runtimeProfileView(profile domain.RuntimeProfile) runtimeProfileResponse {
 	}
 }
 
-type runtimeProfileDraftResponse struct {
-	ProfileID string          `json:"profile_id"`
-	TenantID  string          `json:"tenant_id"`
-	Revision  int64           `json:"revision"`
-	Spec      json.RawMessage `json:"spec"`
-	UpdatedBy string          `json:"updated_by"`
-	UpdatedAt time.Time       `json:"updated_at"`
-}
-
-func profileDraftView(draft domain.ProfileDraft) runtimeProfileDraftResponse {
-	return runtimeProfileDraftResponse{
-		ProfileID: draft.ProfileID, TenantID: draft.TenantID, Revision: draft.Revision,
-		Spec: draft.Spec, UpdatedBy: draft.UpdatedBy, UpdatedAt: draft.UpdatedAt,
-	}
-}
-
-type runtimeProfileRevisionResponse struct {
-	ID                  string          `json:"id"`
-	TenantID            string          `json:"tenant_id"`
-	ProfileID           string          `json:"profile_id"`
-	RevisionNumber      int64           `json:"revision_number"`
-	SourceDraftRevision int64           `json:"source_draft_revision"`
-	SchemaVersion       string          `json:"schema_version"`
-	Spec                json.RawMessage `json:"spec"`
-	SpecDigest          string          `json:"spec_digest"`
-	PublishedBy         string          `json:"published_by"`
-	PublishedAt         time.Time       `json:"published_at"`
-}
-
-func profileRevisionView(revision domain.ProfileRevision) runtimeProfileRevisionResponse {
-	return runtimeProfileRevisionResponse{
-		ID: revision.ID, TenantID: revision.TenantID, ProfileID: revision.ProfileID,
-		RevisionNumber: revision.RevisionNumber, SourceDraftRevision: revision.SourceDraftRevision,
-		SchemaVersion: revision.SchemaVersion, Spec: revision.Spec,
-		SpecDigest: revision.SpecDigest, PublishedBy: revision.PublishedBy,
-		PublishedAt: revision.PublishedAt,
-	}
+func profileDraftView(draft domain.ProfileDraft) application.ProfileRead {
+	return application.ProfileRead{TenantID: draft.TenantID, ProfileID: draft.ProfileID, DraftRevision: draft.Revision, SchemaVersion: domain.SchemaVersionV1, CredentialProtocolVersion: domain.CredentialProtocolVersionV1,
+		Config: application.ProfileConfig{Models: map[string]application.ModelConfig{}, Tools: map[string]application.ToolConfig{}, Knowledge: map[string]application.KnowledgeConfig{}, Storage: map[string]application.StorageConfig{}}, UpdatedBy: draft.UpdatedBy, UpdatedAt: &draft.UpdatedAt}
 }
 
 type runtimeProfileRevisionSummaryResponse struct {
@@ -126,12 +91,12 @@ func validationReportView(report domain.ValidationReport) runtimeProfileValidati
 }
 
 type createRuntimeProfileResponse struct {
-	Profile runtimeProfileResponse      `json:"profile"`
-	Draft   runtimeProfileDraftResponse `json:"draft"`
+	Profile runtimeProfileResponse  `json:"profile"`
+	Draft   application.ProfileRead `json:"draft"`
 }
 
 type publishProfileRevisionResponse struct {
-	Revision runtimeProfileRevisionResponse `json:"revision"`
+	Revision application.ProfileRead `json:"revision"`
 }
 
 type runtimeProfilePageResponse struct {
@@ -187,6 +152,16 @@ func usableIdentity(c *gin.Context) (identityapp.IdentityContext, bool) {
 
 func handleApplicationError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, domain.ErrCredentialInput):
+		writeError(c, http.StatusBadRequest, "INVALID_CREDENTIAL_REQUEST", "credential request is invalid")
+	case errors.Is(err, domain.ErrCredentialAssociation):
+		writeError(c, http.StatusConflict, "CREDENTIAL_ASSOCIATION_CONFLICT", "credential association is stale or mismatched")
+	case errors.Is(err, domain.ErrCredentialConflict):
+		writeError(c, http.StatusConflict, "CREDENTIAL_REVISION_CONFLICT", "credential revision is stale")
+	case errors.Is(err, domain.ErrCredentialUnavailable):
+		writeError(c, http.StatusConflict, "CREDENTIAL_UNAVAILABLE", "credential is unavailable")
+	case errors.Is(err, application.ErrCredentialIdempotencyConflict):
+		writeError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "idempotency key was used for a different request")
 	case errors.Is(err, application.ErrInvalidRuntimeProfile):
 		writeError(c, http.StatusBadRequest, "INVALID_RUNTIME_PROFILE", "runtime profile metadata is invalid")
 	case errors.Is(err, application.ErrRuntimeProfileNotFound):

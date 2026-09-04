@@ -14,7 +14,7 @@ import (
 
 const revisionColumns = `
 	id, tenant_id, profile_id, revision_number, source_draft_revision,
-	schema_version, spec_jsonb, spec_digest, published_by, published_at
+			 schema_version, spec_jsonb, spec_digest, published_by, published_at
 `
 
 func (s *Store) FindRevisionBySourceDraft(
@@ -50,19 +50,26 @@ func (s *Store) PublishProfileRevision(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	const lockQuery = `
-		SELECT d.spec_revision, p.latest_revision_number
-		FROM runtime_profile_drafts AS d
-		JOIN runtime_profiles AS p
-		  ON p.tenant_id = d.tenant_id AND p.id = d.profile_id
-		WHERE d.tenant_id = $1 AND d.profile_id = $2
-		FOR UPDATE OF d, p
+	// Match WithinProfile's lock order: owning Profile, then mutable Draft.
+	// A joint d,p lock can deadlock with a credential/configuration save.
+	const profileLock = `
+		SELECT latest_revision_number FROM runtime_profiles
+		WHERE tenant_id = $1 AND id = $2 FOR UPDATE
+	`
+	var latestRevision *int64
+	err = tx.QueryRow(ctx, profileLock, candidate.TenantID, candidate.ProfileID).Scan(&latestRevision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ProfileRevision{}, false, application.ErrRuntimeProfileNotFound
+	}
+	if err != nil {
+		return domain.ProfileRevision{}, false, fmt.Errorf("lock runtime profile publication owner: %w", err)
+	}
+	const draftLock = `
+		SELECT spec_revision FROM runtime_profile_drafts
+		WHERE tenant_id = $1 AND profile_id = $2 FOR UPDATE
 	`
 	var currentRevision int64
-	var latestRevision *int64
-	err = tx.QueryRow(ctx, lockQuery, candidate.TenantID, candidate.ProfileID).Scan(
-		&currentRevision, &latestRevision,
-	)
+	err = tx.QueryRow(ctx, draftLock, candidate.TenantID, candidate.ProfileID).Scan(&currentRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ProfileRevision{}, false, application.ErrRuntimeProfileNotFound
 	}
@@ -104,30 +111,26 @@ func (s *Store) PublishProfileRevision(
 			id, tenant_id, profile_id, revision_number, source_draft_revision,
 			schema_version, spec_jsonb, spec_digest, published_by, published_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
-	`
-	tag, err := tx.Exec(
+		RETURNING ` + revisionColumns
+	// Return the database representation on both first publication and retry:
+	// PostgreSQL normalizes JSONB and persists timestamps at microsecond precision.
+	persisted, err := scanRevision(tx.QueryRow(
 		ctx, insertStatement, candidate.ID, candidate.TenantID, candidate.ProfileID,
 		candidate.RevisionNumber, candidate.SourceDraftRevision,
 		candidate.SchemaVersion, []byte(candidate.Spec), candidate.SpecDigest,
 		candidate.PublishedBy, candidate.PublishedAt,
-	)
+	))
 	if err != nil {
 		return domain.ProfileRevision{}, false, fmt.Errorf("insert runtime profile revision: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
-		return domain.ProfileRevision{}, false, fmt.Errorf(
-			"insert runtime profile revision: affected %d rows", tag.RowsAffected(),
-		)
-	}
-
 	const updateProfile = `
 		UPDATE runtime_profiles
 		SET latest_revision_number = $3, updated_at = $4
 		WHERE tenant_id = $1 AND id = $2
 	`
-	tag, err = tx.Exec(
-		ctx, updateProfile, candidate.TenantID, candidate.ProfileID,
-		candidate.RevisionNumber, candidate.PublishedAt,
+	tag, err := tx.Exec(
+		ctx, updateProfile, persisted.TenantID, persisted.ProfileID,
+		persisted.RevisionNumber, persisted.PublishedAt,
 	)
 	if err != nil {
 		return domain.ProfileRevision{}, false, fmt.Errorf("update latest runtime profile revision: %w", err)
@@ -140,7 +143,7 @@ func (s *Store) PublishProfileRevision(
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ProfileRevision{}, false, fmt.Errorf("commit runtime profile publication: %w", err)
 	}
-	return candidate, true, nil
+	return persisted, true, nil
 }
 
 func (s *Store) GetProfileRevision(

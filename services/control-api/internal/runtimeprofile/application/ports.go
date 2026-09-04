@@ -5,7 +5,6 @@ package application
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -35,7 +34,6 @@ type Store interface {
 	ListRuntimeProfiles(context.Context, string, Page) (RuntimeProfilePage, error)
 	UpdateRuntimeProfile(context.Context, domain.RuntimeProfile) error
 	GetProfileDraft(context.Context, string, string) (domain.ProfileDraft, error)
-	SaveProfileDraft(context.Context, domain.ProfileDraft, int64) error
 	FindRevisionBySourceDraft(context.Context, string, string, int64) (domain.ProfileRevision, bool, error)
 	PublishProfileRevision(context.Context, domain.ProfileRevision, int64) (domain.ProfileRevision, bool, error)
 	GetProfileRevision(context.Context, string, string, int64) (domain.ProfileRevision, error)
@@ -43,11 +41,16 @@ type Store interface {
 }
 
 type Dependencies struct {
-	Store         Store
-	TenantAccess  TenantAccess
-	NewProfileID  func() (string, error)
-	NewRevisionID func() (string, error)
-	Now           func() time.Time
+	ExecutionVerifier ExecutionAuthorizationVerifier
+	Credentials       CredentialStore
+	Cipher            CredentialCipher
+	OwnerAccess       OwnerAccess
+	NewCredentialID   func() (string, error)
+	Store             Store
+	TenantAccess      TenantAccess
+	NewProfileID      func() (string, error)
+	NewRevisionID     func() (string, error)
+	Now               func() time.Time
 }
 
 type Service struct {
@@ -132,14 +135,6 @@ type UpdateRuntimeProfileCommand struct {
 	ActorUserID string
 	Name        *string
 	Description *string
-}
-
-type SaveProfileDraftCommand struct {
-	TenantID         string
-	ProfileID        string
-	ActorUserID      string
-	ExpectedRevision int64
-	Spec             json.RawMessage
 }
 
 type ValidateProfileDraftCommand struct {

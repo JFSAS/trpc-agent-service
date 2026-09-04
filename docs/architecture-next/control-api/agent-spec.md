@@ -20,7 +20,7 @@ AgentSpec V1 必须同时满足以下目标：
    AgentVersion。
 3. Control API 可以在不构造实际 tRPC-Agent-Go 对象的情况下完成环境无关校验。
 4. ProfileRevision 可以提供具体资源，Deployment 可在不修改 AgentVersion 的情况下
-   把逻辑 Slot 显式绑定到这些资源。
+   按资源类别和名称精确匹配逻辑 Slot，无需用户提供额外映射表。
 5. 未知字段、框架专属 Option 和任意可执行表达式不能偷偷进入协议。
 6. 编辑器布局变化不能改变 AgentSpec 的运行语义或 Digest。
 
@@ -218,8 +218,8 @@ agent researcher     # 不允许空格
 | `capabilities` | `string[]` | 是 | 至少一个、不得重复、满足 Capability 语法 |
 
 AgentSpec 不包含 Provider、实际模型名、Endpoint 或 Credential。Deployment 发布时将
-`primary` 显式绑定到 ProfileRevision 中的具体 Model Resource，并验证 Capability
-是否满足。
+`models.primary` 精确匹配到所选 ProfileRevision 的 `models.primary`，再验证 Capability
+是否满足。匹配不跨类别、不模糊匹配，也不按 Capability 搜索其他候选资源。
 
 ### 6.2 Tool Requirement
 
@@ -253,8 +253,9 @@ AgentSpec 不记录 Tool Server URL、认证头、Token 或进程启动参数。
 }
 ```
 
-AgentSpec 只声明逻辑能力；具体 Knowledge Resource、索引引用、Storage 依赖和
-SecretRef 由 ProfileRevision 提供，绑定由 Deployment 建立。
+AgentSpec 只声明逻辑能力；具体 Knowledge Resource、索引配置及内部凭据关联由
+ProfileRevision 提供，同类别同名资源匹配与兼容性校验由 Deployment 执行。Profile
+拥有凭据输入与加密存储，AgentSpec 不包含 SecretRef、CredentialID 或凭据值。
 
 ## 7. Node 判别联合
 
@@ -417,7 +418,7 @@ mapping
 | Draft Revision | 否，服务端递增 | 不适用 | 否 |
 | Version Number | 否，服务端分配 | 否 | 否 |
 | Spec Digest | 否，服务端计算 | 否 | 结果本身 |
-| Deployment Binding | 不属于 AgentSpec | 通过新 DeploymentRevision 修改 | 否 |
+| Deployment 资源解析结果 | 不属于 AgentSpec | 通过新 DeploymentRevision 固定 | 否 |
 
 修改已发布 AgentVersion 的正确流程是：读取旧 Version 的 Spec，保存为新的 Draft
 Revision，完成修改后发布新的 AgentVersion。禁止更新旧 Version 的 `spec_jsonb`。
@@ -491,10 +492,14 @@ V1 平台限制：
 
 L3 不属于 Agent 发布校验，由 Deployment 发布执行：
 
-- AgentVersion 的全部 Slot 是否显式绑定到 ProfileRevision 中存在的 Resource。
-- 绑定的 Model 是否满足声明的 Capability。
-- Tool 和 Knowledge Capability 是否匹配。
-- Environment 中的 SecretRef 是否可解析。
+- AgentVersion 的全部 Model/Tool/Knowledge Slot 是否在所选 ProfileRevision 中具有
+  同类别同名 Resource；不要求额外用户映射表。
+- 匹配的 Model 是否满足声明的 Capability。
+- 匹配的 Tool 和 Knowledge Capability 是否满足需求。
+- 所需凭据关联是否经 Profile CheckUsable port 验证属于所选 Tenant/Profile/Revision、
+  用途与目的范围匹配且当前可用；检查不解密或请求 Provider。V1 不要求 Environment。
+  Profile 的该 Application 方法已有实现，真实 Deployment 调用仍待接入；Worker 取值
+  还必须经当前 Run/Attempt 拥有方授权，不能复用发布时检查作为永久许可。
 - Generation 参数是否被具体 Model 支持。
 - Deployment Compiler 是否支持所选 AgentSpec/RuntimeProfileSpec Schema Version，
   并能把实际使用的 Resource Kind 编译为 RuntimeManifest Adapter Kind/Version。
