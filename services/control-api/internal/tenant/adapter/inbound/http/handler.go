@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,10 @@ type TenantService interface {
 	ListMyTenants(context.Context, string) ([]domain.TenantMembership, error)
 	GetTenant(context.Context, string, string) (domain.TenantMembership, error)
 	ListMembers(context.Context, string, string) ([]domain.Membership, error)
+	SearchMemberCandidates(
+		context.Context,
+		tenantapp.SearchMemberCandidatesQuery,
+	) (tenantapp.MemberCandidatePage, error)
 	AddMember(context.Context, tenantapp.AddMemberCommand) (domain.Membership, error)
 	RemoveMember(context.Context, tenantapp.RemoveMemberCommand) error
 }
@@ -36,9 +41,42 @@ func NewHandler(service TenantService) *Handler {
 func (h *Handler) Register(routes gin.IRoutes) {
 	routes.GET("/v1/me/tenants", h.listMyTenants)
 	routes.GET("/v1/tenants/:tenant_id", h.getTenant)
+	routes.GET("/v1/tenants/:tenant_id/member-candidates", h.searchMemberCandidates)
 	routes.GET("/v1/tenants/:tenant_id/members", h.listMembers)
 	routes.POST("/v1/tenants/:tenant_id/members", h.addMember)
 	routes.DELETE("/v1/tenants/:tenant_id/members/:user_id", h.removeMember)
+}
+
+func (h *Handler) searchMemberCandidates(c *gin.Context) {
+	identity, ok := usableIdentity(c)
+	if !ok {
+		return
+	}
+	page, ok := parsePage(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.SearchMemberCandidates(
+		c.Request.Context(),
+		tenantapp.SearchMemberCandidatesQuery{
+			TenantID: c.Param("tenant_id"), ActorUserID: identity.UserID,
+			Query: c.Query("query"), Page: tenantapp.Page(page),
+		},
+	)
+	if err != nil {
+		handleTenantError(c, err)
+		return
+	}
+	items := make([]memberCandidateResponse, 0, len(result.Candidates))
+	for _, candidate := range result.Candidates {
+		items = append(items, memberCandidateView(candidate))
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"candidates": items,
+		"offset":     result.Offset,
+		"limit":      result.Limit,
+		"total":      result.Total,
+	})
 }
 
 func (h *Handler) listMyTenants(c *gin.Context) {
@@ -157,6 +195,18 @@ type membershipResponse struct {
 	CreatedAt time.Time             `json:"created_at"`
 }
 
+type memberCandidateResponse struct {
+	UserID      string `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+
+func memberCandidateView(candidate tenantapp.MemberCandidate) memberCandidateResponse {
+	return memberCandidateResponse{
+		UserID: candidate.UserID, Username: candidate.Username, DisplayName: candidate.DisplayName,
+	}
+}
+
 func membershipView(member domain.Membership) membershipResponse {
 	return membershipResponse{
 		ID: member.ID, UserID: member.UserID, Role: member.Role,
@@ -189,9 +239,41 @@ func handleTenantError(c *gin.Context, err error) {
 		writeError(c, http.StatusBadRequest, "ACCOUNT_UNAVAILABLE", "account is unavailable")
 	case errors.Is(err, tenantapp.ErrOwnerRequiresTransfer):
 		writeError(c, http.StatusConflict, "OWNER_REQUIRES_TRANSFER", "owner must be transferred before removal")
+	case errors.Is(err, tenantapp.ErrInvalidCandidateQuery):
+		writeError(c, http.StatusBadRequest, "INVALID_QUERY", "query must contain between 1 and 256 characters")
 	default:
 		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "request could not be completed")
 	}
+}
+
+type page struct {
+	Offset int
+	Limit  int
+}
+
+func parsePage(c *gin.Context) (page, bool) {
+	offset, err := parseNonNegative(c.Query("offset"), 0)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_PAGINATION", "offset must be non-negative")
+		return page{}, false
+	}
+	limit, err := parseNonNegative(c.Query("limit"), 20)
+	if err != nil || limit == 0 || limit > 100 {
+		writeError(c, http.StatusBadRequest, "INVALID_PAGINATION", "limit must be between 1 and 100")
+		return page{}, false
+	}
+	return page{Offset: offset, Limit: limit}, true
+}
+
+func parseNonNegative(value string, fallback int) (int, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, errors.New("invalid non-negative integer")
+	}
+	return parsed, nil
 }
 
 type errorResponse struct {

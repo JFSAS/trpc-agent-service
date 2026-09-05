@@ -147,12 +147,38 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/member-candidates:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: searchTenantMemberCandidates
+      summary: Search active non-members that the Tenant Owner may add
+      tags: [Tenant]
+      security: [{cookieAuth: []}]
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: Case-insensitive username or display-name search text; surrounding whitespace is trimmed before enforcing the 1–256 character limit.
+          schema: {type: string, minLength: 1, maxLength: 256}
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of ACTIVE platform users who are not already Tenant members.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MemberCandidatePage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /v1/tenants/{tenant_id}/members:
     parameters:
       - $ref: '#/components/parameters/TenantID'
     get:
       operationId: listTenantMembers
-      summary: List members of a Tenant
+      summary: List members of a Tenant as its Owner
       tags: [Tenant]
       security: [{cookieAuth: []}]
       responses:
@@ -172,7 +198,7 @@ paths:
         '500': {$ref: '#/components/responses/InternalError'}
     post:
       operationId: addTenantMember
-      summary: Add an existing active user as a Tenant member
+      summary: Add an existing active user as a Tenant member as its Owner
       tags: [Tenant]
       security: [{cookieAuth: []}]
       requestBody:
@@ -197,7 +223,7 @@ paths:
       - $ref: '#/components/parameters/UserID'
     delete:
       operationId: removeTenantMember
-      summary: Remove a non-owner member from a Tenant
+      summary: Remove a non-owner member from a Tenant as its Owner
       tags: [Tenant]
       security: [{cookieAuth: []}]
       responses:
@@ -2202,6 +2228,25 @@ components:
         role: {type: string, enum: [OWNER, MEMBER]}
         created_by: {type: string}
         created_at: {type: string, format: date-time}
+    MemberCandidate:
+      type: object
+      additionalProperties: false
+      required: [user_id, username, display_name]
+      properties:
+        user_id: {type: string}
+        username: {type: string}
+        display_name: {type: string}
+    MemberCandidatePage:
+      type: object
+      additionalProperties: false
+      required: [candidates, offset, limit, total]
+      properties:
+        candidates:
+          type: array
+          items: {$ref: '#/components/schemas/MemberCandidate'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
     UserPage:
       type: object
       additionalProperties: false

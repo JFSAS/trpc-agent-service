@@ -8,14 +8,14 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const { path } = await context.params;
   const target = `${upstream}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
   const headers = new Headers();
-  for (const name of ["accept", "content-type", "cookie"]) {
+  for (const name of ["accept", "content-type", "cookie", "idempotency-key"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
   const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
   try {
     const response = await fetch(target, { method: request.method, headers, body, cache: "no-store", redirect: "manual" });
-    const outgoing = new Headers();
+    const outgoing = new Headers({ "cache-control": "no-store" });
     const contentType = response.headers.get("content-type");
     if (contentType) outgoing.set("content-type", contentType);
     const responseHeaders = response.headers as Headers & { getSetCookie?: () => string[] };
@@ -26,7 +26,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     if (retryAfter) outgoing.set("retry-after", retryAfter);
     return new Response(response.body, { status: response.status, headers: outgoing });
   } catch {
-    return Response.json({ error: { code: "CONTROL_API_UNAVAILABLE", message: "Control API is unavailable" } }, { status: 502 });
+    return Response.json({ error: { code: "CONTROL_API_UNAVAILABLE", message: "Control API is unavailable" } }, { status: 502, headers: { "cache-control": "no-store" } });
   }
 }
 

@@ -39,3 +39,21 @@ compose-up: compose-config
 
 compose-down:
     docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.local.yaml down
+
+web-install:
+    cd web && npm install
+
+web-test:
+    cd web && npm test
+
+web-lint:
+    cd web && npm run lint
+
+web-build:
+    cd web && npm run build
+
+web-dev:
+    cd web && CONTROL_API_BASE="${CONTROL_API_BASE:-http://127.0.0.1:18081}" npm run dev -- --hostname "${WEB_HOST:-127.0.0.1}" --port "${WEB_PORT:-13001}"
+
+web-start: web-build
+    cd web && CONTROL_API_BASE="${CONTROL_API_BASE:-http://127.0.0.1:18081}" npm start -- --hostname "${WEB_HOST:-127.0.0.1}" --port "${WEB_PORT:-13001}"

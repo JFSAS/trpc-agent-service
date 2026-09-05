@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
 
 const navigation = vi.hoisted(() => ({ pathname: "/admin/users" }));
+const access = vi.hoisted(() => ({ role: "MEMBER" as "OWNER" | "MEMBER" }));
+const api = vi.hoisted(() => ({ getTenant: vi.fn(), logout: vi.fn() }));
+
+vi.mock("../lib/control-api", () => ({ controlApi: api }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
@@ -13,7 +17,14 @@ vi.mock("next/navigation", () => ({
 afterEach(() => cleanup());
 
 describe("dashboard-01 application shell", () => {
-  beforeEach(() => { navigation.pathname = "/admin/users"; });
+  beforeEach(() => {
+    navigation.pathname = "/admin/users";
+    access.role = "MEMBER";
+    api.getTenant.mockResolvedValue({
+      id: "tenant-1", slug: "team-a", name: "Team A", status: "ACTIVE",
+      role: access.role, created_at: "", updated_at: "",
+    });
+  });
 
   it("shows only navigation backed by the currently implemented APIs", () => {
     render(
@@ -32,7 +43,7 @@ describe("dashboard-01 application shell", () => {
     expect(screen.queryByText("部署")).not.toBeInTheDocument();
   });
 
-  it("shows tenant-scoped Agent authoring only inside a tenant workspace", () => {
+  it("shows Agent authoring but not member management to a Tenant MEMBER", async () => {
     navigation.pathname = "/tenants/tenant-1/agents/agent-1";
     render(
       <AppShell user={{ id: "user-1", username: "member", display_name: "Tenant Member" }}>
@@ -40,14 +51,47 @@ describe("dashboard-01 application shell", () => {
       </AppShell>,
     );
 
-    expect(screen.getByRole("link", { name: "Agent 画布" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Agent 工作台" })).toHaveAttribute(
       "href",
       "/tenants/tenant-1/agents",
     );
-    expect(screen.getByRole("link", { name: "成员" })).toHaveAttribute(
-      "href",
-      "/tenants/tenant-1",
-    );
+    expect(await screen.findByRole("link", { name: "切换租户" })).toHaveAttribute("href", "/tenants");
+    expect(screen.getByRole("link", { name: "运行配置" })).toHaveAttribute("href", "/tenants/tenant-1/runtime-profiles");
+    expect(screen.queryByRole("link", { name: "成员管理" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "平台用户" })).not.toBeInTheDocument();
+  });
+
+  it("labels the non-operator tenant selection chrome as a tenant space", () => {
+    navigation.pathname = "/tenants";
+    render(
+      <AppShell user={{ id: "user-1", username: "member", display_name: "Tenant Member" }}>
+        <div>tenant selection</div>
+      </AppShell>,
+    );
+
+    expect(screen.getByRole("navigation", { name: "租户空间" })).toBeInTheDocument();
+    expect(screen.getByText("租户空间")).toBeInTheDocument();
+    expect(screen.queryByText("平台管理")).not.toBeInTheDocument();
+  });
+
+  it("shows member management only after the active Tenant resolves as OWNER", async () => {
+    navigation.pathname = "/tenants/tenant-1/agents";
+    access.role = "OWNER";
+    api.getTenant.mockResolvedValue({
+      id: "tenant-1", slug: "team-a", name: "Team A", status: "ACTIVE",
+      role: "OWNER", created_at: "", updated_at: "",
+    });
+
+    render(
+      <AppShell user={{ id: "user-1", username: "owner", display_name: "Tenant Owner" }}>
+        <div>agent content</div>
+      </AppShell>,
+    );
+
+    expect(await screen.findByRole("link", { name: "成员管理" })).toHaveAttribute(
+      "href",
+      "/tenants/tenant-1/members",
+    );
+    expect(screen.getByText("Team A")).toBeInTheDocument();
   });
 });
