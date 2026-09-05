@@ -62,4 +62,14 @@ describe("Control API same-origin proxy", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual({ error: { code: "CONTROL_API_UNAVAILABLE", message: "Control API is unavailable" } });
   });
+  it.each([200, 201, 409, 422, 503])("preserves Deployment publication status %s, diagnostics and idempotency", async (status) => {
+    const body = JSON.stringify({ expected_latest_revision_number: null, input: { schema_version: "v1", agent: { agent_id: "a", version_number: 3 }, profile: { profile_id: "p", revision_number: 2 } } });
+    const payload = status < 300 ? { revision: { revision_number: 1 } } : { error: { code: "DEPLOYMENT_REVISION_INVALID" }, validation: { valid: false, diagnostics: [{ code: "DEPLOYMENT_RESOURCE_MISSING" }] } };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(payload, { status }));
+    const response = await POST(new NextRequest("http://console.test/api/control/v1/tenants/t/deployments/d/revisions", { method: "POST", body, headers: { "content-type": "application/json", "Idempotency-Key": "same-publication" } }), { params: Promise.resolve({ path: ["v1", "tenants", "t", "deployments", "d", "revisions"] }) });
+    expect(response.status).toBe(status); expect(await response.json()).toEqual(payload);
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("idempotency-key")).toBe("same-publication");
+    expect(new TextDecoder().decode(fetchMock.mock.calls[0][1]?.body as ArrayBuffer)).toBe(body);
+  });
+
 });

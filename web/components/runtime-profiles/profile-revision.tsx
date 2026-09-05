@@ -14,6 +14,8 @@ import {
   type RuntimeProfile,
 } from "../../lib/runtime-profile-api";
 import { Button, EmptyState, PageHeader, StatusBadge } from "../ui";
+import { DeploymentReturnLink } from "../deployments/return-link";
+import { deploymentHref } from "../../lib/deployment-editor-state";
 import { ProfileDialog } from "./profile-dialog";
 import { ProfileResourceEditor } from "./profile-resource-editor";
 import styles from "./profile-revision.module.css";
@@ -224,7 +226,8 @@ export function ProfileRevisionDetail({ tenantId, profileId, revisionNumber }: {
 
   return <div className={styles.page}>
     <Link className={styles.back} href={backHref}><ArrowLeft size={15} />返回配置工作台</Link>
-    <PageHeader eyebrow="RUNTIME PROFILE · REVISION" title={`版本 r${revision.revision_number}`} description={profile.name} action={<StatusBadge tone="gray"><LockKeyhole size={12} />不可变配置</StatusBadge>} />
+    <DeploymentReturnLink tenantId={tenantId} />
+    <PageHeader eyebrow="RUNTIME PROFILE · REVISION" title={`版本 r${revision.revision_number}`} description={profile.name} action={<Link className="button primary" href={`${deploymentHref(tenantId)}/new?profile=${encodeURIComponent(profileId)}&revision=${revision.revision_number}`}>用此版本创建部署</Link>} />
     {notice && <div className="success-notice" role="status">{notice}</div>}
     {refreshWarning && <div className={styles.warning} role="alert">{refreshWarning}</div>}
     <dl className={styles.metadata}>

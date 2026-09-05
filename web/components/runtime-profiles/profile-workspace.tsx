@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { controlApi, type Tenant } from "../../lib/control-api";
 import { runtimeProfileApi, RuntimeProfileApiError, type RuntimeProfile, type ProfileDraft, type ProfileConfig, type CredentialActions, type ProfileWrite, type ProfileValidationReport, type ProfileValidationDiagnostic, type ResourceCategory, type ProfileRevisionPage } from "../../lib/runtime-profile-api";
 import { ApiNotice, Button, EmptyState, StatusBadge } from "../ui";
+import { DeploymentReturnLink } from "../deployments/return-link";
 import { ProfileDialog } from "./profile-dialog";
 import { ProfileMetadataDialog, profileHref } from "./profile-list";
 import { ProfileResourceEditor } from "./profile-resource-editor";
@@ -139,6 +140,7 @@ export function ProfileWorkspace({ tenantId, profileId }: { tenantId: string; pr
   if (!profile || !draft || !config || !tenant) return <><ApiNotice error={error} /><Button variant="secondary" onClick={() => void load()}>重新读取运行配置</Button></>;
   const disabled = !!busy || refreshNeeded;
   return <div className={styles.page}>
+    <DeploymentReturnLink tenantId={tenantId} onFocus={setFocusTarget} />
     <header className={styles.header}><div><Link className="text-link" href={profileHref(tenantId)}>← 运行配置列表</Link><h1>{profile.name}</h1><p>{profile.description || "配置模型、工具、知识与存储资源。"}</p><div className={styles.badges}><StatusBadge tone="blue">Draft r{draft.draft_revision}</StatusBadge><StatusBadge tone="gray">{profile.latest_revision_number ? `最新版本 r${profile.latest_revision_number}` : "尚未发布"}</StatusBadge><StatusBadge tone={dirty ? "amber" : "green"}>{dirty ? "未保存" : "已保存"}</StatusBadge><StatusBadge tone="gray">{tenant.role ?? "MEMBER"}</StatusBadge></div></div>
       <div className={styles.actions}><Button variant="ghost" disabled={disabled} onClick={() => { setMetadataError(undefined); setEditingMetadata(true); }}>编辑信息</Button><Button variant="secondary" disabled={disabled || conflict || !dirty} onClick={() => void act("save")}>{busy === "save" ? "保存中…" : "保存草稿"}</Button><Button variant="secondary" disabled={disabled || conflict} onClick={() => void act("validate")}>{busy === "validate" ? "校验中…" : "校验"}</Button><Button disabled={disabled || conflict} onClick={() => void act("publish")}>{busy === "publish" ? "发布中…" : "校验并发布"}</Button></div>
     </header>

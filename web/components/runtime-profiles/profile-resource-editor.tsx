@@ -108,10 +108,14 @@ export function ProfileResourceEditor({ config, credentials, credentialStates, o
     setCategory(focusTarget.category);
     setChosenName(focusTarget.name);
     setDeleteTarget(null);
-    setNewName("");
+    setNewName(Object.hasOwn(config[focusTarget.category] ?? {}, focusTarget.name) ? "" : focusTarget.name);
   }, [focusTarget]);
   useEffect(() => {
-    if (!focusTarget || focusTarget.category !== category || focusTarget.name !== name) return;
+    if (!focusTarget || focusTarget.category !== category) return;
+    if (!Object.hasOwn(config[category] ?? {}, focusTarget.name)) {
+      addNameRef.current?.focus(); addNameRef.current?.scrollIntoView?.({ block: "nearest" }); return;
+    }
+    if (focusTarget.name !== name) return;
     const segments = (focusTarget.pointer ?? "").split("/").filter(Boolean).map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
     const resourceIndex = segments.indexOf(name, segments.indexOf(category) + 1);
     const fieldParts = resourceIndex < 0 ? [] : segments.slice(resourceIndex + 1);
@@ -213,7 +217,7 @@ export function ProfileResourceEditor({ config, credentials, credentialStates, o
         {category === key && <div className={styles.resourceList}>{Object.keys(config[key] ?? {}).length ? Object.keys(config[key] ?? {}).map((resourceName) => <button type="button" key={resourceName} aria-pressed={name === resourceName} className={`${styles.resource} ${name === resourceName ? styles.activeResource : ""}`} onClick={() => navigate(key, resourceName)} title={resourceName}><span className={styles.dot} />{resourceName}</button>) : <p>暂无资源</p>}</div>}
       </div>)}
       {!readOnly && <section className={styles.addResource}>
-        <label className={styles.field} htmlFor={`${prefix}-new-resource`}><span>新增 {meta.label} 资源</span><input ref={addNameRef} id={`${prefix}-new-resource`} aria-label="新资源名称" value={newName} disabled={disabled} maxLength={64} aria-invalid={!!addError} aria-describedby={`${prefix}-name-help`} onChange={(event) => setNewName(event.target.value)} placeholder="resource_name" /></label>
+        <label className={styles.field} htmlFor={`${prefix}-new-resource`}><span>新增 {meta.label} 资源</span><input ref={addNameRef} id={`${prefix}-new-resource`} aria-label="新资源名称" value={newName} disabled={disabled} maxLength={64} aria-invalid={!!addError} aria-describedby={`${prefix}-name-help`} onChange={(event) => setNewName(event.target.value)} placeholder={category === "storage" ? "session 或 memory" : "resource_name"} /></label>
         <small id={`${prefix}-name-help`} className={addError ? styles.error : styles.hint}>{addError || "名称在当前分类内唯一"}</small>
         <Button type="button" variant="secondary" disabled={disabled || !newName || !!addError} onClick={() => {
           if (!namePattern.test(newName) || addError) return;

@@ -7,6 +7,7 @@ import {
   Hexagon,
   LayoutDashboard,
   LogOut,
+  Package,
   ShieldCheck,
   SlidersHorizontal,
   Users,
@@ -15,6 +16,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+
+import { clearDeploymentPreparations, establishPreparationIdentity } from "../lib/deployment-editor-state";
 
 import { controlApi, type Tenant, type User } from "../lib/control-api";
 
@@ -54,7 +57,12 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
     return () => { cancelled = true; };
   }, [tenantId]);
 
+  useEffect(() => {
+    try { establishPreparationIdentity(sessionStorage, user.id); } catch { /* Deployment surfaces show persistence failures. */ }
+  }, [user.id]);
+
   async function logout() {
+    try { clearDeploymentPreparations(sessionStorage); } catch { /* Do not block logout if browser storage is unavailable. */ }
     await controlApi.logout().catch(() => undefined);
     router.replace("/login");
     router.refresh();
@@ -101,6 +109,12 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
                 <SlidersHorizontal size={18} />
                 <span>运行配置</span>
               </Link>
+              <Link
+                className={pathname.startsWith(`/tenants/${tenantPath}/deployments`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/deployments`} aria-label="部署" title="部署"
+              >
+                <Package size={18} /><span>部署</span>
+              </Link>
               {activeTenant?.role === "OWNER" && <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/members`) ? "nav-link active" : "nav-link"}
                 href={`/tenants/${tenantPath}/members`}
@@ -146,6 +160,8 @@ function pageLabel(pathname: string) {
   if (/^\/tenants\/[^/]+\/agents/.test(pathname)) return "Agents";
   if (/^\/tenants\/[^/]+\/runtime-profiles\/[^/]+\/revisions\/[^/]+/.test(pathname)) return "运行配置版本";
   if (/^\/tenants\/[^/]+\/runtime-profiles/.test(pathname)) return "运行配置";
+  if (/^\/tenants\/[^/]+\/deployments\/[^/]+\/revisions/.test(pathname)) return "部署发布版本";
+  if (/^\/tenants\/[^/]+\/deployments/.test(pathname)) return "部署";
   if (/^\/tenants\/[^/]+\/members/.test(pathname)) return "成员管理";
   if (/^\/tenants\/[^/]+/.test(pathname)) return "Agent 工作台";
   if (pathname.startsWith("/tenants")) return "选择租户";

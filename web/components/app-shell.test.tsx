@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./app-shell";
@@ -18,6 +18,8 @@ afterEach(() => cleanup());
 
 describe("dashboard-01 application shell", () => {
   beforeEach(() => {
+    sessionStorage.clear();
+    api.logout.mockResolvedValue(undefined);
     navigation.pathname = "/admin/users";
     access.role = "MEMBER";
     api.getTenant.mockResolvedValue({
@@ -56,6 +58,7 @@ describe("dashboard-01 application shell", () => {
       "/tenants/tenant-1/agents",
     );
     expect(await screen.findByRole("link", { name: "切换租户" })).toHaveAttribute("href", "/tenants");
+    expect(screen.getByRole("link", { name: "部署" })).toHaveAttribute("href", "/tenants/tenant-1/deployments");
     expect(screen.getByRole("link", { name: "运行配置" })).toHaveAttribute("href", "/tenants/tenant-1/runtime-profiles");
     expect(screen.queryByRole("link", { name: "成员管理" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "平台用户" })).not.toBeInTheDocument();
@@ -94,4 +97,12 @@ describe("dashboard-01 application shell", () => {
     );
     expect(screen.getByText("Team A")).toBeInTheDocument();
   });
+  it("clears local Deployment preparations on logout without deleting unrelated state", async () => {
+    render(<AppShell user={{ id: "user-1", username: "owner", display_name: "Owner" }}>content</AppShell>);
+    sessionStorage.setItem("deployment-preparation:v1:user-1:tenant-1:d", "{}"); sessionStorage.setItem("unrelated", "keep");
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    await waitFor(() => expect(api.logout).toHaveBeenCalled());
+    expect(sessionStorage.getItem("deployment-preparation:v1:user-1:tenant-1:d")).toBeNull(); expect(sessionStorage.getItem("unrelated")).toBe("keep");
+  });
+
 });
