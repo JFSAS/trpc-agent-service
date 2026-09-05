@@ -17,6 +17,7 @@ var (
 	ErrTenantForbidden       = errors.New("tenant action forbidden")
 	ErrAccountUnavailable    = errors.New("account is unavailable")
 	ErrOwnerRequiresTransfer = errors.New("owner membership requires ownership transfer")
+	ErrInvalidCandidateQuery = errors.New("invalid member candidate query")
 )
 
 type Store interface {
@@ -35,9 +36,18 @@ type AccountLookup interface {
 	IsActiveAccount(context.Context, string) (bool, error)
 }
 
+// MemberCandidateQuery is the Tenant-owned read port for finding global
+// accounts that can be added to one Tenant. Its implementation may use a
+// dedicated cross-module read model, but it must not expose Identity-owned
+// credentials or permit writes to Identity state.
+type MemberCandidateQuery interface {
+	SearchMemberCandidates(context.Context, string, string, Page) (MemberCandidatePage, error)
+}
+
 type Dependencies struct {
 	Store           Store
 	Accounts        AccountLookup
+	Candidates      MemberCandidateQuery
 	NewTenantID     func() (string, error)
 	NewMembershipID func() (string, error)
 	Now             func() time.Time
@@ -62,6 +72,19 @@ type Page struct {
 type TenantPage struct {
 	Tenants []domain.Tenant
 	Total   int
+}
+
+type MemberCandidate struct {
+	UserID      string
+	Username    string
+	DisplayName string
+}
+
+type MemberCandidatePage struct {
+	Candidates []MemberCandidate
+	Offset     int
+	Limit      int
+	Total      int
 }
 
 func (s *Service) validate() error {

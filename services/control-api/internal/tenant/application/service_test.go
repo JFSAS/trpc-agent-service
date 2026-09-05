@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,128 @@ func TestMemberCannotManageMemberships(t *testing.T) {
 	if !errors.Is(err, application.ErrTenantForbidden) {
 		t.Fatalf("AddMember() error = %v, want ErrTenantForbidden", err)
 	}
+	err = service.RemoveMember(context.Background(), application.RemoveMemberCommand{
+		TenantID: "tenant-1", ActorUserID: "member", UserID: "user-2",
+	})
+	if !errors.Is(err, application.ErrTenantForbidden) {
+		t.Fatalf("RemoveMember() error = %v, want ErrTenantForbidden", err)
+	}
+}
+
+func TestOnlyOwnerCanListMembers(t *testing.T) {
+	store := &tenantStoreStub{
+		memberships: map[string]domain.Membership{
+			"owner":  {TenantID: "tenant-1", UserID: "owner", Role: domain.MembershipRoleOwner},
+			"member": {TenantID: "tenant-1", UserID: "member", Role: domain.MembershipRoleMember},
+		},
+		members: []domain.Membership{{TenantID: "tenant-1", UserID: "owner"}},
+	}
+	service := newTenantService(store, &candidateQueryStub{})
+
+	members, err := service.ListMembers(context.Background(), "tenant-1", "owner")
+	if err != nil {
+		t.Fatalf("ListMembers(owner) error = %v", err)
+	}
+	if len(members) != 1 || store.listMembersCalls != 1 {
+		t.Fatalf("members/calls = %#v/%d", members, store.listMembersCalls)
+	}
+
+	_, err = service.ListMembers(context.Background(), "tenant-1", "member")
+	if !errors.Is(err, application.ErrTenantForbidden) {
+		t.Fatalf("ListMembers(member) error = %v, want ErrTenantForbidden", err)
+	}
+	if store.listMembersCalls != 1 {
+		t.Fatalf("ListMembers store calls = %d, want 1", store.listMembersCalls)
+	}
+}
+
+func TestOwnerSearchesPaginatedMemberCandidates(t *testing.T) {
+	store := &tenantStoreStub{memberships: map[string]domain.Membership{
+		"owner": {TenantID: "tenant-1", UserID: "owner", Role: domain.MembershipRoleOwner},
+	}}
+	candidates := &candidateQueryStub{result: application.MemberCandidatePage{
+		Candidates: []application.MemberCandidate{{
+			UserID: "user-2", Username: "Alice", DisplayName: "Alice Example",
+		}},
+		Total: 1,
+	}}
+	service := newTenantService(store, candidates)
+
+	result, err := service.SearchMemberCandidates(
+		context.Background(),
+		application.SearchMemberCandidatesQuery{
+			TenantID: "tenant-1", ActorUserID: "owner", Query: "  ALIce  ",
+			Page: application.Page{Offset: 2, Limit: 200},
+		},
+	)
+	if err != nil {
+		t.Fatalf("SearchMemberCandidates() error = %v", err)
+	}
+	if candidates.calls != 1 || candidates.tenantID != "tenant-1" || candidates.query != "alice" {
+		t.Fatalf("candidate query = calls:%d tenant:%q query:%q", candidates.calls, candidates.tenantID, candidates.query)
+	}
+	if candidates.page != (application.Page{Offset: 2, Limit: 100}) {
+		t.Fatalf("candidate page = %#v", candidates.page)
+	}
+	if result.Offset != 2 || result.Limit != 100 || result.Total != 1 ||
+		len(result.Candidates) != 1 || result.Candidates[0].UserID != "user-2" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestMemberCannotSearchMemberCandidates(t *testing.T) {
+	store := &tenantStoreStub{memberships: map[string]domain.Membership{
+		"member": {TenantID: "tenant-1", UserID: "member", Role: domain.MembershipRoleMember},
+	}}
+	candidates := &candidateQueryStub{}
+	service := newTenantService(store, candidates)
+
+	_, err := service.SearchMemberCandidates(
+		context.Background(),
+		application.SearchMemberCandidatesQuery{
+			TenantID: "tenant-1", ActorUserID: "member", Query: "   ",
+		},
+	)
+	if !errors.Is(err, application.ErrTenantForbidden) {
+		t.Fatalf("SearchMemberCandidates() error = %v, want ErrTenantForbidden", err)
+	}
+	if candidates.calls != 0 {
+		t.Fatalf("candidate query calls = %d, want 0", candidates.calls)
+	}
+	_, err = service.SearchMemberCandidates(
+		context.Background(),
+		application.SearchMemberCandidatesQuery{
+			TenantID: "tenant-1", ActorUserID: "outsider", Query: "alice",
+		},
+	)
+	if !errors.Is(err, application.ErrTenantForbidden) {
+		t.Fatalf("SearchMemberCandidates(outsider) error = %v, want ErrTenantForbidden", err)
+	}
+	if candidates.calls != 0 {
+		t.Fatalf("candidate query calls = %d, want 0", candidates.calls)
+	}
+}
+
+func TestOwnerMustProvideValidMemberCandidateQuery(t *testing.T) {
+	store := &tenantStoreStub{memberships: map[string]domain.Membership{
+		"owner": {TenantID: "tenant-1", UserID: "owner", Role: domain.MembershipRoleOwner},
+	}}
+	for _, query := range []string{"   ", strings.Repeat("界", 257)} {
+		candidates := &candidateQueryStub{}
+		service := newTenantService(store, candidates)
+		_, err := service.SearchMemberCandidates(
+			context.Background(),
+			application.SearchMemberCandidatesQuery{
+				TenantID: "tenant-1", ActorUserID: "owner", Query: query,
+			},
+		)
+		if !errors.Is(err, application.ErrInvalidCandidateQuery) {
+			t.Fatalf("SearchMemberCandidates(%q) error = %v, want ErrInvalidCandidateQuery", query, err)
+		}
+		if candidates.calls != 0 {
+			t.Fatalf("candidate query calls = %d, want 0", candidates.calls)
+		}
+	}
 }
 
 func TestOwnerMembershipCannotBeRemovedByOrdinaryRemove(t *testing.T) {
@@ -100,10 +223,12 @@ func TestOwnerMembershipCannotBeRemovedByOrdinaryRemove(t *testing.T) {
 }
 
 type tenantStoreStub struct {
-	provisionCalls int
-	tenant         domain.Tenant
-	owner          domain.Membership
-	memberships    map[string]domain.Membership
+	provisionCalls   int
+	listMembersCalls int
+	tenant           domain.Tenant
+	owner            domain.Membership
+	memberships      map[string]domain.Membership
+	members          []domain.Membership
 }
 
 func (s *tenantStoreStub) ProvisionTenant(
@@ -157,7 +282,8 @@ func (s *tenantStoreStub) ListMyTenants(context.Context, string) ([]domain.Tenan
 }
 
 func (s *tenantStoreStub) ListMembers(context.Context, string) ([]domain.Membership, error) {
-	return nil, nil
+	s.listMembersCalls++
+	return s.members, nil
 }
 
 func (s *tenantStoreStub) ListTenants(context.Context, application.Page) (application.TenantPage, error) {
@@ -171,4 +297,37 @@ type accountLookupStub struct {
 
 func (s *accountLookupStub) IsActiveAccount(context.Context, string) (bool, error) {
 	return s.active, s.err
+}
+
+type candidateQueryStub struct {
+	calls    int
+	tenantID string
+	query    string
+	page     application.Page
+	result   application.MemberCandidatePage
+	err      error
+}
+
+func (s *candidateQueryStub) SearchMemberCandidates(
+	_ context.Context,
+	tenantID, query string,
+	page application.Page,
+) (application.MemberCandidatePage, error) {
+	s.calls++
+	s.tenantID = tenantID
+	s.query = query
+	s.page = page
+	return s.result, s.err
+}
+
+func newTenantService(
+	store *tenantStoreStub,
+	candidates application.MemberCandidateQuery,
+) *application.Service {
+	return application.NewService(application.Dependencies{
+		Store: store, Accounts: &accountLookupStub{active: true}, Candidates: candidates,
+		NewTenantID:     func() (string, error) { return "tenant-id", nil },
+		NewMembershipID: func() (string, error) { return "membership-id", nil },
+		Now:             time.Now,
+	})
 }

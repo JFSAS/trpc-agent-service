@@ -564,3 +564,29 @@ func TestDeploymentValidationReportFixtures(t *testing.T) {
 		})
 	}
 }
+
+func TestControlOpenAPIContainsTenantMemberCandidateRoute(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	candidatePath := document.Paths.Find("/v1/tenants/{tenant_id}/member-candidates")
+	if candidatePath == nil || candidatePath.Get == nil {
+		t.Fatal("member candidate GET route is missing")
+	}
+	if candidatePath.Get.OperationID != "searchTenantMemberCandidates" {
+		t.Fatalf("member candidate operationId = %q", candidatePath.Get.OperationID)
+	}
+	var queryRequired bool
+	for _, parameter := range candidatePath.Get.Parameters {
+		if parameter.Value != nil && parameter.Value.Name == "query" {
+			queryRequired = parameter.Value.Required
+		}
+	}
+	if !queryRequired {
+		t.Fatal("member candidate query parameter must be required")
+	}
+	response := candidatePath.Get.Responses.Value("200")
+	if response == nil || response.Value == nil ||
+		response.Value.Content.Get("application/json") == nil ||
+		response.Value.Content.Get("application/json").Schema.Ref != "#/components/schemas/MemberCandidatePage" {
+		t.Fatal("member candidate 200 response must use MemberCandidatePage")
+	}
+}

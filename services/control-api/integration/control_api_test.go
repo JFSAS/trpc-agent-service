@@ -176,12 +176,99 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	request(t, router, http.MethodPost, "/v1/admin/users", adminCookie,
 		`{"username":"bob","display_name":"Bob","temporary_password":"Bob-temp-pass-1234"}`,
 		http.StatusCreated, &member)
+	var disabledUser struct {
+		ID string `json:"id"`
+	}
+	request(t, router, http.MethodPost, "/v1/admin/users", adminCookie,
+		`{"username":"bobby-disabled","display_name":"Bobby Disabled","temporary_password":"Bobby-temp-pass-1234"}`,
+		http.StatusCreated, &disabledUser)
+	if _, err := pool.Exec(ctx, `UPDATE user_accounts SET status = 'DISABLED' WHERE id = $1`, disabledUser.ID); err != nil {
+		t.Fatalf("disable candidate fixture: %v", err)
+	}
+	var displayCandidate struct {
+		ID string `json:"id"`
+	}
+	request(t, router, http.MethodPost, "/v1/admin/users", adminCookie,
+		`{"username":"charlie","display_name":"Human Label","temporary_password":"Charlie-temp-pass-1234"}`,
+		http.StatusCreated, &displayCandidate)
+	var isolatedTenant struct {
+		ID string `json:"id"`
+	}
+	request(t, router, http.MethodPost, "/v1/admin/tenants", adminCookie,
+		fmt.Sprintf(`{"slug":"team-b","name":"Team B","owner_user_id":%q}`, displayCandidate.ID),
+		http.StatusCreated, &isolatedTenant)
+	request(t, router, http.MethodGet, "/v1/tenants/"+isolatedTenant.ID+"/members", aliceCookie, "",
+		http.StatusForbidden, nil)
+	request(t, router, http.MethodGet, "/v1/tenants/"+isolatedTenant.ID+"/member-candidates?query=bob", aliceCookie, "",
+		http.StatusForbidden, nil)
+	request(t, router, http.MethodPost, "/v1/tenants/"+isolatedTenant.ID+"/members", aliceCookie,
+		fmt.Sprintf(`{"user_id":%q}`, member.ID), http.StatusForbidden, nil)
+	var candidates struct {
+		Candidates []struct {
+			UserID      string `json:"user_id"`
+			Username    string `json:"username"`
+			DisplayName string `json:"display_name"`
+		} `json:"candidates"`
+		Offset int `json:"offset"`
+		Limit  int `json:"limit"`
+		Total  int `json:"total"`
+	}
+	candidatePath := "/v1/tenants/" + provisioned.ID + "/member-candidates"
+	request(t, router, http.MethodGet, candidatePath+"?query=BoB&offset=0&limit=20", aliceCookie, "",
+		http.StatusOK, &candidates)
+	if candidates.Offset != 0 || candidates.Limit != 20 || candidates.Total != 1 ||
+		len(candidates.Candidates) != 1 || candidates.Candidates[0].UserID != member.ID ||
+		candidates.Candidates[0].Username != "bob" || candidates.Candidates[0].DisplayName != "Bob" {
+		t.Fatalf("member candidates = %#v", candidates)
+	}
+	request(t, router, http.MethodGet, candidatePath+"?query=bob&offset=1&limit=20", aliceCookie, "",
+		http.StatusOK, &candidates)
+	if candidates.Offset != 1 || candidates.Total != 1 || len(candidates.Candidates) != 0 {
+		t.Fatalf("member candidate page beyond end = %#v", candidates)
+	}
+	request(t, router, http.MethodGet, candidatePath+"?query=LABEL&offset=0&limit=20", aliceCookie, "",
+		http.StatusOK, &candidates)
+	if candidates.Total != 1 || len(candidates.Candidates) != 1 ||
+		candidates.Candidates[0].UserID != displayCandidate.ID {
+		t.Fatalf("display-name candidates = %#v", candidates)
+	}
+	request(t, router, http.MethodGet, candidatePath+"?query=%20%20", aliceCookie, "",
+		http.StatusBadRequest, nil)
+	request(t, router, http.MethodGet, candidatePath+"?query=bob&offset=0&limit=20", adminCookie, "",
+		http.StatusForbidden, nil)
+	request(t, router, http.MethodGet, candidatePath+"?query=alice&offset=0&limit=20", aliceCookie, "",
+		http.StatusOK, &candidates)
+	if candidates.Total != 0 || len(candidates.Candidates) != 0 {
+		t.Fatalf("existing owner appeared as candidate = %#v", candidates)
+	}
 	request(t, router, http.MethodPost, "/v1/tenants/"+provisioned.ID+"/members", aliceCookie,
 		fmt.Sprintf(`{"user_id":%q}`, member.ID), http.StatusCreated, nil)
+	request(t, router, http.MethodPost, "/v1/tenants/"+provisioned.ID+"/members", aliceCookie,
+		fmt.Sprintf(`{"user_id":%q}`, member.ID), http.StatusConflict, nil)
+	request(t, router, http.MethodGet, candidatePath+"?query=bob&offset=0&limit=20", aliceCookie, "",
+		http.StatusOK, &candidates)
+	if candidates.Total != 0 || len(candidates.Candidates) != 0 {
+		t.Fatalf("added member remained a candidate = %#v", candidates)
+	}
 	bobCookie := login(t, router, "bob", "Bob-temp-pass-1234", true)
 	request(t, router, http.MethodPost, "/v1/me/change-password", bobCookie,
 		`{"current_password":"Bob-temp-pass-1234","new_password":"Bob-final-pass-5678"}`,
 		http.StatusNoContent, nil)
+	var members struct {
+		Members []json.RawMessage `json:"members"`
+	}
+	request(t, router, http.MethodGet, "/v1/tenants/"+provisioned.ID+"/members", aliceCookie, "",
+		http.StatusOK, &members)
+	if len(members.Members) != 2 {
+		t.Fatalf("tenant members = %#v", members.Members)
+	}
+	request(t, router, http.MethodGet, "/v1/tenants/"+provisioned.ID+"/members", bobCookie, "",
+		http.StatusForbidden, nil)
+	request(t, router, http.MethodGet, candidatePath+"?query=alice", bobCookie, "",
+		http.StatusForbidden, nil)
+	request(t, router, http.MethodPost, "/v1/admin/tenants", aliceCookie,
+		fmt.Sprintf(`{"slug":"forbidden-team","name":"Forbidden Team","owner_user_id":%q}`, user.ID),
+		http.StatusForbidden, nil)
 
 	testAgentV1Lifecycle(t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie)
 	testRuntimeProfileV1Lifecycle(

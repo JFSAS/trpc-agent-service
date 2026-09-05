@@ -15,12 +15,8 @@ type AddMemberCommand struct {
 }
 
 func (s *Service) AddMember(ctx context.Context, command AddMemberCommand) (domain.Membership, error) {
-	actor, err := s.requireMembership(ctx, command.TenantID, command.ActorUserID)
-	if err != nil {
+	if _, err := s.requireOwner(ctx, command.TenantID, command.ActorUserID); err != nil {
 		return domain.Membership{}, err
-	}
-	if !actor.Membership.CanManageMembers() {
-		return domain.Membership{}, ErrTenantForbidden
 	}
 	active, err := s.deps.Accounts.IsActiveAccount(ctx, command.UserID)
 	if err != nil {
@@ -54,12 +50,8 @@ type RemoveMemberCommand struct {
 }
 
 func (s *Service) RemoveMember(ctx context.Context, command RemoveMemberCommand) error {
-	actor, err := s.requireMembership(ctx, command.TenantID, command.ActorUserID)
-	if err != nil {
+	if _, err := s.requireOwner(ctx, command.TenantID, command.ActorUserID); err != nil {
 		return err
-	}
-	if !actor.Membership.CanManageMembers() {
-		return ErrTenantForbidden
 	}
 	target, err := s.deps.Store.GetMembership(ctx, command.TenantID, command.UserID)
 	if errors.Is(err, ErrMembershipNotFound) {
@@ -89,6 +81,20 @@ func (s *Service) requireMembership(
 		return domain.TenantMembership{}, fmt.Errorf("authorize tenant membership: %w", err)
 	}
 	if state.Tenant.Status != domain.TenantStatusActive {
+		return domain.TenantMembership{}, ErrTenantForbidden
+	}
+	return state, nil
+}
+
+func (s *Service) requireOwner(
+	ctx context.Context,
+	tenantID, userID string,
+) (domain.TenantMembership, error) {
+	state, err := s.requireMembership(ctx, tenantID, userID)
+	if err != nil {
+		return domain.TenantMembership{}, err
+	}
+	if !state.Membership.CanManageMembers() {
 		return domain.TenantMembership{}, ErrTenantForbidden
 	}
 	return state, nil

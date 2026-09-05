@@ -36,11 +36,12 @@ and an ExecutionAuthorizationVerifier are injected together.
 
 - `GET /v1/me/tenants`
 - `GET /v1/tenants/{tenant_id}`
+- `GET /v1/tenants/{tenant_id}/member-candidates`
 - `GET|POST /v1/tenants/{tenant_id}/members`
 - `DELETE /v1/tenants/{tenant_id}/members/{user_id}`
-- V1 roles are intentionally limited to `OWNER` and `MEMBER`. Owners add
-  existing active platform users; invitations and ownership transfer are later
-  slices.
+- V1 roles are intentionally limited to `OWNER` and `MEMBER`. Owners search
+  active non-members and manage memberships; member listing, addition, and
+  removal are OWNER-only. Invitations and ownership transfer are later slices.
 
 ### Agent authoring and publication
 

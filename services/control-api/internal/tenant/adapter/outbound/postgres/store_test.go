@@ -51,11 +51,17 @@ func TestStoreReadsTenantMembership(t *testing.T) {
 
 type dbStub struct {
 	row       pgx.Row
+	query     string
+	queryArgs []any
 	execCalls int
 	execArgs  []any
 }
 
-func (s *dbStub) QueryRow(context.Context, string, ...any) pgx.Row { return s.row }
+func (s *dbStub) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	s.query = query
+	s.queryArgs = append([]any(nil), args...)
+	return s.row
+}
 
 func (s *dbStub) Exec(_ context.Context, _ string, args ...any) (pgconn.CommandTag, error) {
 	s.execCalls++
@@ -72,6 +78,10 @@ func (r rowStub) Scan(dest ...any) error {
 			*target = value.(string)
 		case *time.Time:
 			*target = value.(time.Time)
+		case *[]byte:
+			*target = value.([]byte)
+		case *int:
+			*target = value.(int)
 		default:
 			panic("unsupported scan destination")
 		}

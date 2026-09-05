@@ -249,4 +249,27 @@ describe("Control API browser client", () => {
       validation,
     });
   });
+
+  it("searches OWNER member candidates through the tenant-scoped endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        candidates: [{ user_id: "user-2", username: "alice", display_name: "Alice" }],
+        offset: 10,
+        limit: 10,
+        total: 21,
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    const result = await controlApi.searchMemberCandidates("tenant/a", {
+      query: "  Alice Zhang  ",
+      offset: 10,
+      limit: 10,
+    });
+
+    expect(result.total).toBe(21);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/control/v1/tenants/tenant%2Fa/member-candidates?query=Alice+Zhang&offset=10&limit=10",
+      { credentials: "include" },
+    );
+  });
 });

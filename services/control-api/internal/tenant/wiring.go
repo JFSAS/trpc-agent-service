@@ -32,8 +32,9 @@ func NewModule(deps Dependencies) (*Module, error) {
 	}
 	store := postgresadapter.NewStore(deps.DB)
 	service := application.NewService(application.Dependencies{
-		Store:    store,
-		Accounts: deps.Accounts,
+		Store:      store,
+		Accounts:   deps.Accounts,
+		Candidates: postgresadapter.NewMemberCandidateReader(deps.DB),
 		NewTenantID: func() (string, error) {
 			return generateID("tnt")
 		},

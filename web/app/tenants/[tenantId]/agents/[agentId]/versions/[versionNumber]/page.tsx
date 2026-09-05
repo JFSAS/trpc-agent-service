@@ -45,7 +45,7 @@ export default function AgentVersionPage() {
         eyebrow="IMMUTABLE AGENT VERSION"
         title={agent && version ? `${agent.name} · v${version.version_number}` : "Agent 版本"}
         description="这是 Control API 返回的不可变 Canonical AgentSpec。此页面不会修改 Draft。"
-        action={<Link className="button secondary" href={agentHref}><ArrowLeft size={15} />返回工作台</Link>}
+        action={<div className="toolbar-group"><Link className="button secondary" href={agentHref}><ArrowLeft size={15} />返回工作台</Link>{version && <Link className="button primary" href={`/tenants/${encodeURIComponent(tenantId)}/deployments/new?agent=${encodeURIComponent(agentId)}&version=${version.version_number}`}>用此版本创建部署</Link>}</div>}
       />
       <ApiNotice error={error} />
       {!version && !error && <div className="panel-loading"><div className="loading-mark" /><span>正在读取不可变版本…</span></div>}

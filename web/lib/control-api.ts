@@ -41,6 +41,19 @@ export type Membership = {
   created_at: string;
 };
 
+export type MemberCandidate = {
+  user_id: string;
+  username: string;
+  display_name: string;
+};
+
+export type MemberCandidatePage = {
+  candidates: MemberCandidate[];
+  offset: number;
+  limit: number;
+  total: number;
+};
+
 export type Agent = {
   id: string;
   tenant_id: string;
@@ -218,6 +231,19 @@ export const controlApi = {
   listMembers(tenantId: string) {
     return request<{ members: Membership[] }>(
       `/v1/tenants/${encodeURIComponent(tenantId)}/members`,
+    );
+  },
+  searchMemberCandidates(
+    tenantId: string,
+    page: { query: string; offset: number; limit: number },
+  ) {
+    const query = new URLSearchParams({
+      query: page.query.trim(),
+      offset: String(page.offset),
+      limit: String(page.limit),
+    });
+    return request<MemberCandidatePage>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/member-candidates?${query}`,
     );
   },
   addMember(tenantId: string, userId: string) {

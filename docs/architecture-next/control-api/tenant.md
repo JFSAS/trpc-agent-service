@@ -82,29 +82,43 @@ V1 不提前引入 `ADMIN/DEVELOPER/VIEWER`、Membership 状态机、Invitation�
 
 - `ListMyTenants`
 - `GetTenant`
-- `ListMembers`
+- `ListMembers`：只允许 Owner
+- `SearchMemberCandidates`：只允许 Owner，查询 ACTIVE 且尚未加入当前 Tenant 的账号
 - `ListTenants`：只供 Admin Application Port 调用
 
-Tenant 对 Identity 的唯一依赖是使用方 Port：
+Tenant Command 对 Identity 的依赖仍是使用方 Port：
 
 ```text
 AccountLookup.IsActiveAccount(UserID) -> bool
 ```
 
-它不导入 Identity PostgreSQL Adapter，也不读取 Identity 表。
+成员候选搜索使用 Tenant Application 自己定义的只读 Port：
+
+```text
+MemberCandidateQuery.SearchMemberCandidates(TenantID, Query, Page)
+  -> ACTIVE UserAccount public projection
+  -> exclude existing Tenant Membership
+```
+
+该 Port 由专用 PostgreSQL Read Model 实现，只读取 `user_accounts` 和
+`tenant_memberships`，仅投影 `user_id`、`username`、`display_name`。它不导入
+Identity PostgreSQL Adapter、不读取凭证，也不修改 Identity 状态；最终添加命令仍会
+通过 `AccountLookup` 重新确认 ACTIVE 状态，并由 Membership 唯一约束处理并发重复添加。
 
 ## 6. HTTP API
 
 ```text
 GET    /v1/me/tenants
 GET    /v1/tenants/{tenant_id}
+GET    /v1/tenants/{tenant_id}/member-candidates?query=&offset=&limit=
 GET    /v1/tenants/{tenant_id}/members
 POST   /v1/tenants/{tenant_id}/members
 DELETE /v1/tenants/{tenant_id}/members/{user_id}
 ```
 
-这些接口先经过 Identity Session Middleware。临时密码尚未轮换的 Restricted Session
-只能修改密码或登出，不能建立 Tenant Context。
+这些接口先经过 Identity Session Middleware。候选搜索与成员列表、添加、删除都只允许
+Owner。临时密码尚未轮换的 Restricted Session 只能修改密码或登出，不能建立 Tenant
+Context。
 
 ```text
 Identity Session
@@ -119,7 +133,7 @@ Identity Session
 
 ## 7. 持久化所有权
 
-Tenant PostgreSQL Adapter 独占：
+Tenant PostgreSQL Write Adapter 独占：
 
 ```text
 tenants
@@ -128,6 +142,10 @@ tenant_memberships
 
 数据库使用 `UNIQUE(slug)`、`UNIQUE(tenant_id, user_id)`、角色 `CHECK` 和外键提供最后
 一道一致性约束。业务错误仍由 Application 映射，Handler 不解释 PostgreSQL 错误。
+
+候选人 PostgreSQL Read Adapter 是跨模块专用 Read Model：它只读查询公开账号字段并与
+当前 Tenant Membership 做 anti-join，以在同一个数据库语句中得到准确的筛选、分页和
+总数。
 
 ## 8. 代码结构
 
@@ -144,6 +162,7 @@ services/control-api/internal/tenant/
 ├── adapter/
 │   ├── inbound/http/
 │   └── outbound/postgres/
+│       └── member_candidate_query.go
 └── wiring.go
 ```
 
