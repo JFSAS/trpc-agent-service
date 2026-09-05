@@ -10,14 +10,13 @@ test:
     go test ./...
 
 test-integration:
-    test -n "${CONTROL_TEST_DATABASE_URL:-}" || { echo 'CONTROL_TEST_DATABASE_URL is required'; exit 2; }
-    go test -count=1 ./services/control-api/integration ./services/control-api/internal/bootstrap
+    bash scripts/test-control-integration.sh
 
 openapi:
-    go test ./api/openapi/control/v1 ./services/control-api/internal/agent/domain ./services/control-api/internal/runtimeprofile/domain
+    go test ./api/... ./services/control-api/internal/agent/domain ./services/control-api/internal/runtimeprofile/domain ./services/control-api/internal/deployment/domain
 
 test-race:
-    go test -race ./services/control-api/internal/identity/... ./services/control-api/internal/tenant/... ./services/control-api/internal/admin/... ./services/control-api/internal/agent/... ./services/control-api/internal/runtimeprofile/... ./services/control-api/internal/bootstrap
+    go test -race ./services/control-api/internal/identity/... ./services/control-api/internal/tenant/... ./services/control-api/internal/admin/... ./services/control-api/internal/agent/... ./services/control-api/internal/runtimeprofile/... ./services/control-api/internal/deployment/... ./services/control-api/internal/bootstrap
 
 vet:
     go vet ./services/control-api/... ./api/...

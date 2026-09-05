@@ -4,7 +4,7 @@
 - **所属子领域**：Control API / Agent
 - **协议位置**：`api/schemas/agentspec/v1/`
 - **适用对象**：AgentDraft 与不可变 AgentVersion 中的 AgentSpec 文档
-- **不适用对象**：RuntimeProfileSpec、ProfileDraft、ProfileRevision、Environment、
+- **不适用对象**：RuntimeProfileSpec、ProfileDraft、ProfileRevision、
   DeploymentRevision、RuntimeManifest、Worker 运行实例与编辑器视图状态
 
 ## 1. 目的
@@ -20,7 +20,7 @@ AgentSpec V1 必须同时满足以下目标：
    AgentVersion。
 3. Control API 可以在不构造实际 tRPC-Agent-Go 对象的情况下完成环境无关校验。
 4. ProfileRevision 可以提供具体资源，Deployment 可在不修改 AgentVersion 的情况下
-   按资源类别和名称精确匹配逻辑 Slot，无需用户提供额外映射表。
+   按资源类别和名称精确匹配到同名逻辑 Slot，无需用户提供额外映射表。
 5. 未知字段、框架专属 Option 和任意可执行表达式不能偷偷进入协议。
 6. 编辑器布局变化不能改变 AgentSpec 的运行语义或 Digest。
 
@@ -31,7 +31,7 @@ AgentSpec V1 不定义：
 - Graph、Edge、Reducer、Join、Condition 或任意表达式语言。
 - Tenant 上传的 Go 代码、插件、回调函数或节点模板。
 - 具体模型 Provider、Base URL、API Key、Token、Password 或其他 Credential。
-- ProfileDraft、ProfileRevision、Environment、DeploymentRevision 或 RuntimeManifest。
+- ProfileDraft、ProfileRevision、DeploymentRevision 或 RuntimeManifest。
 - Worker 并发、超时、队列 Consumer、资源限制和执行状态。
 - 节点坐标、视口、选择、折叠和面板状态等 Editor State。
 - 多 Draft 分支、合并、审批或实时协同编辑。
@@ -123,8 +123,8 @@ AgentSpec
 └── nodes           required, map<NodeID, Node>
 ```
 
-所有对象均使用 `additionalProperties: false`。增加新字段必须发布新的兼容 Schema，
-不能依赖任意扩展字段。
+所有对象均使用 `additionalProperties: false`。字段变化必须同步 Schema、Validator 与 Fixture，
+不能依赖任意扩展字段；当前开发期可直接调整 V1，稳定发布后的演进规则见第 18 节。
 
 ### 4.1 `schema_version`
 
@@ -218,8 +218,9 @@ agent researcher     # 不允许空格
 | `capabilities` | `string[]` | 是 | 至少一个、不得重复、满足 Capability 语法 |
 
 AgentSpec 不包含 Provider、实际模型名、Endpoint 或 Credential。Deployment 发布时将
-`models.primary` 精确匹配到所选 ProfileRevision 的 `models.primary`，再验证 Capability
-是否满足。匹配不跨类别、不模糊匹配，也不按 Capability 搜索其他候选资源。
+`requirements.models.primary` 精确匹配到所选 ProfileRevision 的
+`models.primary`，再验证 Capability 是否满足。匹配不跨类别、不模糊匹配，也不按
+Capability 搜索其他候选资源。
 
 ### 6.2 Tool Requirement
 
@@ -253,9 +254,11 @@ AgentSpec 不记录 Tool Server URL、认证头、Token 或进程启动参数。
 }
 ```
 
-AgentSpec 只声明逻辑能力；具体 Knowledge Resource、索引配置及内部凭据关联由
-ProfileRevision 提供，同类别同名资源匹配与兼容性校验由 Deployment 执行。Profile
-拥有凭据输入与加密存储，AgentSpec 不包含 SecretRef、CredentialID 或凭据值。
+AgentSpec 只声明逻辑能力；具体 Knowledge Resource、索引配置、Storage 依赖及内部
+凭据关联由 ProfileRevision 提供。Deployment 按类别和名称精确匹配 Knowledge
+Resource，再固定必要依赖。Storage 不属于 AgentSpec Slot，其 session/memory
+运行角色选择由 Deployment 单独定义，不通过通用工具映射引入。Profile 拥有凭据
+输入与加密存储，AgentSpec 不包含 SecretRef、CredentialID 或凭据值。
 
 ## 7. Node 判别联合
 
@@ -493,19 +496,31 @@ V1 平台限制：
 L3 不属于 Agent 发布校验，由 Deployment 发布执行：
 
 - AgentVersion 的全部 Model/Tool/Knowledge Slot 是否在所选 ProfileRevision 中具有
-  同类别同名 Resource；不要求额外用户映射表。
-- 匹配的 Model 是否满足声明的 Capability。
-- 匹配的 Tool 和 Knowledge Capability 是否满足需求。
-- 所需凭据关联是否经 Profile CheckUsable port 验证属于所选 Tenant/Profile/Revision、
-  用途与目的范围匹配且当前可用；检查不解密或请求 Provider。V1 不要求 Environment。
-  Profile 的该 Application 方法已有实现，真实 Deployment 调用仍待接入；Worker 取值
-  还必须经当前 Run/Attempt 拥有方授权，不能复用发布时检查作为永久许可。
+  同类别同名 Resource；不存在时返回明确诊断，V1 无用户映射表。
+- 同名 Model 是否满足声明的 Capability。
+- 同名 Tool 和 Knowledge Capability 是否满足需求。
+- 最小资源闭包的内部凭据关联是否经 `ProfileCredentialChecker.CheckUsable` 验证属于
+  所选 Tenant/Profile/Revision、用途与固定目的范围匹配且当前可用；检查只读元数据，
+  不解密或请求 Provider。Profile 的该 Application Port 已实现，Deployment 调用仍待
+  本切片接入。V1 不要求 Environment。
+- Worker 新 Attempt 通过 `RuntimeCredentialResolver.ResolveForAttempt`，在当前
+  Run/Attempt 拥有方授权通过后批量取值；不能把发布时检查复用为永久许可，执行中只
+  复用已校验的固定凭据集合。
 - Generation 参数是否被具体 Model 支持。
 - Deployment Compiler 是否支持所选 AgentSpec/RuntimeProfileSpec Schema Version，
   并能把实际使用的 Resource Kind 编译为 RuntimeManifest Adapter Kind/Version。
-- 目标 Worker 是否支持生成的 RuntimeManifest Schema Version，以及其中的运行
-  Adapter Kind/Version；Worker 不直接消费 AgentSpec 或 RuntimeProfileSpec。
-- 是否可以生成完整且不可变的 RuntimeManifest。
+- 平台配置提供的固定 PlatformExecutionContract 是否支持生成的 RuntimeManifest
+  Schema Version、Adapter Kind/Version、执行范围与资源上限；不实时枚举 Worker
+  或把 Provider 在线探测作为发布必需步骤。Worker 不直接消费 AgentSpec 或
+  RuntimeProfileSpec。
+- 是否可以生成只含实际资源和必要依赖、保留节点工具分配且不可变的 RuntimeManifest。
+
+V1 不引入 Environment 业务对象；自动匹配只发生在发布时，Worker 不跟随最新
+ProfileRevision，也不在执行时重新猜测绑定。已解析关系属于 Manifest 编译产物。
+Worker Adapter 对 Executor、Skills 等扩展派生的工具和入口也必须显式控制，避免
+绕过节点工具分配。当前 Tool 配置协议只有 MCP web.search，内建和命令工具的
+具体资源协议属于后续扩展。Profile 直接录入与内部加密凭据已由当前 V1 实现，不增加开发期历史兼容；
+本节不修改 AgentSpec V1 字段或 JSON 示例。
 
 因此：
 
@@ -516,7 +531,8 @@ AgentVersion 发布成功
 ```
 
 Runtime Profile 的资源与校验边界见
-[`runtime-profile-spec.md`](runtime-profile-spec.md)。
+[`runtime-profile-spec.md`](runtime-profile-spec.md)，Deployment 设计见
+[`deployment.md`](deployment.md)。
 
 ## 11. Validation Report
 
@@ -872,7 +888,11 @@ services/control-api/internal/agent/domain/validation.go
 
 ## 18. Schema 演进
 
-- `v1` 发布后其语义不可静默修改。
+当前尚未形成稳定对外版本，遵循 ARC-000：可以直接调整现有 V1 Schema / Fixture，
+无需保留开发期旧数据或另起协议代际。以下规则只适用于未来稳定对外发布之后；
+目标系统运行中的 AgentVersion / RuntimeManifest 不可变约束始终保留。
+
+- 稳定发布后，协议语义不可静默修改。
 - 兼容性说明和新的可选能力也必须经过 Fixture、Validator 与 Deployment Compiler
   映射测试；若输出的 RuntimeManifest 改变，还必须经过 Worker Manifest 兼容性测试。
 - 破坏性字段变化发布 `v2`，而不是修改历史 AgentVersion。

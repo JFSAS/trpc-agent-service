@@ -13,18 +13,20 @@ import (
 
 // Config contains the process configuration required by Control API V1.
 type Config struct {
-	ProfileCredentialKey []byte
-	HTTPAddress          string
-	DatabaseURL          string
-	SessionLifetime      time.Duration
-	SessionCookieName    string
-	SessionCookieDomain  string
-	SessionCookieSecure  bool
-	BootstrapMode        string
-	BootstrapUsername    string
-	BootstrapDisplayName string
-	BootstrapPassword    string
-	ShutdownTimeout      time.Duration
+	ProfileCredentialKey             []byte
+	DeploymentAllowedEndpointHosts   []string
+	DeploymentExpectedContractDigest string
+	HTTPAddress                      string
+	DatabaseURL                      string
+	SessionLifetime                  time.Duration
+	SessionCookieName                string
+	SessionCookieDomain              string
+	SessionCookieSecure              bool
+	BootstrapMode                    string
+	BootstrapUsername                string
+	BootstrapDisplayName             string
+	BootstrapPassword                string
+	ShutdownTimeout                  time.Duration
 }
 
 // LoadConfig reads and validates Control API process configuration.
@@ -37,6 +39,10 @@ func LoadConfig() (Config, error) {
 	credentialKey, err := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(os.Getenv("CONTROL_PROFILE_CREDENTIAL_KEY")))
 	if err != nil || len(credentialKey) != 32 {
 		return Config{}, errors.New("CONTROL_PROFILE_CREDENTIAL_KEY must be a base64-encoded 32-byte key")
+	}
+	expectedContractDigest := strings.TrimSpace(os.Getenv("CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST"))
+	if err := validateExpectedDeploymentContractDigest(expectedContractDigest); err != nil {
+		return Config{}, err
 	}
 	sessionLifetime, err := durationEnvironment("CONTROL_SESSION_LIFETIME", 24*time.Hour)
 	if err != nil {
@@ -57,7 +63,11 @@ func LoadConfig() (Config, error) {
 	}
 
 	return Config{
-		ProfileCredentialKey: credentialKey,
+		ProfileCredentialKey:             credentialKey,
+		DeploymentExpectedContractDigest: expectedContractDigest,
+		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment(
+			"CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS",
+		),
 		HTTPAddress:          stringEnvironment("CONTROL_HTTP_ADDRESS", ":8080"),
 		DatabaseURL:          databaseURL,
 		SessionLifetime:      sessionLifetime,
@@ -70,6 +80,19 @@ func LoadConfig() (Config, error) {
 		BootstrapPassword:    bootstrapPassword,
 		ShutdownTimeout:      10 * time.Second,
 	}, nil
+}
+
+func commaSeparatedEnvironment(name string) []string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		result = append(result, strings.TrimSpace(part))
+	}
+	return result
 }
 
 func stringEnvironment(name, fallback string) string {

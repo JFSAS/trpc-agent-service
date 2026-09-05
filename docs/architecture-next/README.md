@@ -34,12 +34,42 @@
   Write/Canonical/Read 分离、内部 CredentialID、校验、Digest、Schema 与 Fixture。
 - [Runtime Profile 凭据](control-api/runtime-profile-credentials.md)：直接录入、加密存储、
   Draft COW、live 更新与已实现的消费边界；真实 Run/Attempt 与 Worker 接线仍待后续。
+- [Deployment V1](control-api/deployment.md)：已接受无 Environment、无用户绑定表的
+  简化边界；确定 AgentVersion + ProfileRevision，经同名匹配、校验和编译，生成不可变
+  DeploymentRevision + 最小 RuntimeManifest。Schema / Event、Compiler、Application、
+  PostgreSQL 原子发布、八个 HTTP 路由、Bootstrap 与多副本固定 Digest 启动门禁已实现；发布当前停在
+  `PENDING` Outbox，不表示 Relay 分发或 Worker 执行已完成。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
 - [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与
   Helm 部署资产的统一目录和所有权。
 - [可观测性与 Telemetry](operations/observability.md)：OpenTelemetry、Metrics、
   Trace、日志、Dashboard、告警和基础设施观测的生产基线。
+
+## 当前后续路线
+
+Deployment 的 Control Publication 已经落地并覆盖以下阶段：
+
+1. 已实现关闭的 Deployment Input、RuntimeManifest、公开 Manifest View、
+   `RuntimeManifestPublished.v1` Event、稳定诊断和 PlatformExecutionContract。
+2. 已实现纯同名匹配 Compiler、Storage 角色选择、最小闭包和节点级工具分配。
+3. 已实现授权、真实 `ProfileCredentialChecker`、CAS、Receipt-first 幂等
+   Application 及四个 Command / 四个 Query。
+4. 已实现 PostgreSQL 原子发布、不可变触发器、`PENDING` Outbox、八个
+   HTTP 路由、OpenAPI、Bootstrap 和真实 PostgreSQL 集成测试。
+5. Control Publication 闭环已验证；它的终点是持久化 `PENDING` Outbox，而不是消息已分发
+   或 Runtime 已执行。
+6. 已实现多副本 PlatformExecutionContract 固定 expected Digest：发布配置提供同一个
+   `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`，Bootstrap 在 DB / HTTP 前比对，
+   不匹配即启动失败；只读 CLI 支持按最终 Host 配置预计算，Compose 强制要求预期值。
+
+后续阶段为：可选 Relay / JetStream 投递与 Consumer 幂等；再独立完成
+ChannelBinding 生效版本切换、Gateway 运行投影和 Worker 固定 Manifest 执行。
+新 Attempt 的批量凭据取值与真实执行授权仍属于 Runtime 接线。已完成的多副本
+Digest 门禁属于平台部署发布配置，不引入 Environment 或其他用户业务对象。
+
+发布、持久 Outbox、事件已分发、运行面实际执行分别记录状态；Control 发布成功不
+代表已进入运行链路。详细阶段与验收案例以 Deployment 文档为准。
 
 ## 后续文档结构
 

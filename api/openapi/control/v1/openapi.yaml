@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Control API
   version: 1.0.0
-  description: V1 HTTP contract for Identity, platform administration, Tenant membership, Agent authoring, and Runtime Profile authoring.
+  description: V1 HTTP contract for Identity, platform administration, Tenant membership, Agent authoring, Runtime Profile authoring, and Deployment publication.
 servers:
   - url: /
 tags:
@@ -18,6 +18,13 @@ tags:
       no Environment or user resource mapping table is required. Draft credential
       actions and published-association updates require Idempotency-Key. Internal
       Canonical Spec and Credential IDs are never part of the public HTTP contract.
+  - name: Deployment
+    description: >-
+      Tenant-scoped immutable publication of one exact Agent Version with one
+      exact Runtime Profile Revision. Deployment V1 has no Draft, Environment,
+      latest selector, user binding map, automatic activation, or credential
+      value transport. Public manifest_view is an explicit projection without
+      Credential IDs, purposes, audiences, values, or dynamic credential state.
 paths:
   /healthz:
     get:
@@ -685,6 +692,221 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: createDeployment
+      summary: Create a stable Deployment identity
+      description: >-
+        Creates metadata with revision 1 and no published revision. The
+        Idempotency-Key is scoped to this Tenant; an identical replay returns
+        the original creation snapshot rather than current mutable metadata.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/DeploymentIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDeploymentRequest'}
+      responses:
+        '200':
+          description: The same create command was already committed; its original snapshot is returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateDeploymentResponse'}
+        '201':
+          description: A new Deployment identity was created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateDeploymentResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    get:
+      operationId: listDeployments
+      summary: List Deployments in the Tenant
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of Deployment metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+    get:
+      operationId: getDeployment
+      summary: Get Deployment metadata
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Deployment metadata and latest publication number.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Deployment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    patch:
+      operationId: updateDeployment
+      summary: Compare-and-swap mutable Deployment metadata
+      description: >-
+        Updates name and/or description against expected_metadata_revision.
+        A semantic no-op returns the current object without advancing its CAS.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateDeploymentRequest'}
+      responses:
+        '200':
+          description: Current Deployment metadata after applying the command.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Deployment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/validate:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+    post:
+      operationId: validateDeploymentRevision
+      summary: Validate an exact Agent Version and Profile Revision pairing
+      description: >-
+        Performs the same closed-input, source-integrity, exact-name,
+        compatibility, platform-contract, and credential-metadata checks used
+        by publication. It reserves no revision and stores no receipt.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeploymentInput'}
+      responses:
+        '200':
+          description: Validation completed; valid may be false.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentValidationReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+    post:
+      operationId: publishDeploymentRevision
+      summary: Publish an immutable Deployment Revision and RuntimeManifest
+      description: >-
+        Owner-only, receipt-first publication. A new command atomically writes
+        the immutable Revision, closed internal Manifest, pending Outbox event,
+        stable receipt, and latest revision CAS. It does not activate traffic.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/DeploymentIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PublishDeploymentRevisionRequest'}
+      responses:
+        '200':
+          description: The same publish command was already committed; its immutable result is returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublishDeploymentRevisionResponse'}
+        '201':
+          description: A new Deployment Revision and RuntimeManifest were published.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublishDeploymentRevisionResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/DeploymentRevisionInvalid'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    get:
+      operationId: listDeploymentRevisions
+      summary: List immutable Deployment Revision metadata
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Metadata-only page; canonical input and manifest content are not loaded into this projection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentRevisionPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+      - $ref: '#/components/parameters/DeploymentRevisionNumber'
+    get:
+      operationId: getDeploymentRevision
+      summary: Get one immutable Deployment Revision and public manifest view
+      description: >-
+        Verifies stored canonical input, complete internal Manifest content,
+        digests, and cross-record identities before projecting manifest_view.
+        Internal Credential IDs and dynamic credential state are not returned.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Integrity-checked immutable publication with a fixed redacted Manifest projection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentRevision'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /v1/admin/capabilities:
     get:
       operationId: getAdminCapabilities
@@ -855,12 +1077,31 @@ components:
       name: tenant_id
       in: path
       required: true
-      schema: {type: string, minLength: 1}
+      schema: {type: string, minLength: 1, maxLength: 128}
     AgentID:
       name: agent_id
       in: path
       required: true
       schema: {type: string, minLength: 1}
+    DeploymentID:
+      name: deployment_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
+    DeploymentRevisionNumber:
+      name: revision_number
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+    DeploymentIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >-
+        Stable key for one logical Deployment create or publish command. Reuse
+        with an identical payload returns the original fixed result; reuse with
+        another payload returns 409. The plaintext key is not persisted.
+      schema: {type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]+$'}
     ProfileIdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -931,12 +1172,207 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/RuntimeProfileValidationErrorResponse'}
+    DeploymentRevisionInvalid:
+      description: The selected Agent Version and Runtime Profile Revision cannot be published together.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/DeploymentValidationErrorResponse'}
+    PayloadTooLarge:
+      description: The request body exceeds the fixed endpoint limit.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    ServiceUnavailable:
+      description: A required owner service or credential-metadata dependency is temporarily unavailable.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
     InternalError:
       description: The request could not be completed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
   schemas:
+    CreateDeploymentRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+    UpdateDeploymentRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expected_metadata_revision]
+      properties:
+        expected_metadata_revision: {type: integer, minimum: 1}
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+    Deployment:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, name, description, metadata_revision, latest_revision_number, created_by, created_at, updated_at]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        tenant_id: {type: string, minLength: 1, maxLength: 128}
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string, maxLength: 4096}
+        metadata_revision: {type: integer, minimum: 1}
+        latest_revision_number: {type: integer, minimum: 1, nullable: true}
+        created_by: {type: string, minLength: 1, maxLength: 128}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CreateDeploymentResponse:
+      type: object
+      additionalProperties: false
+      required: [deployment]
+      properties:
+        deployment: {$ref: '#/components/schemas/Deployment'}
+    DeploymentPage:
+      type: object
+      additionalProperties: false
+      required: [deployments, offset, limit, total]
+      properties:
+        deployments:
+          type: array
+          items: {$ref: '#/components/schemas/Deployment'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    DeploymentInput:
+      $ref: '../../../schemas/deployment/v1/deployment-input.schema.json'
+    PublishDeploymentRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_latest_revision_number, input]
+      properties:
+        expected_latest_revision_number:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: null for the first publication; otherwise the exact current latest revision number.
+        input: {$ref: '#/components/schemas/DeploymentInput'}
+    DeploymentValidationDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, severity, source, path, category, name, node_id, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - DEPLOYMENT_INPUT_INVALID
+            - DEPLOYMENT_SOURCE_SCHEMA_UNSUPPORTED
+            - DEPLOYMENT_RESOURCE_MISSING
+            - DEPLOYMENT_CAPABILITY_MISMATCH
+            - DEPLOYMENT_UNUSED_REQUIREMENT
+            - DEPLOYMENT_STORAGE_ROLE_MISSING
+            - DEPLOYMENT_STORAGE_ROLE_UNSUPPORTED
+            - DEPLOYMENT_ADAPTER_UNSUPPORTED
+            - DEPLOYMENT_ENTRYPOINT_UNSUPPORTED
+            - DEPLOYMENT_EXECUTION_RANGE_DENIED
+            - DEPLOYMENT_LIMIT_EXCEEDED
+            - DEPLOYMENT_CREDENTIAL_UNAVAILABLE
+            - DEPLOYMENT_MANIFEST_TOO_LARGE
+        severity: {type: string, enum: [error, warning]}
+        source: {type: string, enum: [input, agent, profile, platform]}
+        path: {type: string}
+        category: {type: string, enum: [models, tools, knowledge, storage, nodes], nullable: true}
+        name: {type: string, nullable: true}
+        node_id: {type: string, nullable: true}
+        message: {type: string}
+    DeploymentValidationReport:
+      type: object
+      additionalProperties: false
+      required: [valid, compiler_version, platform_contract_digest, diagnostics]
+      properties:
+        valid: {type: boolean}
+        compiler_version: {type: string, enum: [deployment-compiler-v1]}
+        platform_contract_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        diagnostics:
+          type: array
+          items: {$ref: '#/components/schemas/DeploymentValidationDiagnostic'}
+    DeploymentRevisionSummary:
+      type: object
+      additionalProperties: false
+      description: Metadata-only immutable publication projection; it never loads canonical input or manifest content JSONB.
+      required: [id, tenant_id, deployment_id, revision_number, schema_version, agent_id, agent_version_number, profile_id, profile_revision_number, input_digest, manifest_id, manifest_digest, published_by, published_at]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        tenant_id: {type: string, minLength: 1, maxLength: 128}
+        deployment_id: {type: string, minLength: 1, maxLength: 128}
+        revision_number: {type: integer, minimum: 1}
+        schema_version: {type: string, enum: [v1]}
+        agent_id: {type: string, minLength: 1, maxLength: 128}
+        agent_version_number: {type: integer, minimum: 1}
+        profile_id: {type: string, minLength: 1, maxLength: 128}
+        profile_revision_number: {type: integer, minimum: 1}
+        input_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        manifest_id: {type: string, minLength: 1, maxLength: 128}
+        manifest_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        published_by: {type: string, minLength: 1, maxLength: 128}
+        published_at: {type: string, format: date-time}
+    RuntimeManifestView:
+      $ref: '../../../schemas/deployment/v1/runtime-manifest-view.schema.json'
+    DeploymentRevision:
+      type: object
+      additionalProperties: false
+      description: >-
+        Full immutable publication read. input is canonical source selection;
+        manifest_view is derived only after integrity checking the complete
+        internal RuntimeManifest. Neither exposes internal Credential IDs.
+      required: [id, tenant_id, deployment_id, revision_number, schema_version, agent_id, agent_version_number, profile_id, profile_revision_number, input, input_digest, manifest_id, manifest_digest, manifest_view, published_by, published_at]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        tenant_id: {type: string, minLength: 1, maxLength: 128}
+        deployment_id: {type: string, minLength: 1, maxLength: 128}
+        revision_number: {type: integer, minimum: 1}
+        schema_version: {type: string, enum: [v1]}
+        agent_id: {type: string, minLength: 1, maxLength: 128}
+        agent_version_number: {type: integer, minimum: 1}
+        profile_id: {type: string, minLength: 1, maxLength: 128}
+        profile_revision_number: {type: integer, minimum: 1}
+        input: {$ref: '#/components/schemas/DeploymentInput'}
+        input_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        manifest_id: {type: string, minLength: 1, maxLength: 128}
+        manifest_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: Digest of complete internal canonical manifest content, not of manifest_view.
+        manifest_view: {$ref: '#/components/schemas/RuntimeManifestView'}
+        published_by: {type: string, minLength: 1, maxLength: 128}
+        published_at: {type: string, format: date-time}
+    DeploymentRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [revisions, offset, limit, total]
+      properties:
+        revisions:
+          type: array
+          items: {$ref: '#/components/schemas/DeploymentRevisionSummary'}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    PublishDeploymentRevisionResponse:
+      type: object
+      additionalProperties: false
+      required: [revision, validation]
+      properties:
+        revision: {$ref: '#/components/schemas/DeploymentRevision'}
+        validation: {$ref: '#/components/schemas/DeploymentValidationReport'}
+    DeploymentValidationErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error, validation]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [DEPLOYMENT_REVISION_INVALID]}
+            message: {type: string}
+        validation: {$ref: '#/components/schemas/DeploymentValidationReport'}
     CreateAgentRequest:
       type: object
       additionalProperties: false

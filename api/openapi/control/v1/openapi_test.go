@@ -2,6 +2,9 @@ package controlv1_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -47,6 +50,233 @@ func TestControlOpenAPIContainsRuntimeProfileV1Routes(t *testing.T) {
 		"POST /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/revisions",
 		"PUT /v1/tenants/{tenant_id}/runtime-profiles/{profile_id}/draft",
 	})
+}
+
+func TestControlOpenAPIContainsDeploymentV1Routes(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	assertRoutes(t, document, "/v1/tenants/{tenant_id}/deployments", []string{
+		"GET /v1/tenants/{tenant_id}/deployments",
+		"GET /v1/tenants/{tenant_id}/deployments/{deployment_id}",
+		"GET /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions",
+		"GET /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}",
+		"PATCH /v1/tenants/{tenant_id}/deployments/{deployment_id}",
+		"POST /v1/tenants/{tenant_id}/deployments",
+		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions",
+		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/validate",
+	})
+}
+
+func TestControlOpenAPIDeploymentSchemasExposeFrozenContract(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	for _, name := range []string{
+		"CreateDeploymentRequest",
+		"CreateDeploymentResponse",
+		"UpdateDeploymentRequest",
+		"Deployment",
+		"DeploymentPage",
+		"DeploymentInput",
+		"DeploymentValidationDiagnostic",
+		"DeploymentValidationReport",
+		"DeploymentRevisionSummary",
+		"DeploymentRevision",
+		"DeploymentRevisionPage",
+		"RuntimeManifestView",
+		"PublishDeploymentRevisionRequest",
+		"PublishDeploymentRevisionResponse",
+		"DeploymentValidationErrorResponse",
+	} {
+		if document.Components.Schemas[name] == nil || document.Components.Schemas[name].Value == nil {
+			t.Errorf("components.schemas.%s is missing or unresolved", name)
+		}
+	}
+
+	input := document.Components.Schemas["DeploymentInput"].Value
+	if input.AdditionalProperties.Has == nil || *input.AdditionalProperties.Has {
+		t.Fatal("DeploymentInput must be closed")
+	}
+	if got := sortedPropertyNames(input); strings.Join(got, ",") != "agent,profile,schema_version" {
+		t.Fatalf("DeploymentInput properties = %v", got)
+	}
+	for _, forbidden := range []string{
+		"bindings", "environment", "environment_id", "latest", "model_bindings",
+		"profile_latest", "tool_bindings", "worker_options",
+	} {
+		if input.Properties[forbidden] != nil {
+			t.Errorf("DeploymentInput exposes forbidden field %q", forbidden)
+		}
+	}
+
+	summary := document.Components.Schemas["DeploymentRevisionSummary"].Value
+	for _, forbidden := range []string{"input", "manifest", "manifest_content", "manifest_view"} {
+		if summary.Properties[forbidden] != nil || containsString(summary.Required, forbidden) {
+			t.Errorf("DeploymentRevisionSummary exposes heavy field %q", forbidden)
+		}
+	}
+	page := document.Components.Schemas["DeploymentRevisionPage"].Value
+	items := page.Properties["revisions"]
+	if items == nil || items.Value == nil || items.Value.Items == nil ||
+		items.Value.Items.Ref != "#/components/schemas/DeploymentRevisionSummary" {
+		t.Fatal("DeploymentRevisionPage must contain metadata summaries")
+	}
+
+	revision := document.Components.Schemas["DeploymentRevision"].Value
+	for _, required := range []string{"input", "input_digest", "manifest_id", "manifest_digest", "manifest_view"} {
+		if revision.Properties[required] == nil || !containsString(revision.Required, required) {
+			t.Errorf("DeploymentRevision must require %q", required)
+		}
+	}
+	for _, internal := range []string{
+		"agent_version_id", "agent_spec_digest", "manifest", "manifest_content",
+		"profile_revision_id", "profile_spec_digest",
+	} {
+		if revision.Properties[internal] != nil {
+			t.Errorf("DeploymentRevision exposes internal field %q", internal)
+		}
+	}
+}
+
+func TestControlOpenAPIDeploymentCommandsUseExactCASAndIdempotency(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	tenantParameter := document.Components.Parameters["TenantID"]
+	if tenantParameter == nil || tenantParameter.Value == nil || tenantParameter.Value.Schema == nil ||
+		tenantParameter.Value.Schema.Value == nil || tenantParameter.Value.Schema.Value.MaxLength == nil ||
+		*tenantParameter.Value.Schema.Value.MaxLength != 128 {
+		t.Fatal("TenantID must share the Deployment handler's 128-character opaque ID limit")
+	}
+	base := "/v1/tenants/{tenant_id}/deployments"
+	create := document.Paths.Value(base).Post
+	publish := document.Paths.Value(base + "/{deployment_id}/revisions").Post
+	validate := document.Paths.Value(base + "/{deployment_id}/validate").Post
+	patch := document.Paths.Value(base + "/{deployment_id}").Patch
+	if create == nil || publish == nil || validate == nil || patch == nil {
+		t.Fatal("Deployment command operations are unresolved")
+	}
+	if !hasRequiredHeader(create, "Idempotency-Key") || !hasRequiredHeader(publish, "Idempotency-Key") {
+		t.Fatal("Deployment create and publish must require Idempotency-Key")
+	}
+	if hasRequiredHeader(validate, "Idempotency-Key") || hasRequiredHeader(patch, "Idempotency-Key") {
+		t.Fatal("Deployment validate and metadata PATCH must not accept Idempotency-Key")
+	}
+
+	validateBody := validate.RequestBody.Value.Content["application/json"]
+	if validateBody == nil || validateBody.Schema == nil ||
+		validateBody.Schema.Ref != "#/components/schemas/DeploymentInput" {
+		t.Fatal("Deployment validate body must be the closed DeploymentInput directly")
+	}
+	publishBody := publish.RequestBody.Value.Content["application/json"]
+	if publishBody == nil || publishBody.Schema == nil ||
+		publishBody.Schema.Ref != "#/components/schemas/PublishDeploymentRevisionRequest" {
+		t.Fatal("Deployment publish body must use PublishDeploymentRevisionRequest")
+	}
+	publishRequest := document.Components.Schemas["PublishDeploymentRevisionRequest"].Value
+	expectedLatest := publishRequest.Properties["expected_latest_revision_number"]
+	if expectedLatest == nil || expectedLatest.Value == nil || !expectedLatest.Value.Nullable ||
+		!containsString(publishRequest.Required, "expected_latest_revision_number") ||
+		!containsString(publishRequest.Required, "input") {
+		t.Fatal("publish must require nullable expected_latest_revision_number and exact input")
+	}
+	update := document.Components.Schemas["UpdateDeploymentRequest"].Value
+	if !containsString(update.Required, "expected_metadata_revision") || update.MinProps != 2 {
+		t.Fatal("metadata update must require CAS plus name and/or description")
+	}
+}
+
+func TestControlOpenAPIDeploymentStatusMapping(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	base := "/v1/tenants/{tenant_id}/deployments"
+	create := document.Paths.Value(base).Post
+	validate := document.Paths.Value(base + "/{deployment_id}/validate").Post
+	publish := document.Paths.Value(base + "/{deployment_id}/revisions").Post
+	assertResponseStatuses(t, create, []string{"200", "201", "400", "401", "403", "409", "413", "500"})
+	assertResponseStatuses(t, document.Paths.Value(base).Get, []string{"200", "400", "401", "403", "500"})
+	assertResponseStatuses(t, document.Paths.Value(base+"/{deployment_id}").Get, []string{"200", "400", "401", "403", "404", "500"})
+	assertResponseStatuses(t, document.Paths.Value(base+"/{deployment_id}").Patch, []string{"200", "400", "401", "403", "404", "409", "413", "500"})
+	assertResponseStatuses(t, validate, []string{"200", "400", "401", "403", "404", "413", "500", "503"})
+	assertResponseStatuses(t, publish, []string{"200", "201", "400", "401", "403", "404", "409", "413", "422", "500", "503"})
+	assertResponseStatuses(t, document.Paths.Value(base+"/{deployment_id}/revisions").Get, []string{"200", "400", "401", "403", "404", "500"})
+	assertResponseStatuses(t, document.Paths.Value(base+"/{deployment_id}/revisions/{revision_number}").Get, []string{"200", "400", "401", "403", "404", "500"})
+	if validate.Responses.Value("422") != nil {
+		t.Fatal("validate compatibility failures belong in 200 valid=false, not 422")
+	}
+}
+
+func TestControlOpenAPIRuntimeManifestViewIsExplicitlyRedacted(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	view := document.Components.Schemas["RuntimeManifestView"].Value
+	seen := map[*openapi3.Schema]bool{}
+	credentialPresentCount := 0
+	var visit func(*openapi3.Schema)
+	visit = func(schema *openapi3.Schema) {
+		if schema == nil || seen[schema] {
+			return
+		}
+		seen[schema] = true
+		for name, property := range schema.Properties {
+			if name == "credential_present" {
+				credentialPresentCount++
+			}
+			if name == "credential_id" || strings.HasSuffix(name, "_credential_id") ||
+				containsString([]string{
+					"association_token", "audience_digest", "ciphertext", "configured",
+					"credential", "credential_revision", "nonce", "password", "purpose",
+					"status", "value",
+				}, name) {
+				t.Errorf("RuntimeManifestView exposes forbidden field %q", name)
+			}
+			if property != nil {
+				visit(property.Value)
+			}
+		}
+		if schema.Items != nil {
+			visit(schema.Items.Value)
+		}
+		if schema.AdditionalProperties.Schema != nil {
+			visit(schema.AdditionalProperties.Schema.Value)
+		}
+		for _, branch := range append(append(append([]*openapi3.SchemaRef{}, schema.OneOf...), schema.AnyOf...), schema.AllOf...) {
+			if branch != nil {
+				visit(branch.Value)
+			}
+		}
+	}
+	visit(view)
+	if credentialPresentCount < 5 {
+		t.Fatalf("RuntimeManifestView has %d credential_present projections, want at least 5", credentialPresentCount)
+	}
+}
+
+func hasRequiredHeader(operation *openapi3.Operation, name string) bool {
+	for _, parameter := range operation.Parameters {
+		if parameter.Value != nil && parameter.Value.In == "header" &&
+			parameter.Value.Name == name && parameter.Value.Required {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedPropertyNames(schema *openapi3.Schema) []string {
+	names := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func assertResponseStatuses(t *testing.T, operation *openapi3.Operation, want []string) {
+	t.Helper()
+	if operation == nil || operation.Responses == nil {
+		t.Fatal("operation responses are unresolved")
+	}
+	got := make([]string, 0, operation.Responses.Len())
+	for status := range operation.Responses.Map() {
+		got = append(got, status)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("response statuses = %v, want %v", got, want)
+	}
 }
 
 func TestControlOpenAPIRuntimeProfileSchemasExposeFrozenContract(t *testing.T) {
@@ -301,6 +531,35 @@ func TestRuntimeProfilePublishedCredentialTargetMatchesCategoryPurpose(t *testin
 			err := schema.VisitJSON(input)
 			if (err == nil) != test.valid {
 				t.Fatalf("category/purpose validity = %t, want %t", err == nil, test.valid)
+			}
+		})
+	}
+}
+
+func TestDeploymentValidationReportFixtures(t *testing.T) {
+	schema := loadControlOpenAPI(t).Components.Schemas["DeploymentValidationReport"].Value
+	for _, name := range []string{"valid.json", "unused-warning.json", "missing-resource.json", "credential-unavailable.json"} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("examples", "deployment-reports", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var value any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.VisitJSON(value); err != nil {
+				t.Fatalf("report fixture violates HTTP contract: %v", err)
+			}
+			report := value.(map[string]any)
+			valid := true
+			for _, item := range report["diagnostics"].([]any) {
+				if item.(map[string]any)["severity"] == "error" {
+					valid = false
+				}
+			}
+			if report["valid"] != valid {
+				t.Fatal("report validity disagrees with diagnostics")
 			}
 		})
 	}

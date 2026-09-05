@@ -58,9 +58,11 @@ V1 的最终发布结果不是两份彼此独立的资源，而是：
 - tRPC-Agent-Go 运行对象的构造、Worker 执行或回复投递。
 
 AgentSpec 只能声明逻辑 Model/Tool/Knowledge Slot 和能力需求。ProfileRevision 提供
-具名的具体 Profile Resource；Deployment 选择 AgentVersion 与 ProfileRevision，按资源
-类别和名称精确匹配、校验兼容性并生成 RuntimeManifest。用户不填写额外映射表，
-Capability 不用于搜索候选资源，名称不进行模糊匹配。Profile 发布仍不读取 AgentVersion。
+具名的具体 Profile Resource；Deployment 选择确定的 AgentVersion 与 ProfileRevision，
+按类别和名称精确匹配 Model/Tool/Knowledge 资源、校验兼容性并生成 RuntimeManifest。
+用户不填写额外映射表，Capability 不用于搜索候选资源，名称不进行模糊匹配。V1 不引入
+Environment 业务对象；Storage 是独立的运行角色，不是 AgentSpec Slot。匹配结果属于
+编译产物，Worker 只消费固定 Manifest。Profile 发布仍不读取 AgentVersion。
 
 ```text
 AgentVersion(Canonical AgentSpec)
@@ -68,10 +70,10 @@ AgentVersion(Canonical AgentSpec)
 ProfileRevision(具体 Model/Tool/Knowledge/Storage + 内部凭据关联)
                     |
                     v
-             DeploymentRevision
+       Deployment 同名匹配、校验与编译
                     |
                     v
-              RuntimeManifest
+      DeploymentRevision + RuntimeManifest
                     |
                     v
              Agent Worker 执行
@@ -80,7 +82,8 @@ ProfileRevision(具体 Model/Tool/Knowledge/Storage + 内部凭据关联)
 因此 Agent 发布不进入运行热路径，不创建 Run，不向 Worker 发送消息，也不发布
 Deployment Outbox 事件。具体资源边界见
 [`runtime-profile.md`](runtime-profile.md) 与
-[`runtime-profile-spec.md`](runtime-profile-spec.md)。
+[`runtime-profile-spec.md`](runtime-profile-spec.md)；Deployment 的规划边界见
+[`deployment.md`](deployment.md)。
 
 ## 4. V1 纵向切片
 
@@ -161,17 +164,24 @@ V1 将校验分为三层：
 1. **Draft 保存校验**：JSON 对象、大小、Expected Revision 与敏感字段边界。
 2. **Agent 发布校验**：Schema、Root、节点引用、组合结构、Slot 引用和领域不变量。
 3. **Deployment 兼容性校验**：Agent 的 Model/Tool/Knowledge Slot 是否全部在所选
-   ProfileRevision 中具有同类别同名资源，匹配资源是否满足能力需求，并经 Profile 的
-   CheckUsable application port 检查所需凭据关联是否属于该 Tenant/Profile/Revision、
-   用途与目的范围是否匹配、当前状态是否可用，最后生成目标 RuntimeManifest。
-   V1 不引入独立 Environment，测试与生产使用不同 RuntimeProfile。
+   ProfileRevision 中具有同类别同名且满足 Capability 的 Resource；实际使用的资源
+   是否符合平台静态实现与限制契约；最小资源闭包所需的内部凭据关联是否经
+   `ProfileCredentialChecker.CheckUsable` 验证属于该 Tenant/Profile/Revision、用途与
+   固定目的范围匹配且当前可用；以及能否生成最小、不可变、保留节点工具分配的
+   RuntimeManifest。检查只读元数据，不解密或探测 Provider。V1 不引入独立
+   Environment，测试与生产使用不同 RuntimeProfile。Profile 的 CheckUsable
+   Application Port 已实现，Deployment 对它的调用仍待本切片接入。
 
-AgentSpec 不保存 SecretRef、内部 CredentialID 或凭据值。Profile 拥有直接录入与加密
-存储，Agent 不直接访问其表或解密。上述 Deployment 调用以及后续 Worker 依据真实
-Attempt 授权取值仍待接线；Profile 静态发布不检查 live 状态或 Provider 有效性。
+AgentSpec 不保存 SecretRef、内部 CredentialID 或凭据值。Profile 直接接收凭据并拥有
+加密存储，Agent 不直接访问其表或解密。Worker 的新 Attempt 必须通过
+`RuntimeCredentialResolver.ResolveForAttempt` 并经过当前 Run/Attempt 拥有方授权后
+批量取值，不能把发布时检查当作永久许可。Profile 静态发布不检查 Provider 在线状态或
+凭据对 Provider 的实际有效性。
 
 Agent 发布成功只证明 AgentSpec 在不依赖具体运行环境的情况下成立，不证明任意
 ProfileRevision 都能部署它。跨领域兼容性必须留在 Deployment 发布阶段。
+Profile 直接录入与内部加密凭据已经在当前 V1 实现。固定配置与凭据轮换分离，
+AgentSpec V1 不增加任何凭据字段。
 
 V1 不在 Control API 中构造实际 tRPC Agent。Worker 根据固定 RuntimeManifest
 组装和执行 tRPC-Agent-Go 对象。因此 `agent` 不定义

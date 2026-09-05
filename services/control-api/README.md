@@ -4,10 +4,12 @@ Control API is the management backend for the Agent platform. It owns global
 identity, platform administration, Tenant membership, and Agent authoring.
 Runtime Profile V1 implements reusable resource authoring, deterministic validation,
 immutable Profile Revision publication, and Profile-owned encrypted credentials.
-Deployment and Channel Binding remain
-later management capabilities. Control API is not part of the message execution hot
-path. A future Worker credential-initialization call will depend on the Profile
-owner; the current default bootstrap does not enable that internal route.
+Deployment V1 implements deterministic two-source compilation and atomic Control
+Publication. Channel Binding remains a later management capability. Control API is
+not part of the message execution hot path. Profile-owned credential-check and
+resolution ports and the optional internal route exist; current default bootstrap
+leaves the value-resolution route disabled unless trusted workload authentication
+and an ExecutionAuthorizationVerifier are injected together.
 
 ## Implemented V1
 
@@ -91,12 +93,89 @@ The internal route is registered only when trusted workload authentication and
 an ExecutionAuthorizationVerifier are injected together; neither has a permissive
 default, and current process bootstrap leaves the route disabled.
 
+### Deployment authoring and publication
+
+- `POST|GET /v1/tenants/{tenant_id}/deployments`
+- `GET|PATCH /v1/tenants/{tenant_id}/deployments/{deployment_id}`
+- `POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/validate`
+- `POST|GET /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions`
+- `GET /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}`
+- Tenant-scoped membership authorization, metadata CAS, Create and Publish
+  receipt-first idempotency, exact two-source version selection, and stable
+  diagnostics.
+- Closed Deployment Input, internal RuntimeManifest, public credential-free
+  RuntimeManifest View, and `RuntimeManifestPublished.v1` event contracts.
+- Pure exact-name Compiler with declared/used/closure separation, fixed
+  `storage.session` and optional `storage.memory` roles, platform Adapter/range
+  checks, and per-node callable assignment.
+- PostgreSQL atomically creates an immutable DeploymentRevision, RuntimeManifest,
+  stable Receipt, and `PENDING` Outbox event before advancing Latest. Real
+  PostgreSQL integration tests cover the publication lifecycle and fixed-source
+  behavior.
+
+The [Deployment V1 design](../../docs/architecture-next/control-api/deployment.md)
+accepts a fixed AgentVersion and ProfileRevision, resolves requirements by exact
+category and name, and compiles an immutable DeploymentRevision and minimal
+RuntimeManifest. V1 has no Environment business object, hidden default Environment,
+Overlay, or user-provided binding tables. Storage uses separate session/memory
+runtime roles rather than AgentSpec Slots.
+
+A fixed platform execution contract supplies supported Adapter versions and limits.
+The implemented V1 Profile write DTO accepts credentials directly; Profile owns their
+encrypted PostgreSQL storage, internal identity, and authorization. Public Profile
+credential display gets configured/status from a separate dynamic query. Revision
+and Deployment configuration reads return fixed redacted Views without values,
+ciphertext, or internal credential IDs. Dynamic status is not part of immutable
+Revisions, RuntimeManifests, or fixed publication Receipt responses.
+The project has no stable release yet: revise the existing /v1 and schema_version=v1
+contract directly when needed. Direct credential input and Profile-owned encrypted
+storage are implemented in the current V1. Development data may be rebuilt; no dual
+protocol, legacy reader, or history-preserving migration is required. Published
+snapshots in the target runtime model remain immutable. No separate user-managed
+Secret object is introduced.
+
+Deployment uses ProfileCredentialChecker.CheckUsable for metadata-only checks. The
+pure Compiler consumes fixed configuration and produces the credential uses closure;
+dynamic checker results gate publication and populate Application Reports only,
+never Compiler inputs, Canonical Content, or digests.
+The later Worker slice must use RuntimeCredentialResolver.ResolveForAttempt and the
+Profile Owner's authenticated internal batch endpoint to obtain values for the fixed
+Manifest. It must not query Profile SQL or load Draft/latest configuration. New
+Attempts needing credentials depend on this endpoint's availability; already-resolved
+Attempts reuse their validated set in process memory without further Resolve calls.
+An uncertain batch response, process loss, or lost lease ends the Attempt; recovery
+uses a new AttemptID, not a historical credential pin. Credential values never enter
+Manifest, Outbox, or events; internal references are projected out of public reads.
+Per-node tool assignment remains enforced by the future Worker Adapter.
+
+Draft keep retains an ID, replace allocates a new ID, and clear detaches only the
+Draft. A separate explicit OWNER-only Profile action may replace/clear an already-used
+credential with independent Credential CAS, addressed by ProfileRevision and resource
+field rather than a caller-selected internal ID. It affects new Attempts of existing
+Manifests, not their immutable digests. Live clear revokes an ID permanently; replace
+does not revive it, and re-entry requires a new Draft ID and publication. Changing a
+fixed destination or audience
+requires a new credential ID and configuration revision.
+
+Runtime Profile currently supports only the MCP `web.search` Tool configuration
+protocol; built-in and command Tool protocols are later extensions.
+
+The current implementation completes the Control Publication boundary: schema and
+event fixtures, Compiler, Application, PostgreSQL store, eight HTTP routes, Bootstrap,
+and real PostgreSQL integration. It does not implement a Relay or JetStream consumer;
+new Outbox rows remain `PENDING`. Multi-replica PlatformExecutionContract identity
+is enforced by a release-pinned expected digest before database access or HTTP
+startup. Channel Binding activation, Gateway/runtime projection, and Worker
+execution remain separate later slices.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `CONTROL_DATABASE_URL` | yes | — | PostgreSQL connection string |
 | `CONTROL_PROFILE_CREDENTIAL_KEY` | yes | — | Externally generated base64-encoded 32-byte Profile encryption/MAC master key |
+| `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` | no | closed built-in V1 host set | Comma-separated exact lowercase hosts accepted by the Deployment Compiler |
+| `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` | yes | — | Release-pinned `sha256:` digest shared by all replicas; startup fails before DB access if the effective platform contract differs |
 | `CONTROL_HTTP_ADDRESS` | no | `:8080` | HTTP listen address |
 | `CONTROL_SESSION_LIFETIME` | no | `24h` | Fixed session lifetime |
 | `CONTROL_SESSION_COOKIE_NAME` | no | `control_session` | Browser cookie name |
@@ -117,6 +196,24 @@ There is no built-in key. All replicas and restarts using the same credential da
 must reuse the same key; changing it without a separate key-rotation design breaks
 existing encrypted values and conditional-write MACs. Preserve it independently
 from database backups and never commit or log it.
+Prepare the Deployment contract digest once per release with the final host
+configuration and the exact binary being deployed:
+
+```sh
+CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='model.example,state.example' \
+  go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
+```
+
+The CLI reads only host configuration plus the frozen contract; it needs neither
+a database nor a Profile credential key and prints a single digest. Persist that
+output as `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` in shared release
+configuration. Do not calculate and assign the expected value separately inside
+each replica's startup command. `LoadConfig` requires the digest and validates its
+format; `New` independently checks the effective digest before opening PostgreSQL,
+running migrations, or constructing the HTTP server. Existing `/healthz` behavior
+is unchanged; a mismatched replica fails startup rather than serving traffic.
+Host or binary-contract changes require a newly prepared shared release value.
+
 See the [Compose guide](../../deploy/compose/README.md) for the local startup flow.
 
 ## Source layout
@@ -130,7 +227,7 @@ services/control-api/
 │   ├── tenant/             # Tenant and Membership rules
 │   ├── agent/              # Agent, Draft, validation, immutable Version
 │   ├── runtimeprofile/     # Profile, Draft, immutable Revision, private credentials
-│   ├── deployment/         # later vertical slice
+│   ├── deployment/         # match, compile, atomically publish fixed Manifest
 │   ├── channelbinding/     # later vertical slice
 │   ├── infra/              # shared process connections and mechanics
 │   └── bootstrap/          # the single process composition root

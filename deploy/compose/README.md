@@ -28,9 +28,38 @@ export CONTROL_PROFILE_CREDENTIAL_KEY
 Profile 加密数据需要 Key 才能恢复；将 Key 与数据库备份分开保管并维持可恢复关系。
 当前未实现主 Key 轮换流程，直接改值会破坏已有密文和 MAC 的可用性。
 
+## 必需配置：同一发布固定 Platform Contract Digest
+
+多副本的 `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` 必须由同一份部署发布配置
+显式注入，格式为 `sha256:` 加 64 位小写十六进制。Compose 拒绝缺值；Control API
+在打开数据库、执行迁移和启动 HTTP 之前计算实际 Platform Contract Digest，
+只有与预期值一致才继续启动。Host、冻结实现契约或资源上限不同的副本因此不会进入服务。
+现有 `/healthz` 仍返回 204；不匹配的进程在监听前退出，没有可用健康端点。
+
+在发布准备阶段，使用待发布二进制和最终 Host 配置预计算一次；CLI 不需要数据库、
+Profile 加密 Key 或预期 Digest，也不会启动服务：
+
+```sh
+export CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='api.openai.com,mcp.example.com,qdrant.internal,state.example.test'
+go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
+# 或：control-api -print-deployment-contract-digest
+```
+
+当前上述 Host 示例的输出是 `sha256:43d9ac6291cf7ccacf544cb122fa4d92b398317fa6020e4bba43e8666e8747b0`。
+将经过核对的输出保存为本次发布的配置，并向所有副本注入同一个值，例如：
+
+```sh
+export CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST='sha256:43d9ac6291cf7ccacf544cb122fa4d92b398317fa6020e4bba43e8666e8747b0'
+```
+
+`.env.example` 固定了与该 Host 示例对应的 Digest。更改 Host 或发布二进制的契约后，
+需要重新预计算并统一更新发布配置；默认内建 Host 集合与此 Compose 示例不同，
+计算时必须传入实际 Host 配置。不要在各副本的启动脚本中把自身计算结果自动赋给
+expected 值，那会绕过多副本一致性门禁。Digest 是平台配置身份，不是凭据。
+
 ## 启动与检查
 
-从仓库根目录运行，先完成上述环境变量注入：
+从仓库根目录运行，先完成上述 Key、Host 与预期 Digest 环境变量注入：
 
 ```sh
 just compose-config
@@ -43,6 +72,9 @@ curl --fail http://127.0.0.1:8080/healthz
 - 默认回环端口为 8080；设置 `CONTROL_API_HTTP_PORT` 后，健康检查也使用对应端口。
 - Compose 的 `CONTROL_BOOTSTRAP_MODE` 默认为 `auto`；已有 Operator 时不会重新创建。
   `CONTROL_BOOTSTRAP_USERNAME` 与 `CONTROL_BOOTSTRAP_PASSWORD` 支持环境变量覆盖。
+- `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` 以逗号分隔精确、无通配符的小写 Host；
+  Deployment 只允许发布使用该集合内 Model、MCP、Knowledge 与 Storage 目标的 Manifest。
+  默认值只覆盖仓库示例，真实部署必须按平台网络策略显式配置。
 - Compose 自带的用户/数据库默认值只适用于本地调试；Profile 加密 Key 仍必须显式提供。
 - 实际启动成功由容器状态、迁移日志与 `/healthz` 共同验证，文档中的命令不是运行记录。
 

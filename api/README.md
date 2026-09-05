@@ -7,12 +7,18 @@ logic.
 
 Current protocol namespaces:
 
-- `openapi/control/v1`: the implemented Control API contract, including
-  Identity, Admin, Tenant, Agent V1, and Runtime Profile V1.
+- `openapi/control/v1`: the implemented Control API contract. Identity, Admin,
+  Tenant, Agent V1, Runtime Profile V1, and the eight Deployment V1 management
+  operations are registered through their Handler and Bootstrap wiring.
 - `schemas/agentspec/v1`: the frozen AgentSpec V1 JSON Schema and examples.
 - `schemas/runtimeprofile/v1`: the frozen RuntimeProfileSpec V1 JSON Schema
   and positive/negative examples.
-- `events/control/v1`: reserved for versioned control-plane events; no event
-  contract is implemented yet.
+- `schemas/deployment/v1`: closed Deployment Input, internal RuntimeManifest,
+  and public credential-identifier-free RuntimeManifest View schemas with
+  positive/negative examples.
+- `events/control/v1`: the closed `RuntimeManifestPublished.v1` Control Outbox
+  payload contract and fixtures. Deployment publication persists this event in
+  the same transaction with status `PENDING`; no Relay, JetStream delivery,
+  consumer, or runtime projection is implemented yet.
 - `events/execution/v1`: reserved for versioned execution-plane events; no
   event contract is implemented yet.

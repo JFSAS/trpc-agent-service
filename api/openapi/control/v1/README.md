@@ -1,9 +1,61 @@
 # Control OpenAPI v1
 
-`openapi.yaml` describes the Control API management surface: Identity, Platform
-Operator administration, Tenant membership, Agent authoring, and Runtime Profile.
-Runtime Profile directly adjusts the current V1; it has no reference-only DTO or
-old Schema/Digest compatibility stack.
+`openapi.yaml` describes the Control API management contract: Identity, Platform
+Operator administration, Tenant membership, Agent authoring, Runtime Profile,
+and Deployment publication. Runtime Profile directly adjusts the current V1; it
+has no reference-only DTO or old Schema/Digest compatibility stack.
+
+The eight Deployment operations are implemented by the tenant-scoped Gin Handler,
+registered by the Control API Bootstrap, and covered by route-level contract tests.
+Their publication boundary ends at an atomic PostgreSQL Revision, RuntimeManifest,
+Receipt, and `PENDING` Outbox event. Relay/JetStream delivery and runtime execution
+are not part of these HTTP operations.
+
+## Deployment: 8 management operations
+
+All paths below use the prefix `/v1/tenants/{tenant_id}/deployments`.
+
+| Method | Suffix | Request / response |
+| --- | --- | --- |
+| POST | empty | metadata + `Idempotency-Key`; new `201`, identical replay `200` |
+| GET | empty | paginated Deployment metadata |
+| GET | `/{deployment_id}` | Deployment metadata and latest publication number |
+| PATCH | `/{deployment_id}` | metadata CAS using `expected_metadata_revision` |
+| POST | `/{deployment_id}/validate` | closed two-source Input; `200` Report even when `valid=false` |
+| POST | `/{deployment_id}/revisions` | expected latest + Input + `Idempotency-Key`; new `201`, identical replay `200` |
+| GET | `/{deployment_id}/revisions` | metadata-only Revision Summary page |
+| GET | `/{deployment_id}/revisions/{revision_number}` | full Revision + fixed `manifest_view` |
+
+Deployment Input contains only `schema_version=v1`, exact
+`agent.agent_id/version_number`, and exact
+`profile.profile_id/revision_number`. It has no Deployment Draft, Environment,
+latest selector, binding map, user-supplied digest, runtime-role mapping, worker
+option, or automatic activation flag. Validate receives that Input directly and
+does not accept Expected Latest or `Idempotency-Key`. Publish requires nullable
+`expected_latest_revision_number`: null is valid only for the first publication;
+later commands provide the exact current positive number.
+
+Create and Publish alone use `Idempotency-Key`. An identical retry returns the
+original stable response; reuse with a different request returns `409`. Metadata
+PATCH uses its independent CAS. Compatibility failures return `200 valid=false`
+from Validate and `422` plus the same typed report from Publish. Transport DTO
+errors use `400`, body limits `413`, hidden/missing sources `404`, CAS or receipt
+conflicts `409`, credential-metadata owner outages `503`, and stored integrity
+failures `500`.
+
+Revision lists use `DeploymentRevisionSummary` and do not load canonical input or
+manifest content JSONB. Full reads and Publish responses verify the stored input,
+complete internal Manifest, digest, and identity relationships before projecting
+the explicit `RuntimeManifestView`. That public view contains only
+`credential_present` booleans. It never exposes Credential IDs, purposes,
+audience digests, values, ciphertext, association tokens, or mutable credential
+state. `manifest_digest` remains the digest of complete internal canonical
+content and is not recomputed from the public view.
+
+The internal Manifest accepts only the Profile-owned purposes `api_key`,
+`bearer_token`, `qdrant_api_key`, `embedding_api_key`, and `dsn`. PostgreSQL
+storage destinations contain fixed `host`, `port`, `database`, `username`, and
+`sslmode`; the credential descriptor is separate and contains no value.
 
 ## Runtime Profile: 11 management operations
 
@@ -86,6 +138,13 @@ checks compatibility, and fixes only required resources in Manifest. No extra
 resource mapping table, capability search, or fuzzy lookup is used. V1 has no
 Environment, environment_id, hidden default, overlay, or inherited configuration.
 
+The current Control Publication implementation includes the closed Deployment
+schemas and event, pure Compiler, Application commands/queries, Profile-owned
+credential metadata checks, PostgreSQL atomic publication, all eight HTTP routes,
+Bootstrap wiring, and real PostgreSQL integration coverage. Successful Publish
+persists `RuntimeManifestPublished.v1` as `PENDING`; there is no Relay, JetStream
+consumer, ChannelBinding/Gateway projection, or Worker execution path yet.
+
 Profile consumer Application methods exist. The optional Profile-owned internal
 adapter route `POST /internal/v1/runtime-profiles/credentials/resolve` is separate
 from these 11 management operations and is not a public management GET. It requires
@@ -95,8 +154,8 @@ that route. Real Run/Attempt authorization, internal deployment transport, and
 Worker batch initialization remain follow-up integration; no default permission
 is assumed.
 
-Control-plane DTO, storage, crypto, and tests have been added; final pass/fail
-results belong to the current verification report, not this API overview.
+Control-plane DTO, storage, publication, route, and integration tests establish
+this implemented management surface; they do not establish runtime execution.
 The tool kind/capability remain closed to `mcp_streamable_http`/`web.search`.
 Future built-in/workspace tool protocols are not added by this credential change.
 

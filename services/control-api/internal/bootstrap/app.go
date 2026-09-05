@@ -13,6 +13,7 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
+	deploymentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/httpserver"
 	sharedpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/postgres"
@@ -42,6 +43,12 @@ type App struct {
 
 // New creates shared infrastructure and composes every Control API module.
 func New(ctx context.Context, config Config) (*App, error) {
+	// Every replica must agree with the release-pinned contract before touching
+	// the database or constructing a listener. A mismatched replica never serves.
+	platformContract, err := checkedDeploymentPlatformContract(config)
+	if err != nil {
+		return nil, err
+	}
 	pool, err := sharedpostgres.Open(ctx, config.DatabaseURL)
 	if err != nil {
 		return nil, err
@@ -120,6 +127,19 @@ func New(ctx context.Context, config Config) (*App, error) {
 		pool.Close()
 		return nil, fmt.Errorf("assemble runtime profile: %w", err)
 	}
+	deploymentModule, err := deployment.NewModule(deployment.Dependencies{
+		DB: pool, Routes: router,
+		Authenticate:       identityModule.AuthenticationMiddleware(),
+		TenantAccess:       activeTenantMemberLookup{tenants: tenantModule.Service},
+		AgentVersions:      agentModule.Service,
+		ProfileRevisions:   runtimeProfileModule.Service,
+		ProfileCredentials: runtimeProfileModule.Service,
+		Platform:           platformContract,
+	})
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("assemble deployment: %w", err)
+	}
 
 	return &App{
 		database:        pool,
@@ -130,7 +150,29 @@ func New(ctx context.Context, config Config) (*App, error) {
 		tenant:          tenantModule,
 		agent:           agentModule,
 		runtimeProfile:  runtimeProfileModule,
-		deployment:      deployment.NewModule(deployment.Dependencies{}),
+		deployment:      deploymentModule,
 		channelBinding:  channelbinding.NewModule(channelbinding.Dependencies{}),
 	}, nil
+}
+
+func deploymentPlatformContract(config Config) (deploymentdomain.PlatformExecutionContract, error) {
+	contract := deploymentdomain.DefaultPlatformExecutionContract()
+	if len(config.DeploymentAllowedEndpointHosts) > 0 {
+		contract.Execution.AllowedEndpointHosts = append(
+			[]string(nil), config.DeploymentAllowedEndpointHosts...,
+		)
+		digest, err := contract.CalculateDigest()
+		if err != nil {
+			return deploymentdomain.PlatformExecutionContract{}, fmt.Errorf(
+				"calculate deployment platform contract digest: %w", err,
+			)
+		}
+		contract.Digest = digest
+	}
+	if err := contract.Validate(); err != nil {
+		return deploymentdomain.PlatformExecutionContract{}, fmt.Errorf(
+			"validate deployment platform contract: %w", err,
+		)
+	}
+	return contract, nil
 }

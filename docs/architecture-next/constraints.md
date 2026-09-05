@@ -2,8 +2,10 @@
 
 - **设计状态**：已接受
 - **实现状态**：Control API 的 Identity、Admin、Tenant、Agent、Runtime Profile V1 与
-  PostgreSQL 基线已实现
-- **确认日期**：2026-09-03
+  PostgreSQL 基线已实现；Deployment Control Publication 的 Compiler、Application、
+  PostgreSQL 原子发布 / `PENDING` Outbox、八个 HTTP 路由和固定 Digest 启动门禁已实现。
+  Relay / JetStream、ChannelBinding、Gateway 与 Worker 执行为后续阶段
+- **确认日期**：2026-09-04；实现状态于 2026-09-05 复核
 - **适用范围**：新建的生产代码、协议、数据库迁移、镜像和部署配置
 
 本文只记录当前已经确认、后续实现不得默默绕过的架构级约束。尚未确认的
@@ -16,6 +18,16 @@
 - **应当**：默认选择；偏离时必须在代码评审中说明原因。
 
 ## 1. 系统与生产 Workload
+
+### ARC-000：当前开发期协议可直接调整
+
+当前尚未形成稳定对外版本。字段与凭据模型直接收敛到现有 `/v1` 和 `schema_version=v1`，
+不因本次修改新增协议代际、兼容双栈或开发期旧 Reader。开发期旧数据、Digest、Receipt
+无需保存，协议调整可同步更新现有 Schema、Fixture 和数据库基线并重建测试数据；不增加
+仅为兼容这些旧数据的迁移或历史存储。
+
+这不取消目标运行模型中已发布 Revision / Manifest 的不可变性、并发控制或幂等规则。
+稳定对外发布后再建立版本演进与升级迁移契约；不得把未稳定的当前实现误作历史兼容负担。
 
 ### ARC-001：按运行职责拆分生产 Workload
 
@@ -35,13 +47,24 @@
 每个 Go Workload 必须拥有独立二进制和独立镜像。禁止在同一个生产镜像中
 一次构建全部二进制，再依靠 Compose `entrypoint` 选择运行角色。
 
-### ARC-002：Control API 不得位于运行热路径
+### ARC-002：配置运行热路径与凭据启动接口分离
 
-`channel-gateway` 和 `agent-worker` 在处理已发布 Agent 的每条消息时，禁止同步
-调用 Control API，也禁止读取 Control API 拥有的业务表。
+`channel-gateway` 的路由选择、Run Admission 和 `agent-worker` 的运行配置读取必须
+使用已发布的不可变版本与运行投影，不得同步查询 Control API 的 Draft、最新配置
+或绑定状态。Gateway 与 Worker 均禁止直接读取 Control API 拥有的业务表。
 
-Control API 暂时不可用时，已经发布并已投影的 Agent 必须仍可接收消息和执行。
-Control API 与运行面只通过不可变版本、版本化事件和只读投影协作。
+Profile 直接录入凭据的当前 V1 设计引入一个明确例外：新 Attempt 启动时，Worker
+经 RuntimeCredentialResolver 调用 Runtime Profile Owner 在现有 Control API 内的
+认证批量凭据接口，授权后取得本次 Attempt 的固定凭据集合；该调用不重新选择资源
+或读取当前 Draft。它不是新的 Secret 服务，也不得变成逐节点、逐工具或逐 Provider
+调用的同步查询。Profile 已提供 CheckUsable、ResolveForAttempt 与可选的内部 HTTP
+Adapter；真实 Run/Attempt 授权拥有方、工作负载认证和 Worker 接线仍待后续实现。
+
+这项决策替代“Control API 不可用完全不影响新 Run 执行”的旧承诺：已投影路由可继续
+接收消息，但需要凭据的新 Attempt 会依赖该内部接口的可用性；接口不可用时以稳定、
+可重试结果失败，不回退到明文事件或任意缓存凭据。已完成批量解析的运行中 Attempt
+在其生命周期内复用已解析集合，不逐次回查 Control API；无凭据闭包的 Attempt 不调用
+该接口。配置发布、运行路由与非秘密快照仍通过不可变版本、版本化事件和只读投影协作。
 
 ### ARC-003：NATS JetStream 承担异步传输
 
@@ -286,9 +309,11 @@ V1 使用 Expected Draft Revision 实现乐观并发，并以
 混合状态机。
 
 AgentSpec 只能表达逻辑行为与 Model/Tool/Knowledge Slot 需求，不绑定具体
-ProfileRevision、Environment 或 Secret。Runtime Profile 绑定和 RuntimeManifest 生成属于
-Deployment 发布阶段；实际 tRPC-Agent-Go 对象只能由 Worker 根据固定
-RuntimeManifest 组装。详细设计见 [`control-api/agent.md`](control-api/agent.md)。
+ProfileRevision 或 Secret。Deployment 发布阶段按类别和名称精确匹配 ProfileRevision
+资源，完成兼容性校验与 RuntimeManifest 编译；V1 不要求用户填写 Slot 到 Resource
+映射表。实际 tRPC-Agent-Go 对象只能由 Worker 根据固定 RuntimeManifest 组装。
+Storage 不是 AgentSpec V1 Slot，不得新增 storage_slot 来套用工具绑定规则。
+详细设计见 [`control-api/agent.md`](control-api/agent.md)。
 
 ### ARC-212：Runtime Profile V1 拥有资源发布与私有凭据边界
 
@@ -346,13 +371,16 @@ V1 不引入 Environment 实体、表、管理 API、`environment_id` 或隐藏�
 用途和目的范围；用户不手填 SecretRef 或内部 ID。Profile 发布只校验 Canonical 配置与
 关联形状，不解密、不探测 Provider。Deployment 经 Profile 的 CheckUsable port 检查
 所选发布关联是否可用；Worker 取值还需真实执行拥有方验证当前 Attempt/lease/Manifest
-授权。后两条真实调用链尚待接线。Capability 只验证已按类别和名称匹配的资源，
+授权。Deployment 对 CheckUsable 的调用及真实运行链路尚待接线。Capability 只验证
+已按类别和名称匹配的资源，
 不用于搜索候选资源，也不进行模糊名称匹配。
 
 三个模块禁止共享一个可任意读写的配置 Blob。它们通过稳定 ID、不可变 Revision
 和 Application Port 协作。Runtime Profile V1 已实现契约见
 [`control-api/runtime-profile.md`](control-api/runtime-profile.md) 与
 [`control-api/runtime-profile-spec.md`](control-api/runtime-profile-spec.md)。
+Deployment 的已接受简化边界与已冻结协议见
+[`control-api/deployment.md`](control-api/deployment.md)。
 
 ### ARC-302：运行时只消费不可变快照
 
@@ -361,7 +389,51 @@ AgentVersion 与 ProfileRevision，并生成不可变的 DeploymentRevision 和 
 
 Gateway 只持有运行所需的最小投影，不得投影 AgentDraft、编辑器状态或原始
 Profile 管理数据。Gateway 在接纳 Run 时必须固定 RuntimeManifest 的 ID、Revision
-和 Digest；Worker 不负责选择 Agent 或解析当前生效配置。
+和 Digest；Worker 不负责选择 Agent 或解析当前生效配置，不跟随最新 ProfileRevision，
+也不得在执行时重新匹配名称。
+
+RuntimeManifest 固定 AgentVersion、ProfileRevision 和编译结果，只包含 Agent 实际
+需要的资源、选定运行角色与必要依赖，不复制整份 Profile；编译结果必须保留节点级
+工具分配。Manifest 中的已解析关系是编译产物，不是新增用户输入映射表。
+
+### ARC-303：同名匹配与 Storage 运行角色分离
+
+Deployment 发布时，对 AgentVersion 内 AgentSpec.requirements 的 models、tools、knowledge
+分别在 ProfileRevision 同类别中按名称精确匹配。不存在同名资源、同名但 Capability
+不满足要求时必须返回稳定诊断；禁止相似名称猜测、按 Capability 任意选择候选或
+跨类别匹配。V1 不引入异名映射。
+
+Storage 采用独立的 Deployment 消费约定：storage.session 是必需运行角色资源，
+storage.memory 是可选运行角色资源，选中后还须满足对应 storage.session 或
+storage.memory Capability。其他 Storage 不自动启用；不按唯一候选猜测，不修改
+RuntimeProfileSpec Schema，不增加 Agent Slot。Session/Memory 数据服务不得隐式
+转化成模型工具或其他执行入口。
+
+### ARC-304：静态执行契约与按需工具暴露
+
+Deployment 使用由平台进程配置加载、固定版本与 Digest 的 PlatformExecutionContract
+进行静态兼容性校验，涵盖已接入的 Adapter Kind/Version、执行范围和资源上限。
+纯 Compiler 接收该固定快照，禁止实时枚举 Worker 节点、探测 Provider 或访问网络来
+决定编译结果。Manifest 固定契约版本与 Digest，并保存执行所需的确定限制配置。
+Provider 在线状态、凭据真实可用性等属于独立在线诊断，不是发布事务的必需步骤。
+
+同一平台发布的所有 Control API 副本必须使用发布配置显式固定的
+`CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`。当前 `LoadConfig` 校验 Digest 格式，
+Bootstrap `New` 在打开数据库、迁移和构造 HTTP Server 前重新计算并比较实际契约
+Digest；缺失、非法或不一致即启动失败，不进入服务。这是已实现的必需门禁。
+发布准备 CLI `control-api -print-deployment-contract-digest` 只读取最终 Host 配置
+与冻结契约，不依赖 DB / Profile Key；输出应保存为全体副本共用的发布值。禁止在
+每个副本启动时自动将自身计算值作为 expected，也不通过新增业务对象或实时节点枚举
+替代该契约。Host 或二进制契约变更必须统一重新准备发布配置。
+
+Worker 支持某工具不代表 Agent 默认拥有该工具。最终工具集合必须同时满足 Agent
+声明与节点选择、Profile 同名资源、平台允许的实现和配置。Worker Adapter 必须显式
+控制 tRPC Executor、Skills、Memory 等扩展可能派生的额外工具和执行入口；若派生
+入口不能关闭或无法保持与 Manifest 一致，该 Adapter 与静态契约不兼容。
+
+当前 Runtime Profile 仅实现 mcp_streamable_http + web.search 工具资源的配置协议，
+不代表 Worker 已接入执行。内建工具、命令执行资源及其节点隔离协议留待后续扩展。
+V1 不新建动态工具注册中心、调度平台、策略微服务或 Sandbox Manager。
 
 不可变快照固定资源配置与凭据关联，不固定 live 凭据值。后续 Worker 按固定 Manifest
 的最小凭据集合和当前有效 Attempt 授权，经 Profile 内部接口一次性解析；值只进入
@@ -453,9 +525,9 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 以下内容尚未因本文而自动确定：
 
 - V1 之后是否引入并行 Draft、发布审批或 Tenant Policy。
-- Deployment Compiler 对当前 Profile Schema/Resource Kind 的 RuntimeManifest 映射、
-  Storage 运行角色选择与 CheckUsable 调用；真实 Run/Attempt 当前授权拥有方、工作负载
-  认证与 Worker 内部批量解析接线，以及 RuntimeManifest Schema/Adapter Kind 兼容规则。
+- 真实 Run/Attempt 当前授权拥有方、工作负载认证与 Worker 内部批量解析接线；
+  Deployment 的 Input、Compiler、RuntimeManifest、Storage 运行角色、CheckUsable 调用和
+  Schema/Adapter Kind 兼容规则已经由 Deployment V1 文档冻结，按该文档实施和验证。
 - Channel Gateway 与 Worker 的数据库表所有权和完成 Run 的精确事务边界。
 - Platform Operator 全部丢失后的 Break-glass 恢复、密码恢复、MFA、Session
   过期策略与 PostgreSQL RLS。

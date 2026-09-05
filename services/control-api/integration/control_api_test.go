@@ -21,6 +21,8 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/admin"
 	adminapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/admin/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
+	deploymentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
 	identityapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity/application"
 	sharedpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/postgres"
@@ -83,20 +85,38 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.NewModule(agent.Dependencies{
+	agentModule, err := agent.NewModule(agent.Dependencies{
 		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 		TenantAccess: tenantAccess{tenants: tenantModule.Service},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	credentialKey := make([]byte, 32)
 	if _, err := rand.Read(credentialKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
+	runtimeProfileModule, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
 		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 		TenantAccess: tenantAccess{tenants: tenantModule.Service},
 		OwnerAccess:  tenantAccess{tenants: tenantModule.Service}, CredentialKey: credentialKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := deploymentdomain.DefaultPlatformExecutionContract()
+	platform.Execution.AllowedEndpointHosts = []string{
+		"api.openai.com", "mcp.example.com", "qdrant.internal", "state.example.test",
+	}
+	platform.Digest, err = platform.CalculateDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deployment.NewModule(deployment.Dependencies{
+		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
+		TenantAccess:  tenantAccess{tenants: tenantModule.Service},
+		AgentVersions: agentModule.Service, ProfileRevisions: runtimeProfileModule.Service,
+		ProfileCredentials: runtimeProfileModule.Service, Platform: platform,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +185,9 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 
 	testAgentV1Lifecycle(t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie)
 	testRuntimeProfileV1Lifecycle(
+		t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie,
+	)
+	testDeploymentV1Lifecycle(
 		t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie,
 	)
 }

@@ -1,13 +1,18 @@
 # 部署目录结构
 
 - **设计状态**：已接受
-- **实现状态**：Control API + PostgreSQL 的 Compose 基线与 local overlay 已建立；
+- **实现状态**：Control API + PostgreSQL 的 Compose 基线与 local overlay 已实现；
+  多副本 Platform Contract 固定 Digest 启动门禁与只读预计算 CLI 已实现；
   NATS、可观测性 overlay 和 Helm 仍为后续目标
-- **确认日期**：2026-08-31
+- **确认日期**：2026-08-31；实现状态与 Deployment V1 边界于 2026-09-05 复核
 - **适用范围**：本地 Compose、NATS 基础设施、可观测性配置和 Kubernetes Helm 部署
 
 本文定义仓库级部署资产的唯一组织方式。它只描述部署与运维资产的所有权，不改变
 `ARC-001` 中每个生产 Workload 独立二进制、独立镜像的约束。
+
+本文的部署环境标签与 Compose overlay 表示平台运维资产，不是 Deployment V1 的
+Environment 业务对象、用户发布输入或运行配置深层合并；业务设计见
+[`Deployment V1`](../control-api/deployment.md)。
 
 ## 1. 已接受的目录
 
@@ -135,10 +140,58 @@ Control API 进程和当前 Compose 都必需 `CONTROL_PROFILE_CREDENTIAL_KEY`�
 这项必需配置只启用控制面的加密存储，不会自动启用内部 Worker 取值路由；该路由
 仍需真实执行授权 verifier 与可信工作负载认证成对接线。
 
+### 4.2 Platform Contract 固定 Digest
+
+`CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` 提供 Compiler 的精确小写 Host 集合；
+同一平台发布的所有副本还必须显式配置相同的
+`CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`。其格式为 `sha256:` 加 64 位小写
+十六进制，代表冻结实现契约、版本、执行范围和资源上限的整体身份，不是凭据或业务对象。
+
+当前门禁由两个入口共同保证：`LoadConfig` 校验 expected 的存在与格式；Bootstrap
+`New` 在打开 PostgreSQL、执行 Migration 和构造 HTTP Server 之前计算实际 Contract
+Digest 并比较。不匹配即启动失败，不监听端口；`/healthz` 保留成功启动后返回 204 的
+现有行为。Compose 对 expected 使用必填插值，不会按当前副本自动推导默认预期值。
+
+发布准备阶段，使用待发布二进制与最终 Host 配置预计算一次：
+
+```sh
+export CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='api.openai.com,mcp.example.com,qdrant.internal,state.example.test'
+go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
+# 已构建的同一发布二进制：control-api -print-deployment-contract-digest
+```
+
+CLI 只读 Host 配置和冻结契约，不要求 DB、Profile Key 或 expected，也不启动服务。
+把经过核对的输出保存进本次发布配置，再向所有副本注入同一个值。当前上述 Host 示例
+对应 `.env.example` 中固定且有回归测试保护的配置：
+
+```sh
+export CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST='sha256:43d9ac6291cf7ccacf544cb122fa4d92b398317fa6020e4bba43e8666e8747b0'
+```
+
+默认内建 Host 集合与此 Compose 示例不同，预计算必须使用最终配置。Host 或二进制
+契约变化时重新准备并统一更新发布值；禁止在每个副本的启动脚本里动态把自身计算结果
+赋给 expected，那会绕过一致性门禁。该门禁不创建数据库协调表、策略服务或 Environment。
+
 ## 5. 操作入口与一致性
 
 根 `justfile` 是开发者操作入口，负责调用 Compose、Helm、测试和验证命令。禁止为了
 每个部署动作继续增加仓库根目录 Shell 脚本。
+
+当前测试入口与覆盖边界如下，均以根 `justfile` 为入口：
+
+- `just openapi` 运行 `./api/...` 与 Agent / Runtime Profile / Deployment Domain；
+  覆盖 OpenAPI、Schema、Event、Fixture 和 Compiler，不包含 Deployment Application / HTTP。
+- `just test-race` 运行 Identity / Tenant / Admin / Agent / Runtime Profile / Deployment
+  模块子树和 Bootstrap 的 race 测试；包含 Deployment Application / HTTP / PostgreSQL
+  Adapter，但不包含 API 包、CLI 或独立 integration 包。
+- `just test-integration` 调用 [scripts/test-control-integration.sh](../../../scripts/test-control-integration.sh)，
+  必须显式注入测试专用 `CONTROL_TEST_DATABASE_URL`。脚本使用 `-count=1 -json` 执行
+  integration、Bootstrap、Deployment PostgreSQL 与 Runtime Profile PostgreSQL 四个包，
+  拒绝任何 Skip，并要求指定的真实生命周期、事务、并发、回滚、不可变性及凭据消费测试
+  全部通过，成功输出 `CONTROL_INTEGRATION_GATE=PASS zero skipped tests`。
+
+普通 `go test ./...` 缺少 DSN 时可跳过 PostgreSQL 测试，不替代真实零跳过集成门禁；
+CLI 测试包含在该全仓库命令中。脚本放在 `scripts/` 复用，不增加平级根目录操作入口。
 
 Compose 与 Helm 必须满足：
 
@@ -159,6 +212,10 @@ Compose 与 Helm 必须满足：
   `CONTROL_BOOTSTRAP_USERNAME` 和 `CONTROL_BOOTSTRAP_PASSWORD` 提供简单的本地凭证；
   已有 Operator 时 bootstrap 保持幂等。
 - `CONTROL_PROFILE_CREDENTIAL_KEY` 由外部环境变量注入，没有内置值或启动时自动生成。
+- `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` 提供 Deployment Compiler 的静态目标 Host
+  集合；使用精确小写 Host，不接受通配符，也不会触发在线探测或 Worker 节点枚举。
+- `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` 由平台发布配置固定；只读 CLI 支持
+  预计算，Compose 拒绝缺值，Bootstrap 在 DB / HTTP 前拒绝实际 Digest 不匹配的副本。
 - 当前 Compose 不加入 NATS、Gateway、Worker、Local IM 或可观测性组件，也不启用
   尚未接入真实 Run/Attempt 授权的内部凭据解析路由。
 

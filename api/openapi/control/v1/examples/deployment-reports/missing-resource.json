@@ -1,0 +1,17 @@
+{
+  "valid": false,
+  "compiler_version": "deployment-compiler-v1",
+  "platform_contract_digest": "sha256:e5c1019aa4fa0ea06b08f4966bc5cf154113b702f3ace93db6483fcc5a0d5d33",
+  "diagnostics": [
+    {
+      "code": "DEPLOYMENT_RESOURCE_MISSING",
+      "severity": "error",
+      "source": "agent",
+      "path": "/requirements/tools/search",
+      "category": "tools",
+      "name": "search",
+      "node_id": null,
+      "message": "ProfileRevision is missing the same-name tool resource"
+    }
+  ]
+}
