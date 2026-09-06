@@ -498,3 +498,24 @@ func TestPreflightApplicationRevokedCreateDoesNotMaintain(t *testing.T) {
 		t.Fatal("receipt replay maintained current task")
 	}
 }
+
+func TestPreflightApplicationHidesNonmemberAccountsAndTasks(t *testing.T) {
+	ctx := context.Background()
+	s, m, id, in := preflightSetup(t)
+	created := createPF(t, s, id, in)
+	beforeTasks, beforeReceipts := clonePF(m.records), clonePF(m.receipts)
+	s.deps.Access = &access{allow: false, owner: false}
+	_, err := s.Create(ctx, owner, id, "invisible", in)
+	requirePFError(t, err, "CHANNEL_ACCOUNT_NOT_FOUND")
+	_, err = s.Get(ctx, owner, id, created.PreflightID)
+	requirePFError(t, err, "CHANNEL_ACCOUNT_NOT_FOUND")
+	if !reflect.DeepEqual(beforeTasks, m.records) || !reflect.DeepEqual(beforeReceipts, m.receipts) {
+		t.Fatal("invisible access wrote preflight state")
+	}
+	s.deps.Access = &access{allow: true, owner: false}
+	if _, err = s.Get(ctx, owner, id, created.PreflightID); err != nil {
+		t.Fatal("visible member cannot read", err)
+	}
+	_, err = s.Create(ctx, owner, id, "member", in)
+	requirePFError(t, err, "CHANNEL_PERMISSION_DENIED")
+}
