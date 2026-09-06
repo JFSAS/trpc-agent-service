@@ -4,12 +4,14 @@
 - **实现状态**：Control Publication 已实现：Deployment Schema / Event、纯 Compiler、
   Application、PostgreSQL 原子发布与 `PENDING` Outbox、八个 HTTP 路由、Bootstrap
   和真实 PostgreSQL Integration 已落地。多副本 Platform Contract Digest 已通过固定
-  expected 值与启动前 fail-start 门禁实现；Relay / JetStream、ChannelBinding / Gateway /
-  Worker 执行仍为后续阶段。Web 未修改。
-- **本任务工作树**：`/Users/jfs/.codex/worktrees/c26f/trpc-agent-service`。
-- **本任务分支 / 起点 HEAD**：`codex/control-deployment-v1` / `bf107766be72cd7fcaa9e878428b97a6aa05260b`。
+  expected 值与启动前 fail-start 门禁实现。ChannelAccount / ChannelBinding、路由 Relay
+  和独立 Gateway 工作树的 Control 接入已完成；真实 Telegram 入站到 RunRequested 已验收。
+  Manifest 发布事件分发、Worker 执行和完整回复仍待接线；本切片未修改 Web。
+- **Deployment 原始开发工作树**：`/Users/jfs/.codex/worktrees/c26f/trpc-agent-service`。
+- **Deployment 原始分支 / 起点 HEAD**：`codex/control-deployment-v1` / `bf107766be72cd7fcaa9e878428b97a6aa05260b`。
 - **本地代码基线**：Agent V1、直接凭据 Runtime Profile V1 与 Deployment Control
-  Publication V1；当前运行面仍未实现。
+  Publication V1；本文实现状态在 ChannelBinding 工作树按 2026-09-06 联合验收更新。
+  状态不代表两份工作树的改动已全部合并 main 或当前实例在线。
 - **替代关系**：替代此前 EnvironmentRevision、用户 Binding、SecretVersionHandle，以及用户维护 SecretRef 的方案。
 - **相邻契约**：[上位约束](../constraints.md)、[Agent](agent.md)、[AgentSpec](agent-spec.md)、
   [Runtime Profile](runtime-profile.md)、[RuntimeProfileSpec](runtime-profile-spec.md)。
@@ -32,8 +34,12 @@ Deployment 校验与编译：按类别和名称精确匹配
 DeploymentRevision + RuntimeManifest
         ↓
 同事务 PostgreSQL Outbox（PENDING）
-        ↓ 后续阶段
-Relay / JetStream → 运行投影 → Worker 执行
+        ↓ Manifest 发布事件的分发/消费仍待接线
+Worker 获取固定 Manifest 并执行（后续）
+
+已实现的渠道路径：
+ChannelBinding → 路由 Outbox / Relay → Gateway 固定投影
+              → 真实消息 → 持久 RunRequested → Worker（后续）
 ```
 
 用户在 Runtime Profile 的资源表单直接填写 API Key、Token 或 DSN；Profile 内部保存凭据，
@@ -68,10 +74,10 @@ DeploymentDraft。客户端未完成编辑由客户端保存，未来有真实�
 | 当前 Tool Kind 仅 `mcp_streamable_http`，Capability 仅 `web.search` | “已实现 MCP 网页搜索资源”指配置协议，不代表已实现 MCP Worker Adapter |
 | Model / Knowledge / Storage Kind 分别为 `openai_compatible` / `qdrant_openai` / `postgres_state` | Schema 接受 Kind 与平台已接入可执行 Adapter 是两项独立事实 |
 | Runtime Profile V1 已实现直接凭据 Write / Canonical / Read 分离、加密存储、`CheckUsable` 与受控 `ResolveForAttempt` | Deployment 复用其应用层能力；纯 Compiler 不读取真实值或动态状态 |
-| Deployment 已有 Domain / Compiler、Application、PostgreSQL 与 Gin Adapter 及非空 `wiring.go` | 八个路由和 Control Publication 已实现；NATS Adapter 仍无 Relay 实现 |
-| `0001_baseline.sql` 已含 Deployment / Revision / Manifest / Receipt / Outbox 表与不可变触发器 | ARC-401 已在原子发布落地；ARC-402 的 Relay 为后续阶段，Outbox 当前只持久化为 `PENDING` |
+| Deployment 已有 Domain / Compiler、Application、PostgreSQL 与 Gin Adapter 及非空 `wiring.go` | 八个路由和 Control Publication 已实现；Manifest 事件 Relay 待接线，Channel 路由专用 Relay 已实现 |
+| `0001_baseline.sql` 已含 Deployment / Revision / Manifest / Receipt / Outbox 表与不可变触发器 | ARC-401 已落地；Manifest 发布事件保持 `PENDING`，Channel 路由事件按独立 Relay 推进投递状态 |
 | `RuntimeManifestPublished.v1` Schema / Fixture 和产生者测试已实现 | 事件契约存在不表示 Relay、JetStream Stream 或 Consumer 已配置 |
-| `services/` 只有 `control-api` | Gateway、Worker 和端到端运行仍是后续纵切 |
+| 当前 Control 工作树的 `services/` 仅含 `control-api`；Gateway 在独立工作树 | Gateway Control 接入与 Telegram 入站已验收；Worker 与完整回复仍为后续纵切 |
 
 可复核来源包括：`services/control-api/internal/agent/domain/semantic_validation.go`、
 `services/control-api/internal/runtimeprofile/domain/spec.go`、
@@ -126,7 +132,7 @@ ChannelBinding → 精确 DeploymentRevision k
 | ValidateDeploymentRevision | 完整两来源 Input | 只读 Report；没有持久草稿、Receipt 或发布记录 |
 | PublishDeploymentRevision | 完整 Input，Expected Latest，`Idempotency-Key` | 原子新增 Revision、Manifest、Outbox、Receipt，推进 Latest |
 | Get / List Deployment、Get / List Revision | Tenant 与稳定 ID / 精确 Revision Number | 只读；Revision List 为摘要投影 |
-| SwitchChannelBindingRevision | ChannelBinding ID、目标精确 Revision、Binding CAS | 后续 ChannelBinding 用例，更新路由选择，不改历史 DeploymentRevision |
+| SwitchChannelBindingRevision | ChannelBinding ID、目标精确 Revision、Binding CAS | 已实现的 ChannelBinding SetTarget 用例，更新路由选择，不改历史 DeploymentRevision |
 
 名称建议沿用现有元数据规则：去除首尾空白、非空、最多 128 Unicode code points；描述最多
 4096 code points。不承诺名称唯一；稳定 ID 唯一。语义无变化的 PATCH 返回原对象且不增加
@@ -175,12 +181,19 @@ ChannelBinding 改回 Revision 1 → 后续新 Run 回滚到 Revision 1
 
 发布不自动切流。切换由 ChannelBinding 所有者验证 Tenant、目标存在性、可用 Manifest 与
 Binding CAS，在自身事务内写 Binding + Outbox；不复用 Deployment 的 Latest CAS。
-这些是后续最小切换语义，不是本次新增的第九个 Deployment HTTP 路由。
+这些切换由已实现的 ChannelBinding HTTP 操作提供，不新增第九个 Deployment HTTP 路由。
 
-控制面 Binding 更新成功与运行投影已应用是两种状态。Gateway 仅在同一 Tenant 的目标 Manifest
-已经可用且 Digest 验证通过时接纳对应新 Revision；乱序到达时等待 / 重试，不猜 latest，也不
-静默回退。Gateway Admission 固定 Manifest 身份；已接纳 Run 和其重试沿用旧快照。
+控制面 Binding 更新成功与运行投影已应用是两种状态。Control 通过 Deployment Owner
+复核精确目标及 Manifest 完整性；Gateway 在账户资格、路由完整性和 generation 下限满足后
+固定目标三元组接纳消息，不下载或验证 Manifest 正文。正文获取和 Digest 复核由后续 Worker
+完成。乱序时等待 / 重试，不猜 latest、不静默回退；已接纳 Run 和其重试沿用旧快照。
 同一个 Deployment 的不同 Channel 可以同时使用不同 Revision。
+
+2026-09-06 的 [ChannelAccount](channel-account.md) 与 [ChannelBinding](channelbinding.md)
+已实现账户录入/私有凭据、Binding CAS、账户 RouteGeneration、启停联动和路由 Outbox，
+不追加 Deployment 管理路由。manifest_ref 为 RuntimeManifest.ID，manifest_digest 为 ContentDigest。
+Gateway Control 接入见[独立工作树文档](../channel-gateway/control-integration-v1.md)，真实 Telegram
+入站见[联合验收](channel-acceptance.md)。此完成状态不包含 Manifest 正文执行或 Worker。
 
 ## 5. 同名资源匹配算法
 
@@ -794,7 +807,7 @@ Fixture、开发基线和真 PostgreSQL 初始化与原子发布集成测试已�
 身份、Manifest Envelope、完整 Canonical Content 与 Digest。事件传输使用公共 Schema / Fixture，
 不共享 Control 内部 Domain Go 类型。Trace context 仅来自可信 Telemetry，过滤并限制长度；
 不透传任意请求 Header、baggage 或秘密值。产生者在发布事务中将其持久化为
-`PENDING`；以下 Relay / Consumer 要求仍是后续 Distribution 契约。
+`PENDING`；以下要求专指 Manifest 发布事件的后续 Distribution，不适用于已实现的 Channel 路由 Relay。
 
 - Relay 使用稳定 EventID 发布 JetStream，发布失败重试；即使进程在发送后更新投递状态前崩溃，
   Consumer 按 EventID 幂等，不依赖消息系统的有限去重窗口代替业务幂等。
@@ -906,8 +919,9 @@ Adapter 实现放在真正的使用方 Seam；Bootstrap 是唯一组装入口，
 5. 用户 Publish，增加 Expected Latest=null 和 Idempotency Header；单事务生成 Revision 1、
    Manifest、Outbox、Receipt。无 Environment API、默认对象、Overlay 或任何绑定表字段。
 6. 相同请求重试返回相同发布事实；无重复 Event。
-7. 后续 ChannelBinding 显式选择 Revision 1，运行投影就绪后新 Run 固定 Manifest，Worker 解析
-   Manifest 所需同租户 / 同 Profile 内部凭据并按节点执行；这一最后环节属于后续 Runtime Slice 验收。
+7. ChannelBinding 显式选择 Revision 1，经已实现的路由 Relay 和 Gateway 准入固定新 Run 的
+   Manifest 身份；真实 Telegram 入站已验收。Worker 解析同租户 / 同 Profile 内部凭据并按节点
+   执行仍属于后续 Runtime Slice 验收。
 
 ### AC-09：真实值写入与三种表示隔离
 
@@ -945,8 +959,9 @@ Adapter 实现放在真正的使用方 Seam；Bootstrap 是唯一组装入口，
 | 3 Application | 已实现并验证 | 四 Command / 四 Query、权限、两 Source Reader、CredentialChecker、Receipt-first、CAS | Fake 验证语义；Create→PATCH→Replay、平台升级 / 轮换后 Replay、无外部事务 I/O |
 | 4 PostgreSQL + HTTP | 已实现并验证 | 开发基线、Store、不可变 Trigger、Outbox、Gin、Bootstrap、OpenAPI | 真 PG 生命周期、八路由、Tenant 隔离、并发 / 故障回滚、腐化读取、Summary 投影 |
 | 5 Control Publication 闭环 | 已实现并验证 | 实际 ProfileCredentialChecker Adapter、闭合契约门禁、固定 expected Digest 启动门禁、仓库门禁 / Compose 配置 | 非 Fake 发布、零 Skip PG Integration、完整 Event Envelope；正确 / 缺失 / 错误 Digest、不同 Host 副本拒绝启动、只读 CLI；已实现清单只同步真实路由 |
-| 6 可选 Relay | 后续 | JetStream 投递 / 重试 / Consumer 幂等 | 发后崩溃重投、乱序、EventID 重复、窗口 / 清理与历史 Receipt 重放 |
-| 7 后续 Runtime | 后续 | ChannelBinding 切换、运行投影、Worker Adapter、真实消息 E2E | 固定 Manifest、节点权限、凭据轮换 / 撤销、隐式入口关闭；Owner 中断时当前 Attempt 复用 / 新 Attempt 依赖失败 |
+| 6 Channel 接入与路由 | 已实现并联合验收 | ChannelAccount/Binding、mTLS、路由 Relay、Gateway 固定投影与 Telegram 入站 | 真实消息到持久 RunRequested；详见 Channel 联合验收，不含 Worker |
+| 7 Manifest Distribution | 后续 | Manifest 发布事件 Relay / 消费与运行侧正文获取 | 固定身份/摘要、投递重试与恢复；不把 Channel 路由 PubAck 当作 Manifest 分发 |
+| 8 Worker 与完整回复 | 后续 | Run/Attempt、Manifest Adapter、执行结果与 ReplyIntent 接线 | 真实模型/工具/Storage、节点权限、凭据批次、完成事务和机器人回复 |
 
 没有 Environment 前置阶段，没有新增动态工具注册中心、调度平台、策略微服务或 Sandbox Manager。
 Worker Consumer Contract 与平台允许的真实实现需要同步验证，但不通过实时节点探测完成。
@@ -995,8 +1010,9 @@ V1 非目标：独立 Environment、环境 ID / 默认对象 / Overlay / 继承 
 独立 Secret 管理产品 / 用户 SecretRef / SecretVersionHandle 固定历史值 / 凭据分发平台；
 为此次开发期字段调整新增协议代际、兼容双栈、旧数据迁移或历史保留；内建或命令资源协议、Executor/Skills
 开放配置；实时 Worker 能力枚举；Provider 健康探测进入发布事务；Profile 完整复制进 Manifest；
-Worker 动态重选资源；Relay / JetStream、ChannelBinding、Gateway / Worker 运行链路；
-Web 修改或自动提交推送。多副本 Platform Contract Digest 一致性是当前已实现的必需
+Worker 动态重选资源；在 Deployment 模块内管理 ChannelBinding、构造 Gateway/Worker；
+本次文档维护中的业务代码/Web 修改或自动提交推送。Channel 路由 Relay 与 Gateway 接入
+属于已经交付的相邻切片，不再列为全平台未实现项。多副本 Platform Contract Digest 一致性是当前已实现的必需
 发布门禁，不属于非目标。
 
 真实需求出现后再扩展：异名映射、新 Tool Kind、受控 Executor/Skills 协议、凭据历史值固定
@@ -1020,8 +1036,9 @@ Web 修改或自动提交推送。多副本 Platform Contract Digest 一致性�
 6. Unit / Contract / Race / Vet / Build / Compose 和机器断言零 Skip 的真 PG 门禁通过。
 7. 多副本由同一发布 expected Digest 约束；Bootstrap 在 DB / HTTP 前 fail-start，
    CLI 无 DB / Key 预计算，Compose 缺值拒绝，示例 Host 与固定 Digest 一致。
-8. Relay 未交付，Outbox=`PENDING`、尚未分发；Gateway / Worker 未交付，
-   运行面仍未实现。
+8. Manifest 发布事件 Relay 未交付，其 Outbox 保持 `PENDING`；Channel 路由 Relay 与
+   Gateway Control 接入已交付，真实 Telegram 入站到 RunRequested 已验收。Worker、真实
+   模型/Storage 执行和完整回复尚未交付，各完成层级不得互相替代。
 
 交接时按文件所有权合并：本任务只提交 Deployment 与共享架构 / 索引；Runtime Profile 专属
 文档、Schema、示例和测试由其任务提交。本基线与其他任务可能不同，合并时保留双方修改，

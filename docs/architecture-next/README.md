@@ -39,6 +39,15 @@
   DeploymentRevision + 最小 RuntimeManifest。Schema / Event、Compiler、Application、
   PostgreSQL 原子发布、八个 HTTP 路由、Bootstrap 与多副本固定 Digest 启动门禁已实现；发布当前停在
   `PENDING` Outbox，不表示 Relay 分发或 Worker 执行已完成。
+- [ChannelAccount V1 设计与实现](control-api/channel-account.md)：租户自助接入机器人、账户内部
+  凭据、完整账户快照、Gateway 认证解析与状态回传；管理/内部 HTTP 与真实 PostgreSQL 已实现。
+- [ChannelBinding V1 设计与实现](control-api/channelbinding.md)：精确部署目标、Binding CAS、
+  账户 RouteGeneration、账户启停联动、事务 Outbox 及路由发布；管理 API/受限 Producer 已实现。
+- [Gateway Control 接入与验收](channel-gateway/control-integration-v1.md)：可信快照/凭据 Adapter、
+  动态 Telegram、启动装配与运行观测已实现；真实 Telegram 入站到 RunRequested 已验收。
+  正文由 Gateway 工作树维护，本目录只保留入口；不等同 Worker 执行或完整回复。
+- [产品易用性 TODO](control-api/product-usability-todo.md)：同名表单骨架、托管 Session Storage、
+  模板/独立连接测试、分层状态展示和客户端技术字段处理；目标已确认，能力待设计与实现。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
 - [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与
@@ -46,7 +55,7 @@
 - [可观测性与 Telemetry](operations/observability.md)：OpenTelemetry、Metrics、
   Trace、日志、Dashboard、告警和基础设施观测的生产基线。
 
-## 当前后续路线
+## 当前实现与后续路线
 
 Deployment 的 Control Publication 已经落地并覆盖以下阶段：
 
@@ -63,10 +72,20 @@ Deployment 的 Control Publication 已经落地并覆盖以下阶段：
    `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`，Bootstrap 在 DB / HTTP 前比对，
    不匹配即启动失败；只读 CLI 支持按最终 Host 配置预计算，Compose 强制要求预期值。
 
-后续阶段为：可选 Relay / JetStream 投递与 Consumer 幂等；再独立完成
-ChannelBinding 生效版本切换、Gateway 运行投影和 Worker 固定 Manifest 执行。
-新 Attempt 的批量凭据取值与真实执行授权仍属于 Runtime 接线。已完成的多副本
-Digest 门禁属于平台部署发布配置，不引入 Environment 或其他用户业务对象。
+渠道切片已按以下依赖落地；Worker 为后续阶段，不把“Binding 表完成”当作完整执行闭环：
+
+1. 已实现 ChannelAccount：租户账户、模块私有凭据、版本/CAS与静态管理纵切。
+2. 已实现 ChannelBinding：精确目标、账户有效路由与幂等事务Outbox；与账户启停一起验证原子性。
+3. 已实现 Control→Gateway 扩展：完整账户快照、认证凭据读取、Gateway动态接入与运行观测。
+4. Distribution：Control路由Relay已通过真实PG/JetStream回归；Gateway固定可信路由三元组。
+   Manifest正文读取/执行属于Worker，路由日志恢复由Gateway验证。
+5. Worker：固定Manifest、新Attempt凭据授权与真实执行，仍为独立Runtime切片。
+
+上面1～4的Control代码与真实PG/mTLS/NATS回归已接通，公开11个操作列入OpenAPI；
+Gateway对齐代码由独立任务维护。联合真实Telegram收信已通过，见[Channel联合验收](control-api/channel-acceptance.md)；
+模型/Storage/Worker 执行与完整回复仍不属于本次收信验收。实现保留于两份独立工作树，
+不以本页推断已经合入 main 或当前服务在线；Channel Web 与产品易用性 TODO 另行交付。
+已完成的多副本Digest门禁仍是平台发布配置，不引入Environment、Secret产品或用户映射表。
 
 发布、持久 Outbox、事件已分发、运行面实际执行分别记录状态；Control 发布成功不
 代表已进入运行链路。详细阶段与验收案例以 Deployment 文档为准。

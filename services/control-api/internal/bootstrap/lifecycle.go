@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// Run manages the HTTP server, PostgreSQL pool, and graceful shutdown.
+// Run owns both listeners and background maintenance. Failure of either
+// listener shuts down its peer, so internal auth never runs as an orphan process.
 func (a *App) Run(ctx context.Context) error {
 	if a == nil {
 		return errors.New("control-api bootstrap: nil app")
@@ -21,27 +22,83 @@ func (a *App) Run(ctx context.Context) error {
 	if a.database != nil {
 		defer a.database.Close()
 	}
-
-	serveResult := make(chan error, 1)
-	go func() {
-		serveResult <- a.server.ListenAndServe()
-	}()
-
-	select {
-	case err := <-serveResult:
-		if err != nil {
-			return fmt.Errorf("serve control API: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
-		defer cancel()
-		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown control API: %w", err)
-		}
-		if err := <-serveResult; err != nil {
-			return fmt.Errorf("serve control API during shutdown: %w", err)
-		}
-		return nil
+	if a.natsConnection != nil {
+		defer a.natsConnection.Close()
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	servers := []serverLifecycle{a.server}
+	if a.internalServer != nil {
+		servers = append(servers, a.internalServer)
+	}
+	result := make(chan error, len(servers))
+	for _, server := range servers {
+		go func(s serverLifecycle) { result <- s.ListenAndServe() }(server)
+	}
+	relayDone := make(chan struct{})
+	go func() {
+		defer close(relayDone)
+		if a.routeRelay != nil {
+			_ = a.routeRelay.Run(runCtx)
+		}
+	}()
+	maintenanceDone := make(chan struct{})
+	go func() {
+		defer close(maintenanceDone)
+		if a.channelBinding == nil {
+			return
+		}
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				work, cancel := context.WithTimeout(runCtx, 5*time.Second)
+				_ = a.channelBinding.Runtime.PruneObservations(work)
+				cancel()
+			}
+		}
+	}()
+	pending := len(servers)
+	var first error
+	select {
+	case err := <-result:
+		pending--
+		if err != nil {
+			first = fmt.Errorf("serve control API: %w", err)
+		}
+	case <-ctx.Done():
+	}
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
+	defer shutdownCancel()
+	for _, server := range servers {
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			first = errors.Join(first, fmt.Errorf("shutdown control API: %w", err))
+		}
+	}
+	for pending > 0 {
+		select {
+		case err := <-result:
+			pending--
+			if err != nil {
+				first = errors.Join(first, err)
+			}
+		case <-shutdownCtx.Done():
+			return errors.Join(first, shutdownCtx.Err())
+		}
+	}
+	select {
+	case <-maintenanceDone:
+	case <-shutdownCtx.Done():
+		return errors.Join(first, shutdownCtx.Err())
+	}
+	select {
+	case <-relayDone:
+	case <-shutdownCtx.Done():
+		return errors.Join(first, shutdownCtx.Err())
+	}
+	return first
 }

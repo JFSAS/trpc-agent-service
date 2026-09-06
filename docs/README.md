@@ -8,8 +8,8 @@
 
 ## 当前阶段
 
-Control API 的 Identity、Admin、Tenant、Agent、Runtime Profile 和 Deployment
-Publication V1 已有实现。Deployment 将确定的 AgentVersion + ProfileRevision
+Control API 的 Identity、Admin、Tenant、Agent、Runtime Profile、Deployment Publication
+和 ChannelAccount / ChannelBinding V1 已有实现。Deployment 将确定的 AgentVersion + ProfileRevision
 经同类别同名匹配、校验和编译，生成不可变 DeploymentRevision 与最小
 RuntimeManifest。V1 不引入 Environment 业务对象或用户映射表。
 
@@ -20,15 +20,24 @@ Worker 新 Attempt 经 Profile Owner 的内部认证接口批量解析是后续 
 不增加协议代际或开发期 ref-only 兼容。
 
 Deployment 的 Schema / Event、纯 Compiler、Application、PostgreSQL 原子发布、
-八个 HTTP 路由、Bootstrap 和真实 PostgreSQL Integration 已落地。当前发布
-停在同事务 `PENDING` Outbox；可选 Relay / JetStream 分发和
-ChannelBinding / Gateway / Worker 运行链路另分阶段。
+八个 HTTP 路由、Bootstrap 和真实 PostgreSQL Integration 已落地。Manifest 发布事件停在同事务 `PENDING` Outbox；这不同于已实现并可投递的 Channel 路由 Outbox。
+Manifest 正文的运行侧获取/分发及 Worker 执行仍分别验收。
+
+ChannelAccount / ChannelBinding 已实现账户与私有凭据、11 个公开管理操作、内部 mTLS
+快照/凭据/观测接口、精确部署目标和路由专用 Relay。Gateway 在独立工作树完成动态接入与
+路由投影；真实 Telegram 消息已到达持久 RunRequested，见[联合验收](architecture-next/control-api/channel-acceptance.md)。
+Worker、模型/Storage 真实执行和完整回复尚未贯通；本工作树的 Channel Web 尚未接入。
+完成状态指独立工作树代码及验收，不代替合并 main、发布上线或当前进程健康证明。
 
 当前规范性入口：
 
 - [下一代架构文档](architecture-next/README.md)
 - [架构级约束](architecture-next/constraints.md)
 - [Deployment V1 设计与实施路线](architecture-next/control-api/deployment.md)
+- [ChannelAccount 设计与实现](architecture-next/control-api/channel-account.md)
+- [ChannelBinding 设计与实现](architecture-next/control-api/channelbinding.md)
+- [Gateway Control 接入与验收](architecture-next/channel-gateway/control-integration-v1.md)
+- [产品易用性 TODO](architecture-next/control-api/product-usability-todo.md)：已确认改进方向，待设计与实现。
 
 文档中的“已接受”表示设计决策已经确认；“已实现”必须以当前代码和
 测试为依据。Control Publication、Distribution 和 Runtime Execution 是三个独立完成层级。

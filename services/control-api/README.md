@@ -5,7 +5,8 @@ identity, platform administration, Tenant membership, and Agent authoring.
 Runtime Profile V1 implements reusable resource authoring, deterministic validation,
 immutable Profile Revision publication, and Profile-owned encrypted credentials.
 Deployment V1 implements deterministic two-source compilation and atomic Control
-Publication. Channel Binding remains a later management capability. Control API is
+Publication. ChannelAccount/ChannelBinding now provide an explicitly configured
+management and Gateway-supply slice, including a route-only Outbox Relay. Control API is
 not part of the message execution hot path. Profile-owned credential-check and
 resolution ports and the optional internal route exist; current default bootstrap
 leaves the value-resolution route disabled unless trusted workload authentication
@@ -163,11 +164,15 @@ protocol; built-in and command Tool protocols are later extensions.
 
 The current implementation completes the Control Publication boundary: schema and
 event fixtures, Compiler, Application, PostgreSQL store, eight HTTP routes, Bootstrap,
-and real PostgreSQL integration. It does not implement a Relay or JetStream consumer;
-new Outbox rows remain `PENDING`. Multi-replica PlatformExecutionContract identity
+and real PostgreSQL integration. Deployment Manifest-publication Outbox rows remain
+`PENDING`; their Relay/consumer path is not implemented. This is distinct from the
+implemented Channel route-only Relay and Gateway route consumer. Multi-replica PlatformExecutionContract identity
 is enforced by a release-pinned expected digest before database access or HTTP
-startup. Channel Binding activation, Gateway/runtime projection, and Worker
-execution remain separate later slices.
+startup. Channel account/binding management, route changes and Gateway Control integration
+are implemented, with real Telegram inbound-to-RunRequested acceptance in the separate
+Gateway worktree. Worker execution, Manifest body retrieval and the complete reply chain
+remain follow-up integration. See the [product usability TODO](../../docs/architecture-next/control-api/product-usability-todo.md)
+for planned UX changes; those entries are not implemented management endpoints.
 
 ## Configuration
 
@@ -252,3 +257,14 @@ just vet
 just vuln
 just build
 ```
+
+## ChannelAccount / ChannelBinding
+
+The implemented public surface has 11 operations under tenant-scoped
+`channel-accounts` and `channel-bindings`. It is registered only when the platform
+supplies `CONTROL_CHANNEL_CONFIG_FILE`. A separate mutually authenticated TLS
+listener serves snapshots, exact current credential sets, and observations.
+The route-only Relay publishes committed immutable route events to JetStream;
+Deployment Manifest events remain independent. See [Channel runtime](CHANNEL_RUNTIME.md)
+and the referenced [public OpenAPI](../../api/openapi/control/v1/channel-public.yaml).
+Real Telegram reception is a separate joint acceptance step, not implied by build/test success.

@@ -2,7 +2,7 @@
 
 `openapi.yaml` describes the Control API management contract: Identity, Platform
 Operator administration, Tenant membership, Agent authoring, Runtime Profile,
-and Deployment publication. Runtime Profile directly adjusts the current V1; it
+Deployment publication, and Channel account/binding management. Runtime Profile directly adjusts the current V1; it
 has no reference-only DTO or old Schema/Digest compatibility stack.
 
 The eight Deployment operations are implemented by the tenant-scoped Gin Handler,
@@ -142,8 +142,10 @@ The current Control Publication implementation includes the closed Deployment
 schemas and event, pure Compiler, Application commands/queries, Profile-owned
 credential metadata checks, PostgreSQL atomic publication, all eight HTTP routes,
 Bootstrap wiring, and real PostgreSQL integration coverage. Successful Publish
-persists `RuntimeManifestPublished.v1` as `PENDING`; there is no Relay, JetStream
-consumer, ChannelBinding/Gateway projection, or Worker execution path yet.
+persists `RuntimeManifestPublished.v1` as `PENDING`; its Manifest distribution path
+remains follow-up work. Channel has a separate implemented route-only Relay and
+Gateway projection, validated through real Telegram inbound-to-RunRequested. This
+does not establish Worker execution, Manifest body retrieval or the full reply chain.
 
 Profile consumer Application methods exist. The optional Profile-owned internal
 adapter route `POST /internal/v1/runtime-profiles/credentials/resolve` is separate
@@ -162,3 +164,15 @@ Future built-in/workspace tool protocols are not added by this credential change
 See the [credential contract](../../../../docs/architecture-next/control-api/runtime-profile-credentials.md)
 for internal consumption, failure, and key-configuration boundaries.
 Generated clients and server bindings belong under `/gen`, not this directory.
+
+## Channel: 11 implemented management operations
+
+`openapi.yaml` references `channel-public.yaml` for the configured Channel surface.
+The request schemas directly reference the canonical closed Channel V1 JSON Schemas;
+OpenAPI 3.1 conditionals (`if`/`then`/`else`) are preserved rather than weakened.
+Seven OWNER write commands require `Idempotency-Key`; both original create and
+its valid replay return `201`. Four member read operations expose only redacted
+account/binding/status projections. Lists use stable-ID cursor/page_size (1–100,
+default 50), not offset pagination. Internal mTLS endpoints are deliberately absent
+from this public Session API; their exact contracts live in Channel shared schemas
+and the Control Channel runtime guide. Profile-owned schemas and APIs are unchanged.

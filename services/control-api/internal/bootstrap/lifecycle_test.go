@@ -69,3 +69,27 @@ func (s *lifecycleServerStub) Shutdown(context.Context) error {
 	}
 	return nil
 }
+
+func TestAppRunStopsBothListenersOnCancellation(t *testing.T) {
+	public, internal := newLifecycleServerStub(), newLifecycleServerStub()
+	app := &App{server: public, internalServer: internal, shutdownTimeout: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := app.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if public.shutdownCalls != 1 || internal.shutdownCalls != 1 {
+		t.Fatal("both listeners must be stopped")
+	}
+}
+func TestAppRunInternalFailureStopsPublicListener(t *testing.T) {
+	public := newLifecycleServerStub()
+	internal := &lifecycleServerStub{serveErr: errors.New("internal listener failure")}
+	app := &App{server: public, internalServer: internal, shutdownTimeout: time.Second}
+	if err := app.Run(context.Background()); !errors.Is(err, internal.serveErr) {
+		t.Fatal("internal failure not returned", err)
+	}
+	if public.shutdownCalls != 1 || internal.shutdownCalls != 1 {
+		t.Fatal("listener orphaned")
+	}
+}

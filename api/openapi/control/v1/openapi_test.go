@@ -14,7 +14,7 @@ import (
 
 func TestControlOpenAPIIsValid(t *testing.T) {
 	document := loadControlOpenAPI(t)
-	if err := document.Validate(context.Background(), openapi3.AllowExtraSiblingFields("const", "$schema", "$id", "$defs", "propertyNames")); err != nil {
+	if err := document.Validate(context.Background(), openapi3.AllowExtraSiblingFields("const", "$schema", "$id", "$defs", "propertyNames", "if", "then", "else")); err != nil {
 		t.Fatalf("validate OpenAPI: %v", err)
 	}
 }
@@ -588,5 +588,33 @@ func TestControlOpenAPIContainsTenantMemberCandidateRoute(t *testing.T) {
 		response.Value.Content.Get("application/json") == nil ||
 		response.Value.Content.Get("application/json").Schema.Ref != "#/components/schemas/MemberCandidatePage" {
 		t.Fatal("member candidate 200 response must use MemberCandidatePage")
+	}
+}
+
+func TestControlOpenAPIContainsImplementedChannelRoutes(t *testing.T) {
+	document := loadControlOpenAPI(t)
+	assertRoutes(t, document, "/v1/tenants/{tenant_id}/channel-", []string{
+		"GET /v1/tenants/{tenant_id}/channel-accounts",
+		"GET /v1/tenants/{tenant_id}/channel-accounts/{account_id}",
+		"GET /v1/tenants/{tenant_id}/channel-bindings",
+		"GET /v1/tenants/{tenant_id}/channel-bindings/{binding_id}",
+		"PATCH /v1/tenants/{tenant_id}/channel-accounts/{account_id}",
+		"POST /v1/tenants/{tenant_id}/channel-accounts",
+		"POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials/{purpose}/update",
+		"POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/enabled",
+		"POST /v1/tenants/{tenant_id}/channel-bindings",
+		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled",
+		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target",
+	})
+	for path := range document.Paths.Map() {
+		if strings.HasPrefix(path, "/internal/") {
+			t.Fatal("workload endpoint mixed into public Session API")
+		}
+	}
+	for _, path := range []string{"/v1/tenants/{tenant_id}/channel-accounts", "/v1/tenants/{tenant_id}/channel-bindings"} {
+		op := document.Paths.Value(path).Post
+		if op.Responses.Status(201) == nil || op.RequestBody == nil {
+			t.Fatal("create contract missing")
+		}
 	}
 }

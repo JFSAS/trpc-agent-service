@@ -13,6 +13,7 @@ import (
 
 // Config contains the process configuration required by Control API V1.
 type Config struct {
+	Channel                          *ChannelConfig
 	ProfileCredentialKey             []byte
 	DeploymentAllowedEndpointHosts   []string
 	DeploymentExpectedContractDigest string
@@ -62,7 +63,13 @@ func LoadConfig() (Config, error) {
 		return Config{}, errors.New("CONTROL_BOOTSTRAP_USERNAME and CONTROL_BOOTSTRAP_PASSWORD are required in auto mode")
 	}
 
+	channel, err := loadChannelConfig(strings.TrimSpace(os.Getenv("CONTROL_CHANNEL_CONFIG_FILE")))
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
+		Channel:                          channel,
 		ProfileCredentialKey:             credentialKey,
 		DeploymentExpectedContractDigest: expectedContractDigest,
 		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment(

@@ -12,6 +12,9 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/admin"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding"
+	channelnats "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/nats"
+	channelpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/postgres"
+	channelapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
 	deploymentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
@@ -20,6 +23,7 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/migrations"
+	"github.com/nats-io/nats.go"
 )
 
 type serverLifecycle interface {
@@ -29,8 +33,11 @@ type serverLifecycle interface {
 
 // App owns the modules and process lifecycle assembled for Control API.
 type App struct {
+	routeRelay      *channelapp.RouteRelay
+	natsConnection  *nats.Conn
 	database        *pgxpool.Pool
 	server          serverLifecycle
+	internalServer  serverLifecycle
 	shutdownTimeout time.Duration
 	identity        *identity.Module
 	admin           *admin.Module
@@ -141,7 +148,52 @@ func New(ctx context.Context, config Config) (*App, error) {
 		return nil, fmt.Errorf("assemble deployment: %w", err)
 	}
 
+	var channelModule *channelbinding.Module
+	var internalServer serverLifecycle
+	var nc *nats.Conn
+	var relay *channelapp.RouteRelay
+	if config.Channel != nil {
+		tlsConfig, err := config.Channel.tlsConfig()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		channelModule, err = channelbinding.NewModule(channelbinding.Dependencies{
+			DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
+			TenantAccess:          channelTenantAccess{members: activeTenantMemberLookup{tenants: tenantModule.Service}},
+			TransactionAuthorizer: channelTransactionAuthorizer{}, Deployments: deploymentModule.Service,
+			Cipher: config.Channel.cipher, Options: channelpostgres.Options{ScopeID: config.Channel.ScopeID, SourceEpoch: config.Channel.SourceEpoch, MaxTenantAccounts: config.Channel.MaxTenantAccounts}, Workloads: config.Channel.principals(),
+		})
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("assemble channel: %w", err)
+		}
+		if err = channelModule.Initialize(ctx); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("initialize channel: %w", err)
+		}
+		nc, err = config.Channel.connectNATS()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		publisher, err := channelnats.NewPublisher(nc)
+		if err != nil {
+			nc.Close()
+			pool.Close()
+			return nil, err
+		}
+		relay, err = channelModule.NewRouteRelay(publisher)
+		if err != nil {
+			nc.Close()
+			pool.Close()
+			return nil, err
+		}
+		internalServer = httpserver.NewTLS(config.Channel.InternalAddress, channelModule.InternalHandler, tlsConfig)
+	}
+
 	return &App{
+		routeRelay: relay, natsConnection: nc,
 		database:        pool,
 		server:          httpserver.New(config.HTTPAddress, router),
 		shutdownTimeout: config.ShutdownTimeout,
@@ -151,7 +203,8 @@ func New(ctx context.Context, config Config) (*App, error) {
 		agent:           agentModule,
 		runtimeProfile:  runtimeProfileModule,
 		deployment:      deploymentModule,
-		channelBinding:  channelbinding.NewModule(channelbinding.Dependencies{}),
+		channelBinding:  channelModule,
+		internalServer:  internalServer,
 	}, nil
 }
 

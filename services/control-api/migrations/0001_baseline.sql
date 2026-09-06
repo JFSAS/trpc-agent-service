@@ -586,3 +586,117 @@ $$;
 CREATE TRIGGER control_outbox_content_protected
 BEFORE UPDATE ON control_outbox
 FOR EACH ROW EXECUTE FUNCTION protect_control_outbox_content();
+
+-- Channel V1 is a current development baseline, not a compatibility migration.
+-- Runtime credentials are ciphertext owned by Channel; projections never contain values.
+CREATE TABLE channel_account_catalog (
+    scope_id text PRIMARY KEY,
+    source_epoch uuid NOT NULL,
+    snapshot_revision bigint NOT NULL DEFAULT 1 CHECK (snapshot_revision BETWEEN 1 AND 9007199254740991),
+    account_count integer NOT NULL DEFAULT 0 CHECK (account_count BETWEEN 0 AND 1000)
+);
+CREATE TABLE channel_accounts (
+    tenant_id text NOT NULL REFERENCES tenants(id),
+    id text NOT NULL,
+    scope_id text NOT NULL REFERENCES channel_account_catalog(scope_id),
+    provider text NOT NULL CHECK (provider IN ('telegram','wecom')),
+    provider_account_id text NOT NULL CHECK (octet_length(provider_account_id) BETWEEN 1 AND 1024),
+    name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 128),
+    description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 4096),
+    account_revision bigint NOT NULL CHECK (account_revision BETWEEN 1 AND 9007199254740991),
+    connection_revision bigint NOT NULL CHECK (connection_revision BETWEEN 1 AND account_revision),
+    min_route_generation bigint NOT NULL DEFAULT 0 CHECK (min_route_generation BETWEEN 0 AND 9007199254740991),
+    enabled boolean NOT NULL DEFAULT false,
+    config_jsonb jsonb NOT NULL CHECK (jsonb_typeof(config_jsonb)='object'),
+    created_by text NOT NULL REFERENCES user_accounts(id),
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id,id),
+    CONSTRAINT channel_accounts_global_id UNIQUE (id),
+    CONSTRAINT channel_accounts_provider_identity UNIQUE (scope_id,provider,provider_account_id),
+    CONSTRAINT channel_accounts_provider_fk UNIQUE (tenant_id,id,provider)
+);
+CREATE INDEX channel_accounts_scope_order ON channel_accounts(scope_id,provider,id);
+CREATE INDEX channel_accounts_tenant_order ON channel_accounts(tenant_id,id);
+CREATE TABLE channel_account_credentials (
+    tenant_id text NOT NULL,
+    account_id text NOT NULL,
+    provider text NOT NULL,
+    purpose text NOT NULL,
+    id text NOT NULL UNIQUE,
+    credential_version bigint NOT NULL CHECK (credential_version BETWEEN 1 AND 9007199254740991),
+    configured boolean NOT NULL,
+    key_id text,
+    ciphertext bytea,
+    PRIMARY KEY (tenant_id,account_id,purpose),
+    FOREIGN KEY (tenant_id,account_id,provider) REFERENCES channel_accounts(tenant_id,id,provider),
+    CHECK ((provider='telegram' AND purpose IN ('telegram.bot_token','telegram.webhook_secret')) OR (provider='wecom' AND purpose='wecom.bot_secret')),
+    CHECK ((configured AND key_id IS NOT NULL AND key_id<>'' AND ciphertext IS NOT NULL AND octet_length(ciphertext) BETWEEN 30 AND 16413) OR
+           (NOT configured AND key_id IS NULL AND ciphertext IS NULL))
+);
+CREATE TABLE channel_bindings (
+    tenant_id text NOT NULL,
+    id text NOT NULL,
+    account_id text NOT NULL,
+    binding_revision bigint NOT NULL CHECK (binding_revision BETWEEN 1 AND 9007199254740991),
+    enabled boolean NOT NULL DEFAULT false,
+    deployment_id text NOT NULL,
+    revision_number bigint NOT NULL CHECK (revision_number BETWEEN 1 AND 9007199254740991),
+    deployment_revision_id text NOT NULL,
+    manifest_ref text NOT NULL,
+    manifest_digest text NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_by text NOT NULL REFERENCES user_accounts(id),
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id,id),
+    CONSTRAINT channel_bindings_one_account UNIQUE (tenant_id,account_id),
+    FOREIGN KEY (tenant_id,account_id) REFERENCES channel_accounts(tenant_id,id),
+    FOREIGN KEY (tenant_id,deployment_id) REFERENCES deployments(tenant_id,id),
+    FOREIGN KEY (tenant_id,deployment_revision_id) REFERENCES deployment_revisions(tenant_id,id),
+    FOREIGN KEY (tenant_id,manifest_ref) REFERENCES runtime_manifests(tenant_id,id)
+);
+CREATE TABLE channel_account_route_states (
+    tenant_id text NOT NULL,
+    account_id text NOT NULL,
+    generation bigint NOT NULL DEFAULT 0 CHECK (generation BETWEEN 0 AND 9007199254740991),
+    projection_jsonb jsonb,
+    payload_digest text,
+    PRIMARY KEY (tenant_id,account_id),
+    FOREIGN KEY (tenant_id,account_id) REFERENCES channel_accounts(tenant_id,id),
+    CHECK ((generation=0 AND projection_jsonb IS NULL AND payload_digest IS NULL) OR
+           (generation>0 AND projection_jsonb IS NOT NULL AND payload_digest IS NOT NULL AND jsonb_typeof(projection_jsonb)='object' AND payload_digest ~ '^sha256:[0-9a-f]{64}$'))
+);
+CREATE TABLE channel_command_receipts (
+    tenant_id text NOT NULL REFERENCES tenants(id),
+    operation text NOT NULL,
+    scope_id text NOT NULL,
+    key_hash text NOT NULL CHECK (key_hash ~ '^[0-9a-f]{64}$'),
+    mac_key_id text NOT NULL CHECK (mac_key_id<>''),
+    request_mac text NOT NULL CHECK (request_mac ~ '^[0-9a-f]{64}$'),
+    result_jsonb jsonb NOT NULL CHECK (jsonb_typeof(result_jsonb)='object'),
+    created_by text NOT NULL REFERENCES user_accounts(id),
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id,operation,scope_id,key_hash),
+    CHECK (operation IN ('CreateChannelAccount','UpdateChannelAccount','UpdateAccountCredential','SetChannelAccountEnabled','CreateChannelBinding','SetChannelBindingTarget','SetChannelBindingEnabled'))
+);
+CREATE TABLE channel_account_observations (
+    tenant_id text NOT NULL,
+    account_id text NOT NULL,
+    scope_id text NOT NULL,
+    source_epoch uuid NOT NULL,
+    provider text NOT NULL CHECK (provider IN ('telegram','wecom')),
+    connection_revision bigint NOT NULL CHECK (connection_revision BETWEEN 1 AND 9007199254740991),
+    instance_id text NOT NULL,
+    instance_epoch uuid NOT NULL,
+    report_sequence bigint NOT NULL CHECK (report_sequence BETWEEN 1 AND 9007199254740991),
+    state text NOT NULL CHECK (state IN ('CONFIG_APPLIED','CONNECTING','READY','DISABLED','ERROR')),
+    reason_code text NOT NULL,
+    owner_epoch bigint CHECK (owner_epoch BETWEEN 1 AND 9007199254740991),
+    observed_at timestamptz NOT NULL,
+    received_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    observation_digest text NOT NULL CHECK (observation_digest ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (tenant_id,account_id,instance_id,instance_epoch),
+    FOREIGN KEY (tenant_id,account_id,provider) REFERENCES channel_accounts(tenant_id,id,provider),
+    CHECK (provider='wecom' OR owner_epoch IS NULL)
+);
+CREATE INDEX channel_observations_expiry ON channel_account_observations(received_at);

@@ -18,6 +18,8 @@ tags:
       no Environment or user resource mapping table is required. Draft credential
       actions and published-association updates require Idempotency-Key. Internal
       Canonical Spec and Credential IDs are never part of the public HTTP contract.
+  - name: Channel
+    description: Tenant ChannelAccount and exact ChannelBinding; enabled by explicit platform Channel configuration.
   - name: Deployment
     description: >-
       Tenant-scoped immutable publication of one exact Agent Version with one
@@ -26,6 +28,22 @@ tags:
       value transport. Public manifest_view is an explicit projection without
       Credential IDs, purposes, audiences, values, or dynamic credential state.
 paths:
+  /v1/tenants/{tenant_id}/channel-accounts:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts"
+  /v1/tenants/{tenant_id}/channel-accounts/{account_id}:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts~1{account_id}"
+  /v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials/{purpose}/update:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts~1{account_id}~1credentials~1{purpose}~1update"
+  /v1/tenants/{tenant_id}/channel-accounts/{account_id}/enabled:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts~1{account_id}~1enabled"
+  /v1/tenants/{tenant_id}/channel-bindings:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings"
+  /v1/tenants/{tenant_id}/channel-bindings/{binding_id}:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}"
+  /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}~1target"
+  /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}~1enabled"
   /healthz:
     get:
       operationId: getHealth

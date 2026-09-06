@@ -112,14 +112,16 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deployment.NewModule(deployment.Dependencies{
+	deploymentModule, err := deployment.NewModule(deployment.Dependencies{
 		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 		TenantAccess:  tenantAccess{tenants: tenantModule.Service},
 		AgentVersions: agentModule.Service, ProfileRevisions: runtimeProfileModule.Service,
 		ProfileCredentials: runtimeProfileModule.Service, Platform: platform,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	channelModule := composeChannel(t, ctx, pool, router, identityModule, tenantModule, deploymentModule)
 	adminModule, err := admin.NewModule(admin.Dependencies{
 		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 		Accounts: identityModule.Accounts, Tenants: tenantModule.Service,
@@ -277,6 +279,9 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	testDeploymentV1Lifecycle(
 		t, ctx, router, pool, provisioned.ID, aliceCookie, bobCookie, adminCookie,
 	)
+	t.Run("ChannelHTTPAndMTLS", func(t *testing.T) {
+		testChannelHTTP(t, ctx, router, pool, channelModule, provisioned.ID, aliceCookie, bobCookie, adminCookie)
+	})
 }
 
 func testAgentV1Lifecycle(

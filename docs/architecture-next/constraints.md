@@ -4,8 +4,9 @@
 - **实现状态**：Control API 的 Identity、Admin、Tenant、Agent、Runtime Profile V1 与
   PostgreSQL 基线已实现；Deployment Control Publication 的 Compiler、Application、
   PostgreSQL 原子发布 / `PENDING` Outbox、八个 HTTP 路由和固定 Digest 启动门禁已实现。
-  Relay / JetStream、ChannelBinding、Gateway 与 Worker 执行为后续阶段
-- **确认日期**：2026-09-04；实现状态于 2026-09-05 复核
+  ChannelAccount / ChannelBinding、内部 mTLS 供应和路由专用 Relay 已实现；独立 Gateway
+  工作树完成 Control 接入与真实 Telegram 入站验收。Manifest 发布事件分发、Worker 与完整回复仍待接线。
+- **确认日期**：2026-09-04；实现状态于 2026-09-06 按代码与联合验收记录复核
 - **适用范围**：新建的生产代码、协议、数据库迁移、镜像和部署配置
 
 本文只记录当前已经确认、后续实现不得默默绕过的架构级约束。尚未确认的
@@ -34,7 +35,7 @@
 平台必须至少区分以下运行职责：
 
 - `control-api`：管理 Tenant、Agent、Runtime Profile、Deployment 和
-  Channel Binding，并发布不可变运行配置。
+  ChannelAccount、Channel Binding，并发布不可变运行配置。
 - `channel-gateway`：处理 IM Webhook、身份与绑定解析、Run Admission、
   运行路由投影以及回复投递。
 - `agent-worker`：消费 Run、执行 Agent、完成 Run，并产生 `ReplyIntent`。
@@ -65,6 +66,16 @@ Adapter；真实 Run/Attempt 授权拥有方、工作负载认证和 Worker 接�
 可重试结果失败，不回退到明文事件或任意缓存凭据。已完成批量解析的运行中 Attempt
 在其生命周期内复用已解析集合，不逐次回查 Control API；无凭据闭包的 Attempt 不调用
 该接口。配置发布、运行路由与非秘密快照仍通过不可变版本、版本化事件和只读投影协作。
+
+渠道账户供应与路由查询同样分开：Gateway 可以在初始化/周期刷新时读取 Control 的经过
+认证、完整且有版本的非秘密账户快照，并在连接/用途初始化时经账户 Owner 的内部接口读取
+凭据；禁止每条消息同步查 Control 绑定、任意凭据引用或最新 Agent 配置。账户快照不是
+Worker 的 RuntimeManifest，也不修改其不可变性。正式产品的账户来自租户自助录入，
+文件和环境变量账户源仅作显式开发验证 Adapter。
+
+上述账户接入已在 Control 与 Gateway 独立工作树实现并完成真实 Telegram 入站验收。
+具体同步范围、失效时限、工作负载/账户授权、OwnerGrant 本地检查及故障语义见 [ChannelAccount](control-api/channel-account.md)。它不增加独立Secret
+服务，不承诺 Control 不可用时仍可无限初始化连接或读取凭据。
 
 ### ARC-003：NATS JetStream 承担异步传输
 
@@ -155,6 +166,9 @@ Control API 至少包含以下独立模块：
 `identity` 拥有本地用户账号、密码凭证和服务端 Session；`admin` 拥有
 Platform Operator 授权以及平台级管理命令；`tenant` 拥有 Tenant、Membership
 和 Invitation。其他目录拥有各自的 Agent 管理与发布能力。
+`channelbinding` 的当前 V1 实现同时拥有 ChannelAccount、账户私有凭据、ChannelBinding
+与 AccountRouteState；账户启停与有效路由共享原子事务，因此先在一个 Module 内按聚合/
+用例分文件，不引入账户微服务。账户凭据不转交 Runtime Profile 表或其专属管理接口。
 
 这些目录表示 Control Context 内的业务模块，不自动等同于独立微服务。模块是否
 继续拆成 Workload，必须由独立扩缩容、故障隔离或组织所有权需求驱动。
@@ -349,7 +363,8 @@ Spec Canonicalization。
 Runtime Profile V1 不创建 DeploymentRevision 或 RuntimeManifest，不发布 NATS/Outbox
 事件，也不构造 tRPC-Agent-Go 对象。Profile 已提供 CheckUsable、ResolveForAttempt 和
 可选内部 runtimehttp Adapter；默认 bootstrap 未注入执行授权拥有方与工作负载认证，
-不注册内部取值路由。真实 Deployment、Run/Attempt 授权与 Worker 接线仍待后续任务。
+不注册 Profile 的 Worker 内部取值路由。Deployment 的真实 CheckUsable 调用已接通；
+真实 Run/Attempt 授权与 Worker 接线仍待后续任务。Channel 的 mTLS 凭据接口不代替这条执行授权链路。
 详细契约见
 [`control-api/runtime-profile.md`](control-api/runtime-profile.md) 与
 [`control-api/runtime-profile-spec.md`](control-api/runtime-profile-spec.md)。
@@ -371,7 +386,7 @@ V1 不引入 Environment 实体、表、管理 API、`environment_id` 或隐藏�
 用途和目的范围；用户不手填 SecretRef 或内部 ID。Profile 发布只校验 Canonical 配置与
 关联形状，不解密、不探测 Provider。Deployment 经 Profile 的 CheckUsable port 检查
 所选发布关联是否可用；Worker 取值还需真实执行拥有方验证当前 Attempt/lease/Manifest
-授权。Deployment 对 CheckUsable 的调用及真实运行链路尚待接线。Capability 只验证
+授权。Deployment 对 CheckUsable 的调用已实现；真实运行链路仍待接线。Capability 只验证
 已按类别和名称匹配的资源，
 不用于搜索候选资源，也不进行模糊名称匹配。
 
@@ -439,12 +454,35 @@ V1 不新建动态工具注册中心、调度平台、策略微服务或 Sandbox
 的最小凭据集合和当前有效 Attempt 授权，经 Profile 内部接口一次性解析；值只进入
 该 Attempt 的内存初始化批次，不写回 Manifest 或通过业务事件传播。
 
+### ARC-305：渠道账户、连接资格与绑定路由分离
+
+用户直接在渠道账户表单输入机器人凭据；内部凭据引用不是额外用户对象，不允许把明文值
+写入路由事件。ChannelAccount 表达如何接入机器人，ChannelBinding 表达消息交给哪个精确
+DeploymentRevision。修改 Binding 不应无故重建连接，账户停用则必须同时触发连接资格失效
+和有效路由停用。Gateway新接纳/发送使用账户目录的事务guard与本地失效令牌，不能把
+预检当作已提交资格；结果落账与维护不因账户撤权而失去记录已有外部副作用的能力。
+Control保存、Gateway应用、SDK已连接、路由已生效分别记录状态。
+
+Binding CAS 与 `(provider, account_id)` 的 RouteGeneration 分别维护；路由事件固定
+DeploymentRevision.ID、RuntimeManifest.ID 和 ContentDigest，不选择 latest，不改变已接纳Run。
+同一账户停用/恢复及未来更换Binding都不重置RouteGeneration。有效路由变化与账户快照中的
+min_route_generation、目录水位同事务推进；新Admission等到路由达到该下限，旧Run/回复目标不变。Gateway身份、渠道账户范围、
+用途和凭据版本必须通过可信接口验证；裸OwnerGrant或自报owner_epoch不是Control侧租约证明。
+
+实现与协议见 [ChannelAccount](control-api/channel-account.md)、
+[ChannelBinding](control-api/channelbinding.md) 和
+[Gateway Control 接入](channel-gateway/control-integration-v1.md)。管理/内部 HTTP、账户解析
+Adapter 与 Channel 路由 Relay 已实现；真实 Telegram 入站见[联合验收](control-api/channel-acceptance.md)。
+不得将上述实现状态扩大为 Manifest 分发、Worker 执行或完整回复已完成。
+
 ## 5. PostgreSQL Outbox 与 NATS Relay
 
 ### ARC-401：业务写入与 Outbox 必须原子提交
 
-发布 DeploymentRevision、RuntimeManifest 或 Channel Binding 变更时，业务记录
-和 Outbox 记录必须在同一个 PostgreSQL 事务中提交。
+发布 DeploymentRevision、RuntimeManifest 或改变 Channel Binding 的有效运行投影时，业务记录
+和 Outbox 记录必须在同一个 PostgreSQL 事务中提交。账户停用/恢复引起的有效路由变化也遵守
+该约束；账户版本、RouteGeneration、完整路由事件与Receipt不得分开提交。未改变有效投影的
+管理NOOP/停用期间目标编辑不伪造新的路由发布，具体规则见 ChannelBinding 设计与实现文档。
 
 Application 禁止在业务事务中直接调用 NATS 后再提交数据库，也禁止提交数据库
 后以一次无持久记录的尽力调用发送 NATS。
@@ -467,16 +505,21 @@ Relay 在 V1 中可以作为同一个 Control API bootstrap 管理的后台任�
 ### ARC-501：Tenant Context 必须来自可信身份
 
 Control API 的 Tenant Context 必须由已验证的有效本地用户会话与有效
-Tenant Membership 共同建立。Gateway 的 Tenant Context 必须由已验证的
-Channel Binding 建立。禁止信任请求 Body、Query 或事件 Payload 中未经
+Tenant Membership 共同建立。Gateway 连接与账户凭据使用的 Tenant Context 来自经过认证和
+scope/账户授权校验的账户投影；消息接纳的运行Tenant由可信Channel Binding投影建立，
+必须与账户Tenant一致。连接建立不要求先存在Binding，绑定也不授予账户凭据权限。
+禁止信任请求 Body、Query 或事件 Payload 中未经
 认证和授权的 `tenant_id`。
 
-所有 Aggregate、Repository 查询、唯一约束、Outbox 事件、运行投影、日志和审计
-记录都必须包含并校验 Tenant 范围。仅在表中增加 `tenant_id` 字段不构成隔离完成。
+涉及租户业务的 Aggregate、Repository 查询、唯一约束、Outbox 记录、运行投影与审计
+必须保留并校验 Tenant 范围。仅在表中增加 `tenant_id` 字段不构成隔离完成。
+现有关闭的账户路由停用事件是明确的wire例外：只携带provider/account_id/generation，
+Control内部Outbox行仍保存Tenant；Gateway仅允许可信Control来源以全局不复用的账户身份
+撤销对应资格，不能从无Tenant的tombstone授予新路由或凭据权限。
 
 ### ARC-502：凭据值不进入配置快照或公开读模型
 
-AgentSpec 不包含凭据值或具体凭据关联；内部 Canonical ProfileRevision 与后续
+AgentSpec 不包含凭据值或具体凭据关联；内部 Canonical ProfileRevision 与
 RuntimeManifest 只固定所需内部关联及用途，不包含明文、密文或 live 状态。公开
 Profile 读取只返回非秘密 config 与允许的状态元数据，不返回内部 CredentialID。
 日志、Trace、审计、业务 Outbox 和 NATS 事件均不记录或传播凭据值。
@@ -486,6 +529,11 @@ Profile 运行凭据的明文只允许出现在受限 write-only 输入、拥有
 加密传输，Worker 只在当前 Attempt 内存中消费；内部接口不是公开 GET，也不因
 工作负载身份或客户端自述 tenant_id 自动授权。当前默认未注册该内部路由。
 Profile 只持久化加密当前值，外部主 Key 必须由部署配置注入，禁止硬编码或缺省生成。
+
+渠道账户凭据由 `channelbinding` Owner 加密保存，普通读取只给configured/version等脱敏
+元数据；内部解析认证Gateway principal并校验scope、Tenant、账户启用、用途与精确版本。
+Gateway在本地当前Owner/用途资格下取值，值只进入对应Client内存；不能通过账户ID或
+credential_id持有即授权。账户观测上报不是授权证明，也不得以自报状态绕过上述检查。
 
 ## 7. Local IM 与 Web
 
@@ -528,7 +576,8 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 - 真实 Run/Attempt 当前授权拥有方、工作负载认证与 Worker 内部批量解析接线；
   Deployment 的 Input、Compiler、RuntimeManifest、Storage 运行角色、CheckUsable 调用和
   Schema/Adapter Kind 兼容规则已经由 Deployment V1 文档冻结，按该文档实施和验证。
-- Channel Gateway 与 Worker 的数据库表所有权和完成 Run 的精确事务边界。
+- Worker 的数据库表所有权和完成 Run 的精确事务边界，以及与 ReplyIntent 的跨 Workload 接线；
+  Gateway 已实现账户/路由投影、Inbox、Admission、Outbox 与 Delivery 持久化，不再整体列为未设计。
 - Platform Operator 全部丢失后的 Break-glass 恢复、密码恢复、MFA、Session
   过期策略与 PostgreSQL RLS。
 - 共享库与独立库的物理隔离策略。
