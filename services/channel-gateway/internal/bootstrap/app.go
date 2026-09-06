@@ -39,6 +39,7 @@ import (
 )
 
 type App struct {
+	preflight                 *preflightRuntime
 	deliveryRunner            *deliveryapp.Runner
 	catalog                   *catalogrefresh.Service
 	control                   *controlhttp.Client
@@ -219,6 +220,10 @@ func New(ctx context.Context, c Config) (*App, error) {
 		}
 		mux.Handle("/v1/telegram/"+account.ID, handler)
 	}
+	app.preflight, err = newPreflight(c, boot)
+	if err != nil {
+		return fail(err)
+	}
 	app.server = newServer(c.HTTPAddress, mux)
 	app.admin = newServer(c.AdminAddress, admin)
 	return app, nil
@@ -230,6 +235,9 @@ func (a *App) Handler() http.Handler      { return a.server.Handler }
 func (a *App) AdminHandler() http.Handler { return a.admin.Handler }
 func (a *App) Close() {
 	a.closeOnce.Do(func() {
+		if a.preflight != nil {
+			a.preflight.Close()
+		}
 		if a.catalog != nil {
 			a.catalog.Close()
 		}
@@ -288,6 +296,9 @@ func (a *App) Run(ctx context.Context) error {
 	g.Go(serve(a.admin, admin))
 	g.Go(func() error { return a.relay.Run(runCtx) })
 	g.Go(func() error { return a.consumer.Run(runCtx) })
+	if a.preflight != nil {
+		g.Go(func() error { return a.preflight.Run(runCtx) })
+	}
 	if a.deliveryRunner != nil {
 		g.Go(func() error { return a.deliveryRunner.Run(runCtx) })
 	} else {

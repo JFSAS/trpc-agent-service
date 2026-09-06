@@ -72,3 +72,27 @@ NATS RUN_REQUESTS_V1 sequence1 的严格Schema和规范payload匹配，DeliveryI
 [完整脱敏验收报告](../../docs/architecture-next/channel-gateway/telegram-real-inbound-20260906.md)
 区分真实入站与 Worker/Manifest正文/模型/Storage/回复执行，并说明 PubAck 交叉证据而非原帧抓取。
 本次目标的模型与Storage配置仅为 admission-only fixture，没有宣称其真实执行能力。
+
+
+## Telegram 接入预检（Gateway 实现，跨端验收独立）
+
+Gateway 在 `control` 模式由 LoadConfig 默认启用独立预检 Runner，固定4个执行槽、
+每实例共享最多2次claim/s；它不依赖账户enabled、运行目录READY、Binding或Worker。
+Go直接构造Config的调用方需明确设置 `TelegramPreflightEnabled`；fixture模式不运行预检。
+
+部署继续使用同一个channel-gateway镜像/进程。升级顺序是先发布Control预检接口并给
+该Gateway的mTLS principal增加 `telegram_preflight` consumer kind，再部署Gateway，
+最后启用页面功能。该名称不是新的凭据purpose，Token仍是 `telegram.bot_token`。
+Control未升级或尚未授予诊断权限时，可设置：
+
+```bash
+export GATEWAY_TELEGRAM_PREFLIGHT_ENABLED=false
+```
+
+设置true启用诊断不会启用任何账户、注册Webhook或发消息；凭据只经新的诊断resolve取得，
+普通disabled凭据守卫不改变。预检只用getMe/getWebhookInfo，所有结果仍保留
+`DELIVERY_NOT_TESTED`和旧secret不可恢复的说明。独立HTTP/mTLS替身测试不等于
+真实Control Handler、数据库任务或真实Telegram已完成验收。
+
+新增设计见 [Telegram预检执行设计](../../docs/architecture-next/channel-gateway/telegram-preflight-v1.md)。
+无需新Node镜像、Connector进程、Gateway迁移或NATS subject；Helm仍在最终workload集成阶段。

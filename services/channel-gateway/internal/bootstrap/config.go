@@ -24,6 +24,7 @@ type Account struct {
 	Secret    string `json:"-"`
 }
 type Config struct {
+	TelegramPreflightEnabled                        bool
 	telegramFactory                                 telegramruntime.RemoteFactory
 	AccountSource                                   string
 	Control                                         ControlConfig
@@ -59,6 +60,13 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if c.AccountSource == "control" {
+		switch envOr("GATEWAY_TELEGRAM_PREFLIGHT_ENABLED", "true") {
+		case "true":
+			c.TelegramPreflightEnabled = true
+		case "false":
+		default:
+			return Config{}, errors.New("invalid Telegram preflight enablement")
+		}
 		if os.Getenv("GATEWAY_TELEGRAM_ACCOUNTS_FILE") != "" {
 			return Config{}, errors.New("Control mode does not accept static Telegram accounts")
 		}
