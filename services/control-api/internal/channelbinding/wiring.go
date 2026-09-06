@@ -75,7 +75,13 @@ func NewModule(deps Dependencies) (*Module, error) {
 	}
 	routes := deps.Routes.Group("", deps.Authenticate)
 	httpadapter.NewHandler(service, queries).Register(routes)
-	httpadapter.NewPreflightHandler(preflights, queries).Register(routes)
+	// Preflight responses are non-cacheable even when Session authentication
+	// aborts before the handler. Keep this policy off the normal Channel group.
+	preflightRoutes := deps.Routes.Group("", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Next()
+	}, deps.Authenticate)
+	httpadapter.NewPreflightHandler(preflights, queries).Register(preflightRoutes)
 	return &Module{Service: service, Queries: queries, Runtime: runtime, Preflights: preflights, InternalHandler: internal, store: store}, nil
 }
 

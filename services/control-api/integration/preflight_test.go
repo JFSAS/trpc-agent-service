@@ -53,9 +53,15 @@ func testTelegramPreflightHTTP(t *testing.T, ctx context.Context, router http.Ha
 	request(t, router, "POST", "/v1/admin/tenants", outsider, fmt.Sprintf(`{"slug":"preflight-other","name":"Preflight Other","owner_user_id":%q}`, ownerID), 201, &otherTenant)
 	deploymentRequest(t, router, "POST", "/v1/tenants/"+otherTenant.ID+"/channel-accounts/"+accountID+"/preflights", owner, "foreign-account", "{malformed", 404, nil)
 	deploymentRequest(t, router, "POST", base, nil, "anonymous", body, 401, nil)
-	deploymentRequest(t, router, "POST", base, member, "member", body, 403, nil)
+	memberDenied := deploymentRequest(t, router, "POST", base, member, "member", body, 403, nil)
+	if memberDenied.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("member denied preflight response is cacheable")
+	}
 	t.Run("OutsiderValidCreateHidden", func(t *testing.T) {
-		deploymentRequest(t, router, "POST", base, outsider, "outsider", body, 404, nil)
+		w := deploymentRequest(t, router, "POST", base, outsider, "outsider", body, 404, nil)
+		if w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("outsider create response is cacheable")
+		}
 	})
 	before := preflightUnchangedState(t, ctx, pool)
 	var created channelv1.PreflightCreated
@@ -77,8 +83,12 @@ func testTelegramPreflightHTTP(t *testing.T, ctx context.Context, router http.Ha
 		t.Fatalf("queued view=%+v", view)
 	}
 	t.Run("OutsiderValidReadHidden", func(t *testing.T) {
-		request(t, router, "GET", created.StatusURL, outsider, "", 404, nil)
+		w := request(t, router, "GET", created.StatusURL, outsider, "", 404, nil)
+		if w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("outsider read response is cacheable")
+		}
 	})
+	testPreflightUnauthenticatedNoStore(t, router, base, created.StatusURL, owner.Name)
 	testPreflightInvisibleMalformedRequests(t, ctx, router, pool, base, created.StatusURL, outsider)
 	request(t, router, "GET", base+"/cpf_not_found", member, "", 404, nil)
 	serverTLS, clientTLS, _ := channelTLS(t)
@@ -542,5 +552,28 @@ func testPreflightInvisibleMalformedRequests(t *testing.T, ctx context.Context, 
 	}
 	if !reflect.DeepEqual(before, preflightTaskBytes(t, ctx, pool)) {
 		t.Fatal("invisible request changed a diagnostic task or request receipt")
+	}
+}
+
+// These requests go directly to the production Control router, not through the
+// Web BFF. Cache headers must therefore exist even when Session middleware
+// aborts before the preflight handler is reached.
+func testPreflightUnauthenticatedNoStore(t *testing.T, router http.Handler, base, statusURL, cookieName string) {
+	invalidCookie := &http.Cookie{Name: cookieName, Value: "TEST_ONLY_INVALID_PREFLIGHT_SESSION"}
+	for _, tc := range []struct {
+		name, method, path, body string
+		cookie                   *http.Cookie
+	}{
+		{name: "AnonymousPreflightCreateIsNoStore", method: "POST", path: base, body: `{"expected_account_revision":1,"expected_connection_revision":1,"expected_bot_token_version":1}`},
+		{name: "AnonymousPreflightReadIsNoStore", method: "GET", path: statusURL},
+		{name: "InvalidSessionPreflightCreateIsNoStore", method: "POST", path: base, body: `{"expected_account_revision":1,"expected_connection_revision":1,"expected_bot_token_version":1}`, cookie: invalidCookie},
+		{name: "InvalidSessionPreflightReadIsNoStore", method: "GET", path: statusURL, cookie: invalidCookie},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := deploymentRequest(t, router, tc.method, tc.path, tc.cookie, "preflight-auth-cache-test", tc.body, 401, nil)
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("authentication-aborted preflight %s Cache-Control=%q want=no-store", tc.method, got)
+			}
+		})
 	}
 }
