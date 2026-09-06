@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jfsas.dev/schemas/channel/v1/preflight-grant.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "server_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 35
+    },
+    "preflight_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "scope_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "source_epoch": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "tenant_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "account_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "provider": {
+      "const": "telegram"
+    },
+    "provider_account_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[1-9][0-9]*$",
+      "not": {
+        "pattern": "[^0-9]"
+      }
+    },
+    "account_revision": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "connection_revision": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "webhook_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^/v1/telegram/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "purpose": {
+          "const": "telegram.bot_token"
+        },
+        "credential_id": {
+          "$ref": "common.schema.json#/$defs/id"
+        },
+        "credential_version": {
+          "$ref": "common.schema.json#/$defs/version"
+        },
+        "configured": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "purpose",
+        "credential_id",
+        "credential_version",
+        "configured"
+      ]
+    },
+    "webhook_secret_configured": {
+      "type": "boolean"
+    },
+    "lease_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2
+    },
+    "lease_expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 35
+    },
+    "job_deadline_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 35
+    },
+    "gateway_config_digest": {
+      "$ref": "common.schema.json#/$defs/digest"
+    }
+  },
+  "required": [
+    "schema_version",
+    "server_time",
+    "preflight_id",
+    "scope_id",
+    "source_epoch",
+    "tenant_id",
+    "account_id",
+    "provider",
+    "provider_account_id",
+    "account_revision",
+    "connection_revision",
+    "webhook_path",
+    "credentials",
+    "webhook_secret_configured",
+    "lease_epoch",
+    "lease_expires_at",
+    "job_deadline_at",
+    "gateway_config_digest"
+  ]
+}

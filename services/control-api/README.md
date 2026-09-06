@@ -177,6 +177,27 @@ Worker execution, Manifest body retrieval, the ReplyIntent consumer, and the com
 remain follow-up integration. See the [product usability TODO](../../docs/architecture-next/control-api/product-usability-todo.md)
 for planned UX changes; those entries are not implemented management endpoints.
 
+### Telegram diagnostic preflight
+
+The configured Channel module adds two public operations and three independent
+mTLS operations, implemented against the canonical shared Channel schemas:
+
+- `POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights`
+- `GET /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}`
+- `POST /internal/v1/channel-preflights:claim`
+- `POST /internal/v1/channel-preflights/{preflight_id}/credentials:resolve`
+- `POST /internal/v1/channel-preflights/{preflight_id}:complete`
+
+A saved disabled Telegram account needs neither a Binding nor a Deployment.
+Session/OWNER creation, member result reads, explicit `telegram_preflight`
+workload authorization, exact BotToken resolution, database leases, immutable
+redacted results and bounded maintenance are separate from normal runtime
+credential authorization. No Account, Route, Observation or existing Outbox
+writes occur. The additive `0002_channel_preflights.sql` migration preserves the
+deployed baseline. See [runtime operations](CHANNEL_RUNTIME.md#5-telegram-只读预检)
+and the [frozen contract](../../docs/architecture-next/control-api/telegram-preflight-v1.md).
+Control integration tests do not stand in for Gateway/Telegram/Web acceptance.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |

@@ -31,7 +31,13 @@ _Avoid_：授权证明、永久可用状态
 **最低路由代数**：某份账户配置被应用后，新消息接纳所需达到的账户路由版本下限。
 _Avoid_：连接版本、全局切流确认、旧回复的新目标
 
-## 代码开发进度（2026-09-06）
+**接入预检（ChannelPreflight）**：针对已保存、停用渠道账户的一次有时间范围的只读接入诊断。
+_Avoid_：启用接入、注册Webhook、运行就绪、真实投递验收
+
+**预检新鲜度**：一次诊断事实与当前账户连接身份和检查时间窗口的关系。
+_Avoid_：永久凭据授权、最新Gateway配置保证、连接Observation
+
+## 代码开发进度（2026-09-07）
 
 已接通Domain、命令/查询/Runtime Application、模块私有加密、Deployment拥有方目标读取、
 真实PostgreSQL、11条公开Session API、3条内部mTLS API、Bootstrap和路由Outbox Relay。
@@ -41,3 +47,9 @@ Deployment/Profile表，目标由拥有方只读端口验证。SQL外键表达�
 内存事务测试验证领域命令，真实PG验证事务/锁/回滚，真实TLS验证工作负载身份，独立NATS
 验证受限Producer的持久PubAck和失败重投。真实Telegram联调另记，不以fixture成功代替。
 运行与验收入口见`services/control-api/CHANNEL_RUNTIME.md`。
+
+Telegram预检新增独立PreflightService/Store、2公开与3私有入口、0002增量迁移和每秒有界维护。
+创建保留真实Session/OWNER提交授权，后台持久请求者授权不依赖Session续期；完成回执与
+首次执行授权分开。按任务固定Token元数据解析，仅内部mTLS响应短时携带值。
+预检不修改Account、Credential、Binding、Route、Catalog、Observation、普通Receipt/Outbox。
+shared Schema与真实PG/Session/mTLS测试覆盖Control闭环；跨端真实Telegram/Web验收另记。

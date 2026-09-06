@@ -14,7 +14,7 @@ func TestAllSchemasCompile(t *testing.T) {
 	if compiled.err != nil {
 		t.Fatal(compiled.err)
 	}
-	if len(compiled.schemas) != 12 {
+	if len(compiled.schemas) != 20 {
 		t.Fatalf("got %d schemas", len(compiled.schemas))
 	}
 }
