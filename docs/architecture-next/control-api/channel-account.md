@@ -54,6 +54,12 @@ ChannelBinding 和 AccountRouteState；它们有独立类型与用例，共用�
 用户不提交任意 URL、文件路径、环境变量名或 SDK Option。Telegram Bot Token 与 webhook
 校验 Secret 是两个 purpose，不能互相替代。V1 不接受第三种 provider 或开放 config Blob。
 
+V1 的 config 为只读派生配置：Telegram 的 webhook_path 由 account_id 生成，WeCom 的
+bot_id 等于创建时的 provider_account_id。公开 Create 和 PATCH 都不接受 config；首版前端
+显示真实只读值，不展示可保存的连接 URL、Webhook origin 或 SDK 选项编辑框。
+PATCH 只接受 expected_account_revision、name、description，后两者至少提交一项；未知字段
+由关闭 Schema 拒绝。连接版本的变化来自凭据替换/清除和账户启停，不存在独立 config 编辑用例。
+
 服务端 ID 使用 `cha_` / `chb_` / `ccr_` 加随机不透明后缀，符合
 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`。name 去首尾空白后为 1..128 个 Unicode code point，
 description 最多 4096；provider_account_id 最多 1024 字节且拒绝空白/控制字符，Telegram
@@ -69,7 +75,7 @@ SDK 认证成功并核对可得到的远端身份后才标 READY，认证失败�
 
 ## 3. 最小用例、状态与权限
 
-有效 Session 且 ACTIVE Tenant 的 MEMBER / OWNER 可读脱敏账户与诊断。创建、改配置、
+有效 Session 且 ACTIVE Tenant 的 MEMBER / OWNER 可读脱敏账户与诊断。创建、改名称/描述、
 替换/清除凭据、启停、改绑定全部 OWNER-only；Platform Operator 不隐式获得租户权限。
 身份与 Membership 在 Application 验证，提交前通过 Tenant Owner 提供的事务授权接口复核，
 不跨模块直接查询 Tenant 表。Restricted Session 不得进行管理操作。
@@ -77,7 +83,7 @@ SDK 认证成功并核对可得到的远端身份后才标 READY，认证失败�
 | 用例 | 输入关键点 | 成功状态 |
 | --- | --- | --- |
 | CreateChannelAccount | provider、物理 ID、name、description、write-only 凭据、Idempotency-Key | account_revision=1、connection_revision=1、enabled=false；登记身份和完整配置 |
-| UpdateChannelAccount | expected_account_revision、显式更改字段 | 非空的语义变化令 account_revision +1；provider/物理身份不可变 |
+| UpdateChannelAccount | expected_account_revision、name/description 至少一项 | 非空的语义变化令 account_revision +1；provider/物理身份与只读 config 不可改 |
 | Replace/ClearAccountCredential | expected_account_revision、purpose、expected_credential_version、action/value | 单 purpose 版本 +1，同时 connection_revision、account_revision +1 |
 | SetChannelAccountEnabled | expected_account_revision、enabled | 期望状态改变；缺少必需凭据时启用失败；不是“连接成功”承诺 |
 | Get/ListChannelAccounts | 路径 Tenant、稳定 ID/游标 | 仅普通配置、configured/version、期望状态与标注时间的观测 |
@@ -96,7 +102,6 @@ Control 主动建立企微连接抢占已有 Owner。在线故障由 Gateway 的
 | 操作 | account_revision | connection_revision | credential_version | snapshot_revision | RouteGeneration |
 | --- | --- | --- | --- | --- | --- |
 | name/description 修改 | +1 | 不变 | 不变 | +1（快照含 account_revision） | 不变 |
-| 连接 config 更改 | +1 | +1 | 不变 | +1 | 不变 |
 | 某 purpose replace/clear | +1 | +1 | 该 purpose +1 | +1 | 不变 |
 | 账户启停 | +1 | +1 | 不变 | +1 | 有效路由改变时 +1 |
 | Binding 创建/改绑/启停 | 不变 | 不变 | 不变 | 有效路由改变时 +1（min_route_generation变化） | 有效路由改变时 +1 |
@@ -108,6 +113,30 @@ account_revision或connection_revision。一次事务同时改变账户和路由
 当前值也冲突；只有原 Idempotency-Key 的合法重试可以读取历史 Receipt。凭据显式 replace
 每次都推进版本，即使值相同，不提供猜测明文相等的公开接口。
 
+### 3.2 账户启停与 Binding 意图的前端契约
+
+账户启停命令本身不修改 binding.enabled，也不冻结 Binding 的目标。停用账户保留服务端
+当时的 Binding 启用意图和固定目标；并发 OWNER 仍可通过独立 Binding 命令修改目标或意图。
+重新启用账户时，若服务端提交时的 Binding.enabled=true，则恢复该时刻已保存的目标路由；
+若 Binding 不存在或 enabled=false，则仅恢复账户接入配置，不开启新消息路由。
+
+AccountEnabledInput 只有 expected_account_revision 和 enabled。Binding-only 变更不推进
+account_revision，所以账户 CAS 不能锁定确认框曾展示的 binding_revision 或目标。服务端先
+读取/核验当时的精确目标，再在账户锁事务内核对；目标变化会重做准备或返回依赖错误，不会
+把客户端旧快照当作唯一允许恢复的目标。确认界面必须显示最近读取的目标、两类版本和读取时间，
+明确重新启用按服务端提交时的状态执行。要求精确恢复确认目标时，应增加 Binding 版本/目标
+条件的服务端契约，首版文案不宣称已有这项保证。
+
+“暂停消息路由”显式令 binding.enabled=false，保留账户接入配置、凭据和固定目标；“停用本平台
+接入”显式令 account.enabled=false，保留 Binding 意图。需要保留路由关闭意图时，应先暂停
+Binding、确认结果，再停用 Account；这是两次独立命令，不是原子总开关，并发管理仍需重新读取。
+这些变化异步传播，不承诺所有 Gateway 同时停止，不取消已接纳 Run；账户停用还影响后续
+回复的账户发送资格。Telegram 本平台接入停用不等于删除远端 Webhook。
+
+后端依据：[命令 DTO 与事务](../../../services/control-api/internal/channelbinding/application/commands.go#L249-L508) 的 UpdateAccountInput、AccountEnabledInput、
+SetAccountEnabled、SetBindingEnabled，以及 [Binding Domain](../../../services/control-api/internal/channelbinding/domain/binding.go#L68-L96) 的 SetEnabled。
+对应确认文案和验收矩阵见[渠道前端计划](../web/channelbinding-v1-flow-plan.md#42-双开关及恢复语义)。
+
 ## 4. 已实现的公开 HTTP
 
 所有路径沿用现有 `/v1` 管理入口；显式配置Channel后注册，已列入当前OpenAPI。
@@ -117,7 +146,7 @@ account_revision或connection_revision。一次事务同时改变账户和路由
 | POST /v1/tenants/{tenant_id}/channel-accounts | 创建，成功 201 |
 | GET /v1/tenants/{tenant_id}/channel-accounts | 游标分页摘要，成功 200 |
 | GET /v1/tenants/{tenant_id}/channel-accounts/{account_id} | 详情与观测，成功 200 |
-| PATCH /v1/tenants/{tenant_id}/channel-accounts/{account_id} | name/description 与非秘密 config，成功 200 |
+| PATCH /v1/tenants/{tenant_id}/channel-accounts/{account_id} | 仅 name/description，成功 200；config 只读 |
 | POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials/{purpose}/update | replace/clear，成功 200 |
 | POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/enabled | 显式 enabled 与 CAS，成功 200 |
 

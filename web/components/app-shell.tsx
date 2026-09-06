@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   Package,
+  Radio,
   ShieldCheck,
   SlidersHorizontal,
   Users,
@@ -18,6 +19,8 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import { clearDeploymentPreparations, establishPreparationIdentity } from "../lib/deployment-editor-state";
+import { clearChannelPreparations, establishChannelIdentity } from "../lib/channel-editor-state";
+import { clearChannelPreflightPreparations, establishChannelPreflightIdentity } from "../lib/channel-preflight-api";
 
 import { controlApi, type Tenant, type User } from "../lib/control-api";
 
@@ -59,10 +62,14 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
 
   useEffect(() => {
     try { establishPreparationIdentity(sessionStorage, user.id); } catch { /* Deployment surfaces show persistence failures. */ }
+    try { establishChannelIdentity(sessionStorage, user.id); } catch { /* Channel surfaces show persistence failures. */ }
+    try { establishChannelPreflightIdentity(sessionStorage, user.id); } catch { /* Preflight surfaces show persistence failures. */ }
   }, [user.id]);
 
   async function logout() {
     try { clearDeploymentPreparations(sessionStorage); } catch { /* Do not block logout if browser storage is unavailable. */ }
+    try { clearChannelPreparations(sessionStorage); } catch { /* Continue logout even if browser storage is unavailable. */ }
+    try { clearChannelPreflightPreparations(sessionStorage); } catch { /* Read-only diagnostic recovery must not survive logout. */ }
     await controlApi.logout().catch(() => undefined);
     router.replace("/login");
     router.refresh();
@@ -115,6 +122,12 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
               >
                 <Package size={18} /><span>部署</span>
               </Link>
+              <Link
+                className={pathname === `/tenants/${tenantPath}/channels` || pathname.startsWith(`/tenants/${tenantPath}/channels/`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/channels`}
+              >
+                <Radio size={18} /><span>渠道接入</span>
+              </Link>
               {activeTenant?.role === "OWNER" && <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/members`) ? "nav-link active" : "nav-link"}
                 href={`/tenants/${tenantPath}/members`}
@@ -142,7 +155,7 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
       <main className="workspace">
         <header className="workspace-header">
           <div><span>{tenantPath ? activeTenant?.name ?? "租户工作区" : isOperator ? "平台管理" : "租户空间"}</span><b>/</b><strong>{pageLabel(pathname)}</strong></div>
-          <div className="header-user"><span className="status-dot" />服务正常</div>
+          <div className="header-user" title="登录状态不代表渠道连接、路由应用或 Agent 执行正常"><span className="status-dot" />已登录</div>
         </header>
         <div className="workspace-content">{children}</div>
       </main>
@@ -162,6 +175,9 @@ function pageLabel(pathname: string) {
   if (/^\/tenants\/[^/]+\/runtime-profiles/.test(pathname)) return "运行配置";
   if (/^\/tenants\/[^/]+\/deployments\/[^/]+\/revisions/.test(pathname)) return "部署发布版本";
   if (/^\/tenants\/[^/]+\/deployments/.test(pathname)) return "部署";
+  if (/^\/tenants\/[^/]+\/channels\/new(?:\/|$)/.test(pathname)) return "新增渠道";
+  if (/^\/tenants\/[^/]+\/channels\/[^/]+/.test(pathname)) return "渠道账户详情";
+  if (/^\/tenants\/[^/]+\/channels(?:\/|$)/.test(pathname)) return "渠道接入";
   if (/^\/tenants\/[^/]+\/members/.test(pathname)) return "成员管理";
   if (/^\/tenants\/[^/]+/.test(pathname)) return "Agent 工作台";
   if (pathname.startsWith("/tenants")) return "选择租户";

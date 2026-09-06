@@ -24,6 +24,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     else if (response.headers.get("set-cookie")) outgoing.append("set-cookie", response.headers.get("set-cookie")!);
     const retryAfter = response.headers.get("retry-after");
     if (retryAfter) outgoing.set("retry-after", retryAfter);
+    // An accepted diagnostic job exposes its stable Control resource, not a browser redirect.
+    const location = response.headers.get("location");
+    if (response.status === 202 && location) outgoing.set("location", location);
     return new Response(response.body, { status: response.status, headers: outgoing });
   } catch {
     return Response.json({ error: { code: "CONTROL_API_UNAVAILABLE", message: "Control API is unavailable" } }, { status: 502, headers: { "cache-control": "no-store" } });

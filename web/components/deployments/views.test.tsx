@@ -45,12 +45,39 @@ describe("Deployment list and immutable views", () => {
     expect(within(row).getByText("search")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /查看 Agent v3/ })).toHaveAttribute("href", "/tenants/t/agents/a/versions/3");
     expect(screen.getByRole("link", { name: "基于此版本准备新发布" })).toHaveAttribute("href", "/tenants/t/deployments/d?from=1&prepare=1");
+    expect(screen.getByRole("link", { name: "接入渠道" })).toHaveAttribute("href", "/tenants/t/channels?deployment_id=d&revision_number=1");
+    expect(screen.getByText(/发布不会自动接入渠道或切换现有流量/)).toBeInTheDocument();
+    expect(screen.queryByText(/运行分发和流量切换尚未接入/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /启动|切流|停用/ })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("credential_id");
   });
   it("rejects invalid revision numbers before fetching", async () => {
     render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={NaN} />);
     await screen.findByText(/版本号必须为正整数/); expect(mocks.getRevision).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: "接入渠道" })).not.toBeInTheDocument();
+  });
+  it("offers no Channel target shortcut before the exact revision has loaded", async () => {
+    let resolveRevision!: (value: typeof revision) => void;
+    mocks.getRevision.mockReturnValue(new Promise<typeof revision>((resolve) => { resolveRevision = resolve; }));
+    render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={1} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取版本快照");
+    expect(screen.queryByRole("link", { name: "接入渠道" })).not.toBeInTheDocument();
+    resolveRevision(revision);
+    expect(await screen.findByRole("link", { name: "接入渠道" })).toHaveAttribute("href", "/tenants/t/channels?deployment_id=d&revision_number=1");
+    expect(mocks.getRevision).toHaveBeenCalledTimes(1);
+    expect(mocks.getRevision).toHaveBeenCalledWith("t", "d", 1);
+  });
+  it("does not offer a Channel shortcut when revision loading fails", async () => {
+    mocks.getRevision.mockRejectedValue(new Error("snapshot missing"));
+    render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={1} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("snapshot missing");
+    expect(screen.queryByRole("link", { name: "接入渠道" })).not.toBeInTheDocument();
+  });
+  it("encodes tenant and fixed deployment target independently in the Channel link", async () => {
+    mocks.get.mockResolvedValue({ ...deployment, tenant_id: "t/a", id: "d?&" });
+    mocks.getRevision.mockResolvedValue({ ...revision, tenant_id: "t/a", deployment_id: "d?&", revision_number: 2 });
+    render(<DeploymentRevisionDetail tenantId="t/a" deploymentId="d?&" revisionNumber={2} />);
+    expect(await screen.findByRole("link", { name: "接入渠道" })).toHaveAttribute("href", "/tenants/t%2Fa/channels?deployment_id=d%3F%26&revision_number=2");
   });
 });
 describe("Source selection and repair navigation", () => {
