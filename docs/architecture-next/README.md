@@ -43,6 +43,9 @@
   凭据、完整账户快照、Gateway 认证解析与状态回传；管理/内部 HTTP 与真实 PostgreSQL 已实现。
 - [ChannelBinding V1 设计与实现](control-api/channelbinding.md)：精确部署目标、Binding CAS、
   账户 RouteGeneration、账户启停联动、事务 Outbox 及路由发布；管理 API/受限 Producer 已实现。
+- [Telegram接入预检V1](control-api/telegram-preflight-v1.md)：冻结的2公开/3私有协议、短时任务、
+  精确BotToken解析、固定配置指纹与8项去秘密诊断；Control代码及真实PG/Session/mTLS回归已实现，
+  Gateway/Web/真实Telegram联合验收由协调任务记录，不等同于启用、注册或消息投递。
 - [Gateway Control 接入与验收](channel-gateway/control-integration-v1.md)：可信快照/凭据 Adapter、
   动态 Telegram、启动装配与运行观测已实现；真实 Telegram 入站到 RunRequested 已验收。
   此入口区分已验收入站与仍待实现的 Worker 执行、ReplyIntent Consumer 和完整回复。

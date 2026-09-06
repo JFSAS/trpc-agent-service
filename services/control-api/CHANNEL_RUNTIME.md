@@ -78,7 +78,7 @@ DenyDelete/DenyPurge。建议dedup窗口2分钟，业务永久幂等仍由Gatewa
 创建默认disabled；保存凭据不触发Provider探测。Binding选择精确deployment_id/revision_number，
 读取拥有方校验的Published Revision/Manifest，不读取Draft/latest。
 
-内部监听只暴露以下三个工作负载API（均no-store）：
+内部监听保留以下三个运行工作负载API（均no-store）；独立预检API见§5：
 
 | Method | Path | Wire schema / limit |
 | --- | --- | --- |
@@ -121,8 +121,50 @@ go build ./services/control-api/cmd/control-api
 admin_user/admin_password、control_user/control_password。它必须指向专用可清理测试broker，
 测试会创建/删除`CHANNEL_ROUTES_V1`；不能使用联合联调或生产broker。验证报告必须记录实际skip数。
 
-当前V1基线直接扩展`0001_baseline.sql`，不引入未稳定版本的兼容迁移。已有旧基线数据库不会
-自动获得新表；本地使用独立空数据库验证。升级真实持久部署前应制定明确数据迁移，不以
-源代码回滚脚本假装撤销业务数据库。源代码回滚保留修改前已有文件及改动；测试回滚在副本执行。
+已部署Channel基线之后，Telegram预检使用新增`0002_channel_preflights.sql`，不改写
+`0001_baseline.sql`。正常启动迁移只增加两张诊断表及索引，保留已有账户/凭据/路由数据。
+SQL文件编号不表示产品V2。旧镜像不认识`telegram_preflight` consumer，回滚必须同步恢复
+旧镜像与旧Channel配置；保留新诊断表，不通过删表回滚历史业务数据。源代码回滚在副本执行。
 真实Telegram验收另需真正机器人凭据、可达HTTPS origin、远端注册与用户消息，以及Gateway
 Receipt/RunRequested的持久证据；合成远端或普通go test成功不代替这一步。
+
+
+## 5. Telegram 只读预检
+
+Control 已实现独立 `PreflightService`、PostgreSQL Store、2公开/3私有入口与维护循环。
+Gateway Provider 调用和跨端真实验收由各自任务交付；本节不以Control测试代替线上诊断。
+冻结协议见[Telegram预检V1](../../docs/architecture-next/control-api/telegram-preflight-v1.md)，
+公开和私有文档分别为[Session OpenAPI](../../api/openapi/control/v1/preflight-public.yaml)与
+[mTLS OpenAPI](../../api/openapi/control/v1/preflight-internal.yaml)。
+
+| Method | Path | 语义 |
+| --- | --- | --- |
+| POST | `/v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights` | ACTIVE OWNER + 非restricted Session + Idempotency-Key；202固定创建回执 |
+| GET | `/v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}` | ACTIVE MEMBER；去秘密结果，无列表/latest |
+| POST | `/internal/v1/channel-preflights:claim` | mTLS + 显式telegram_preflight；200一项grant或204 |
+| POST | `/internal/v1/channel-preflights/{preflight_id}/credentials:resolve` | 只读取该任务固定BotToken；不读取WebhookSecret |
+| POST | `/internal/v1/channel-preflights/{preflight_id}:complete` | 8项闭合事实；相同claim/payload历史重放204 |
+
+要让Gateway领取预检，平台在其已有workload `consumers`数组中显式增加
+`telegram_preflight`。不新增用户业务对象或新的环境变量；未增加该consumer的已有运行权限
+保持原样，预检私有操作返回403。普通resolve仍拒绝disabled账户，不复用预检授权绕过它。
+
+创建只要求已保存、停用的Telegram账户，不依赖Binding、Deployment或目录READY。
+任务120秒、每租约30秒、最多2次领取；数据库时间控制所有期限。每账户1活跃/3次每分钟，
+每租户20活跃/30次每分钟，Control按principal/instance每秒2次claim，在数据库事务中执行。
+Gateway配置摘要第一次领取后固定；重新领取或首次完成遇另一合法配置持久STALE。
+当前Gateway配置新鲜度保持UNCONFIRMED，不将静态origin合法当作公网可达或真实投递。
+
+创建事务先稳定排序锁当前及旧任务请求者Identity，再锁Tenant/Account/Task；当前Session
+与OWNER检查、幂等回执先于旧任务收敛。撤销Session后拒绝的请求对预检表也零写入。
+后台claim/resolve/首次complete检查持久ACTIVE用户与OWNER，不依赖原Session仍登录。
+历史完成回执只确认已提交事实；撤权后原claim/同payload可以204，但不重新读取凭据。
+
+Bootstrap在已有关闭可等待的维护goroutine中每秒处理最多64个任务，每轮5秒context；
+按数据库时钟收敛超时/失效并有界清理。GET也收敛未领取120秒任务，不依赖维护及时运行。
+完成事实不可变，结果有效期5分钟；task/创建回执保留24小时，claim回执保留5分钟。
+每分钟原Observation清理继续执行；不增加独立调度服务或消息队列。
+
+真实PG+Session+mTLS回归覆盖完整链路、配置变更STALE、请求者撤权、创建幂等与Session
+提交前撤销零写入；八张运行表完整内容哈希保持不变。Provider真实响应、Gateway账本和
+用户看到的Web结果属于协调联合验收，不由Control写入或模拟。

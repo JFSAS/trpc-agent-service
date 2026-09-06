@@ -27,15 +27,19 @@ type Runtime interface {
 type principalKey struct{}
 type Handler struct {
 	service    Runtime
+	preflight  PreflightRuntime
 	principals map[string]application.WorkloadPrincipal
 	mux        *http.ServeMux
 }
 
-func NewHandler(service Runtime, principals []application.WorkloadPrincipal) (*Handler, error) {
-	if service == nil || len(principals) == 0 || len(principals) > 32 {
+func NewHandler(service Runtime, principals []application.WorkloadPrincipal, preflights ...PreflightRuntime) (*Handler, error) {
+	if service == nil || len(principals) == 0 || len(principals) > 32 || len(preflights) > 1 {
 		return nil, application.ErrWorkloadDenied
 	}
 	h := &Handler{service: service, principals: map[string]application.WorkloadPrincipal{}, mux: http.NewServeMux()}
+	if len(preflights) == 1 {
+		h.preflight = preflights[0]
+	}
 	instances := map[string]bool{}
 	for _, p := range principals {
 		u, err := url.Parse(p.PrincipalID)
@@ -44,7 +48,7 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal) (*H
 		}
 		kinds := map[string]bool{}
 		for _, kind := range p.Consumers {
-			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration"}, kind) {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_preflight"}, kind) {
 				return nil, application.ErrWorkloadDenied
 			}
 			kinds[kind] = true
@@ -56,6 +60,11 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal) (*H
 	h.mux.HandleFunc("GET /internal/v1/channel-accounts/snapshot", h.snapshot)
 	h.mux.HandleFunc("POST /internal/v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials:resolve", h.resolve)
 	h.mux.HandleFunc("POST /internal/v1/channel-account-observations", h.observations)
+	if h.preflight != nil {
+		h.mux.HandleFunc("POST /internal/v1/channel-preflights:claim", h.preflightClaim)
+		h.mux.HandleFunc("POST /internal/v1/channel-preflights/{preflight_id}/credentials:resolve", h.preflightResolve)
+		h.mux.HandleFunc("POST /internal/v1/channel-preflights/{preflight_action}", h.preflightComplete)
+	}
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

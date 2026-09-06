@@ -50,6 +50,21 @@ func (channelCommitAuth) AuthorizeOwner(ctx context.Context, tx pgx.Tx, tenant, 
 	}
 	return (tenantpg.TransactionAuthorizer{}).AuthorizeOwner(ctx, tx, tenant, user)
 }
+func (channelCommitAuth) LockRequesterUsers(ctx context.Context, tx pgx.Tx, users []string) error {
+	for _, user := range users {
+		if _, err := (identitypg.TransactionAuthorizer{}).AuthorizeActiveUser(ctx, tx, user); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (channelCommitAuth) AuthorizeRequester(ctx context.Context, tx pgx.Tx, tenant, user string) (bool, error) {
+	ok, err := (identitypg.TransactionAuthorizer{}).AuthorizeActiveUser(ctx, tx, user)
+	if err != nil || !ok {
+		return ok, err
+	}
+	return (tenantpg.TransactionAuthorizer{}).AuthorizeOwner(ctx, tx, tenant, user)
+}
 func (channelCommitAuth) AuthorizeActiveTenant(ctx context.Context, tx pgx.Tx, tenant string) (bool, error) {
 	return (tenantpg.TransactionAuthorizer{}).AuthorizeActiveTenant(ctx, tx, tenant)
 }
@@ -69,7 +84,7 @@ func composeChannel(t *testing.T, ctx context.Context, pool *pgxpool.Pool, route
 	if err != nil {
 		t.Fatal(err)
 	}
-	module, err := channelbinding.NewModule(channelbinding.Dependencies{DB: pool, Routes: router, Authenticate: identity.AuthenticationMiddleware(), TenantAccess: tenantAccess{tenants: tenant.Service}, TransactionAuthorizer: channelCommitAuth{}, Deployments: deployment.Service, Cipher: cipher, Options: channelpg.Options{ScopeID: "gateway_pool", SourceEpoch: channelEpoch}, Workloads: []channelapp.WorkloadPrincipal{{PrincipalID: channelPrincipal, ScopeID: "gateway_pool", InstanceID: "gw-1", Audience: channelapp.WorkloadAudience, Consumers: []string{"telegram_registration", "telegram_webhook", "telegram_delivery"}}}})
+	module, err := channelbinding.NewModule(channelbinding.Dependencies{DB: pool, Routes: router, Authenticate: identity.AuthenticationMiddleware(), TenantAccess: tenantAccess{tenants: tenant.Service}, TransactionAuthorizer: channelCommitAuth{}, Deployments: deployment.Service, Cipher: cipher, Options: channelpg.Options{ScopeID: "gateway_pool", SourceEpoch: channelEpoch}, Workloads: []channelapp.WorkloadPrincipal{{PrincipalID: channelPrincipal, ScopeID: "gateway_pool", InstanceID: "gw-1", Audience: channelapp.WorkloadAudience, Consumers: []string{"telegram_registration", "telegram_webhook", "telegram_delivery", "telegram_preflight"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

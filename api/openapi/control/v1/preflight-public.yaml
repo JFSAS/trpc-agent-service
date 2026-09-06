@@ -1,0 +1,483 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Control Telegram preflight API",
+    "version": "1.0.0",
+    "description": "Two Session-authenticated operations for read-only diagnostics on saved disabled Telegram accounts. No Binding, Deployment, READY or Worker prerequisite. No registration mutation or message delivery."
+  },
+  "paths": {
+    "/v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights": {
+      "parameters": [
+        {
+          "name": "tenant_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        },
+        {
+          "name": "account_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "createChannelPreflight",
+        "tags": [
+          "Channel Preflight"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "description": "ACTIVE unrestricted Session and ACTIVE tenant OWNER required, rechecked transactionally before idempotency replay. Three exact CAS versions; same key/actor/canonical body replays identical 202 and fixed receipt before current CAS, enabled and rate checks. Disabled saved Telegram accounts only; missing BotToken is diagnosed asynchronously. Limits: account 3/min and 1 active, tenant 30/min and 20 active. Task deadline 120 seconds; retention/idempotency 24 hours. No token/URL/Binding/Deployment inputs. Unknown query, Content-Encoding, unknown/duplicate/case-varied fields and trailing JSON are rejected.",
+        "responses": {
+          "400": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted; same-key replay returns the identical creation receipt, not current task state.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Same-origin fixed relative status_url from the creation receipt."
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "2"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../../../schemas/channel/v1/preflight-created.schema.json"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../../../schemas/channel/v1/preflight-create.schema.json"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}": {
+      "parameters": [
+        {
+          "name": "tenant_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        },
+        {
+          "name": "account_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        },
+        {
+          "name": "preflight_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getChannelPreflight",
+        "tags": [
+          "Channel Preflight"
+        ],
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "description": "ACTIVE unrestricted Session and ACTIVE tenant MEMBER required. Cross-tenant/invisible accounts or results return 404. state, diagnostic outcome, account freshness and Gateway config freshness are independent. COMPLETED does not imply account enabled or delivery success. The final two checks always disclose unavailable restore materials and NOT_TESTED delivery. GET exposes effective terminal timeout after 120 seconds even without any Gateway. Metadata-only changes do not stale connection facts; results are valid for 5 minutes and retained 24 hours. Results never expose credential IDs/values, claim tokens, raw provider URLs/errors or actual mismatched bot identity.",
+        "responses": {
+          "400": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stable sanitized diagnostic; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Current redacted task and historical facts with derived account freshness; no-store.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../../../schemas/channel/v1/preflight-view.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChannelError": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "field": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "control_session"
+      }
+    }
+  }
+}

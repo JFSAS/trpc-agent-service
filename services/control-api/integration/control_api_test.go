@@ -282,6 +282,9 @@ func TestControlAPIV1AgainstPostgreSQL(t *testing.T) {
 	t.Run("ChannelHTTPAndMTLS", func(t *testing.T) {
 		testChannelHTTP(t, ctx, router, pool, channelModule, provisioned.ID, aliceCookie, bobCookie, adminCookie)
 	})
+	t.Run("TelegramPreflightHTTPAndMTLS", func(t *testing.T) {
+		testTelegramPreflightHTTP(t, ctx, router, pool, channelModule, identityModule.AuthenticationMiddleware(), provisioned.ID, user.ID, member.ID, aliceCookie, bobCookie, adminCookie)
+	})
 }
 
 func testAgentV1Lifecycle(

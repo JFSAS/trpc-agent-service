@@ -87,7 +87,7 @@ func Validate(name string, raw []byte) error {
 	if err = schema.Validate(value); err != nil {
 		return ErrInvalidDocument
 	}
-	return nil
+	return validatePreflightSemantics(name, raw)
 }
 
 // Decode uses the same closed wire validation before decoding an adapter DTO.

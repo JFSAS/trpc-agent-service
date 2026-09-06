@@ -16,3 +16,13 @@ Changing this greenfield baseline does not replay it in a database where
 `0001_baseline.sql` is already present in `control_schema_migrations`. Development
 and test databases created from an older baseline must be rebuilt instead of
 receiving a compatibility migration before the first release.
+
+`0002_channel_preflights.sql` is an additive upgrade for Telegram read-only
+diagnostics from the currently deployed Channel baseline. It adds only
+`channel_preflights` and `channel_preflight_requests` plus their indexes. The
+existing baseline is not rewritten; existing accounts, credentials, routes,
+observations, command receipts, and Outbox records remain unchanged. Existing
+databases apply this file once through the normal embedded migration runner.
+The diagnostic wire protocol remains V1; a numbered SQL migration is not a
+new product/API version. Rollback testing uses an isolated database/schema copy,
+not table removal from an existing deployment.

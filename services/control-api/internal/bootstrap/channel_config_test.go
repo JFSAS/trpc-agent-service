@@ -54,3 +54,56 @@ func TestChannelNATSRequiresAuthenticatedRestrictedTransport(t *testing.T) {
 		}
 	}
 }
+
+func TestChannelWorkloadConsumersAreClosedAndDiagnosticIsExplicit(t *testing.T) {
+	valid := func() []channelWorkloadConfig {
+		return []channelWorkloadConfig{{PrincipalID: "spiffe://example.test/gateway/one", InstanceID: "gateway_one", ScopeID: "pool", Audience: "control-channel-v1", Consumers: []string{"telegram_preflight"}}}
+	}
+	for _, tc := range []struct {
+		name   string
+		change func([]channelWorkloadConfig) []channelWorkloadConfig
+		valid  bool
+	}{
+		{"diagnostics only", func(v []channelWorkloadConfig) []channelWorkloadConfig { return v }, true},
+		{"runtime plus diagnostics", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			v[0].Consumers = []string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_preflight"}
+			return v
+		}, true},
+		{"old runtime remains valid", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			v[0].Consumers = []string{"telegram_registration"}
+			return v
+		}, true},
+		{"unknown consumer", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			v[0].Consumers = []string{"telegram_preflight_bot_token"}
+			return v
+		}, false},
+		{"duplicate consumer", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			v[0].Consumers = []string{"telegram_preflight", "telegram_preflight"}
+			return v
+		}, false},
+		{"wrong scope", func(v []channelWorkloadConfig) []channelWorkloadConfig { v[0].ScopeID = "other"; return v }, false},
+		{"wrong audience", func(v []channelWorkloadConfig) []channelWorkloadConfig { v[0].Audience = "other"; return v }, false},
+		{"duplicate principal", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			p := v[0]
+			p.InstanceID = "two"
+			return append(v, p)
+		}, false},
+		{"duplicate instance", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			p := v[0]
+			p.PrincipalID = "spiffe://example.test/gateway/two"
+			return append(v, p)
+		}, false},
+		{"query in principal", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			v[0].PrincipalID += "?token=fixture"
+			return v
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ChannelConfig{ScopeID: "pool", Workloads: tc.change(valid())}
+			err := cfg.validateWorkloads()
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t err=%v", tc.valid, err)
+			}
+		})
+	}
+}

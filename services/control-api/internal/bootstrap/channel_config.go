@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/gowebpki/jcs"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/credentialcrypto"
@@ -88,6 +90,9 @@ func loadChannelConfig(path string) (*ChannelConfig, error) {
 	if !domain.ValidID(cfg.ScopeID) || !domain.ValidEpoch(cfg.SourceEpoch) || cfg.InternalAddress == "" || len(cfg.Workloads) == 0 || len(cfg.Workloads) > 32 {
 		return nil, errors.New("channel scope, epoch, listener and workload mappings are required")
 	}
+	if err := cfg.validateWorkloads(); err != nil {
+		return nil, err
+	}
 	if cfg.MaxTenantAccounts < 0 || cfg.MaxTenantAccounts > domain.MaxAccounts {
 		return nil, errors.New("channel tenant account limit is invalid")
 	}
@@ -163,4 +168,29 @@ func (c *ChannelConfig) tlsConfig() (*tls.Config, error) {
 		return nil, errors.New("channel client CA is invalid")
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool}, nil
+}
+
+// validateWorkloads closes the workload capability set at the configuration
+// boundary. Diagnostic permission is explicit and never inferred from runtime
+// registration or credential-use permissions.
+func (c *ChannelConfig) validateWorkloads() error {
+	if len(c.Workloads) == 0 || len(c.Workloads) > 32 {
+		return errors.New("channel workload mappings are required")
+	}
+	principals, instances := map[string]bool{}, map[string]bool{}
+	for _, p := range c.Workloads {
+		u, err := url.Parse(p.PrincipalID)
+		if err != nil || u.Scheme != "spiffe" || u.Host == "" || u.Path == "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || p.Audience != application.WorkloadAudience || !domain.ValidID(p.InstanceID) || !domain.ValidID(p.ScopeID) || p.ScopeID != c.ScopeID || principals[p.PrincipalID] || instances[p.InstanceID] {
+			return errors.New("channel workload identity or scope is invalid")
+		}
+		kinds := map[string]bool{}
+		for _, kind := range p.Consumers {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_preflight"}, kind) {
+				return errors.New("channel workload consumer is invalid")
+			}
+			kinds[kind] = true
+		}
+		principals[p.PrincipalID], instances[p.InstanceID] = true, true
+	}
+	return nil
 }

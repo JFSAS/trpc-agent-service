@@ -21,7 +21,7 @@ type Dependencies struct {
 	Routes                gin.IRouter
 	Authenticate          gin.HandlerFunc
 	TenantAccess          application.TenantAccess
-	TransactionAuthorizer postgresadapter.TenantAuthorizer
+	TransactionAuthorizer postgresadapter.PreflightAuthorizer
 	Deployments           deploymentadapter.OwnerReader
 	Cipher                application.CredentialCipher
 	Options               postgresadapter.Options
@@ -31,6 +31,7 @@ type Module struct {
 	Service         *application.Service
 	Queries         *application.QueryService
 	Runtime         *application.RuntimeService
+	Preflights      *application.PreflightService
 	InternalHandler http.Handler
 	store           *postgresadapter.Store
 }
@@ -60,12 +61,22 @@ func NewModule(deps Dependencies) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	internal, err := internalhttp.NewHandler(runtime, deps.Workloads)
+	preflightStore, err := postgresadapter.NewPreflightStore(deps.DB, deps.TransactionAuthorizer, deps.Options)
 	if err != nil {
 		return nil, err
 	}
-	httpadapter.NewHandler(service, queries).Register(deps.Routes.Group("", deps.Authenticate))
-	return &Module{Service: service, Queries: queries, Runtime: runtime, InternalHandler: internal, store: store}, nil
+	preflights, err := application.NewPreflightService(application.PreflightDependencies{Store: preflightStore, Access: deps.TenantAccess, Accounts: store, Cipher: deps.Cipher, ScopeID: deps.Options.ScopeID, SourceEpoch: deps.Options.SourceEpoch, NewID: generateID})
+	if err != nil {
+		return nil, err
+	}
+	internal, err := internalhttp.NewHandler(runtime, deps.Workloads, preflights)
+	if err != nil {
+		return nil, err
+	}
+	routes := deps.Routes.Group("", deps.Authenticate)
+	httpadapter.NewHandler(service, queries).Register(routes)
+	httpadapter.NewPreflightHandler(preflights, queries).Register(routes)
+	return &Module{Service: service, Queries: queries, Runtime: runtime, Preflights: preflights, InternalHandler: internal, store: store}, nil
 }
 
 // Initialize persists or verifies the configured immutable catalog source epoch.
