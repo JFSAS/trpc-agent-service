@@ -5,13 +5,13 @@
   Application、PostgreSQL 原子发布与 `PENDING` Outbox、八个 HTTP 路由、Bootstrap
   和真实 PostgreSQL Integration 已落地。多副本 Platform Contract Digest 已通过固定
   expected 值与启动前 fail-start 门禁实现。ChannelAccount / ChannelBinding、路由 Relay
-  和独立 Gateway 工作树的 Control 接入已完成；真实 Telegram 入站到 RunRequested 已验收。
+  和 Gateway 的 Control 接入已完成；真实 Telegram 入站到 RunRequested 已验收。
   Manifest 发布事件分发、Worker 执行和完整回复仍待接线；本切片未修改 Web。
 - **Deployment 原始开发工作树**：`/Users/jfs/.codex/worktrees/c26f/trpc-agent-service`。
 - **Deployment 原始分支 / 起点 HEAD**：`codex/control-deployment-v1` / `bf107766be72cd7fcaa9e878428b97a6aa05260b`。
 - **本地代码基线**：Agent V1、直接凭据 Runtime Profile V1 与 Deployment Control
   Publication V1；本文实现状态在 ChannelBinding 工作树按 2026-09-06 联合验收更新。
-  状态不代表两份工作树的改动已全部合并 main 或当前实例在线。
+  本次集成保留 Control `239e8ad` 与 Gateway `9190241` 的实现；历史验收不代表当前实例在线。
 - **替代关系**：替代此前 EnvironmentRevision、用户 Binding、SecretVersionHandle，以及用户维护 SecretRef 的方案。
 - **相邻契约**：[上位约束](../constraints.md)、[Agent](agent.md)、[AgentSpec](agent-spec.md)、
   [Runtime Profile](runtime-profile.md)、[RuntimeProfileSpec](runtime-profile-spec.md)。
@@ -77,7 +77,7 @@ DeploymentDraft。客户端未完成编辑由客户端保存，未来有真实�
 | Deployment 已有 Domain / Compiler、Application、PostgreSQL 与 Gin Adapter 及非空 `wiring.go` | 八个路由和 Control Publication 已实现；Manifest 事件 Relay 待接线，Channel 路由专用 Relay 已实现 |
 | `0001_baseline.sql` 已含 Deployment / Revision / Manifest / Receipt / Outbox 表与不可变触发器 | ARC-401 已落地；Manifest 发布事件保持 `PENDING`，Channel 路由事件按独立 Relay 推进投递状态 |
 | `RuntimeManifestPublished.v1` Schema / Fixture 和产生者测试已实现 | 事件契约存在不表示 Relay、JetStream Stream 或 Consumer 已配置 |
-| 当前 Control 工作树的 `services/` 仅含 `control-api`；Gateway 在独立工作树 | Gateway Control 接入与 Telegram 入站已验收；Worker 与完整回复仍为后续纵切 |
+| 集成仓库的 `services/` 同时包含 `control-api` 与 `channel-gateway` | Gateway Control 接入与 Telegram 入站已验收；Worker 与完整回复仍为后续纵切 |
 
 可复核来源包括：`services/control-api/internal/agent/domain/semantic_validation.go`、
 `services/control-api/internal/runtimeprofile/domain/spec.go`、
@@ -192,7 +192,7 @@ Binding CAS，在自身事务内写 Binding + Outbox；不复用 Deployment 的 
 2026-09-06 的 [ChannelAccount](channel-account.md) 与 [ChannelBinding](channelbinding.md)
 已实现账户录入/私有凭据、Binding CAS、账户 RouteGeneration、启停联动和路由 Outbox，
 不追加 Deployment 管理路由。manifest_ref 为 RuntimeManifest.ID，manifest_digest 为 ContentDigest。
-Gateway Control 接入见[独立工作树文档](../channel-gateway/control-integration-v1.md)，真实 Telegram
+Gateway Control 接入见[Gateway 接入文档](../channel-gateway/control-integration-v1.md)，真实 Telegram
 入站见[联合验收](channel-acceptance.md)。此完成状态不包含 Manifest 正文执行或 Worker。
 
 ## 5. 同名资源匹配算法
@@ -853,8 +853,9 @@ Adapter 实现放在真正的使用方 Seam；Bootstrap 是唯一组装入口，
 ## 15. 设计验收案例
 
 下列案例是持续验收规格。当前 Compiler、Application、HTTP 和真 PostgreSQL
-测试已覆盖 Control Publication 可执行的部分；涉及 ChannelBinding、Gateway、Worker
-或命令工具的步骤仍是后续 Runtime / 扩展验收。
+测试已覆盖 Control Publication 可执行的部分；ChannelBinding 与 Gateway 收信准入
+已通过[联合验收](../channel-gateway/telegram-real-inbound-20260906.md)。Worker、真实模型/Storage
+执行及命令工具仍是后续 Runtime / 扩展验收。
 
 ### AC-01：同一 AgentVersion 使用两份不同 ProfileRevision
 

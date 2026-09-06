@@ -2,7 +2,7 @@
 
 - **设计状态**：2026-09-06 联合评审修订已落地；本文记录当前协议与实现边界。
 - **实现状态**：账户管理、真实 PostgreSQL 目录/凭据、公开 HTTP、mTLS 内部 HTTP、Bootstrap 已实现并通过真实 PostgreSQL/mTLS 回归；真实 Telegram 收信到持久RunRequested已通过联合验收。
-- **代码基线**：Control `79e5795`；Gateway 协调基线 `bf10776` 加其任务中的未提交实现。
+- **代码基线**：历史协调基线为 Control `79e5795` / Gateway `bf10776`；本次集成实现分别为 `239e8ad` / `9190241`。
 - **拥有方**：Control API 的 `channelbinding` Module；两类聚合分文件，不新建 Workload。
 - **关联**：[ChannelBinding](channelbinding.md)、[架构约束](../constraints.md)、
   [模块术语](../../../services/control-api/internal/channelbinding/CONTEXT.md)。
@@ -426,7 +426,7 @@ REMOTE_IDENTITY_MISMATCH；它们不导致 Control 保存事务回滚，也不�
 
 V1 直接完善当前设计，不新建 Secret 产品、动态注册中心、策略服务或独立同步服务。
 上述 A0～A5 已落地，公开 11 个操作已纳入当前 OpenAPI，3 类内部 mTLS 接口单独记录。
-Runtime Profile 专属文档与 Channel Web 不由本切片修改；Gateway 正文和代码仍由其独立工作树维护。
+Runtime Profile 专属文档与 Channel Web 不由本切片修改；Gateway 正文和代码由 Gateway 模块拥有方维护，在集成仓库中使用相对链接引用。
 
 ## 11. 设计验收矩阵
 

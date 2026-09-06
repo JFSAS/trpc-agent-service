@@ -24,10 +24,14 @@ Deployment 的 Schema / Event、纯 Compiler、Application、PostgreSQL 原子�
 Manifest 正文的运行侧获取/分发及 Worker 执行仍分别验收。
 
 ChannelAccount / ChannelBinding 已实现账户与私有凭据、11 个公开管理操作、内部 mTLS
-快照/凭据/观测接口、精确部署目标和路由专用 Relay。Gateway 在独立工作树完成动态接入与
-路由投影；真实 Telegram 消息已到达持久 RunRequested，见[联合验收](architecture-next/control-api/channel-acceptance.md)。
+快照/凭据/观测接口、精确部署目标和路由专用 Relay。Gateway 已实现动态接入与路由投影，
+四 Module 和公开 Go Connector 同处一个 Go Workload；默认 Control 来源启动 Delivery
+Runner 并由它独占 Maintenance，fixture 来源只独立维护，当前共 10 个迁移（0001–0010）。
+真实 Telegram 消息已到达持久 RunRequested，见[Control 联合验收](architecture-next/control-api/channel-acceptance.md)
+及[Gateway 入站证据](architecture-next/channel-gateway/telegram-real-inbound-20260906.md)。
 Worker、模型/Storage 真实执行和完整回复尚未贯通；本工作树的 Channel Web 尚未接入。
-完成状态指独立工作树代码及验收，不代替合并 main、发布上线或当前进程健康证明。
+ReplyIntent Consumer 尚未接入；实现与历史验收不代替发布上线或当前进程健康证明。
+Helm 仍待全部生产 Workload 完成后进入 FINAL-INTEGRATION。
 
 当前规范性入口：
 
@@ -41,3 +45,19 @@ Worker、模型/Storage 真实执行和完整回复尚未贯通；本工作树�
 
 文档中的“已接受”表示设计决策已经确认；“已实现”必须以当前代码和
 测试为依据。Control Publication、Distribution 和 Runtime Execution 是三个独立完成层级。
+
+## Gateway 设计、实现与历史调研
+
+- [Channel Gateway 技术栈与部署设计](architecture-next/channel-gateway/README.md)：纯 Go、公开企微协议库、模块职责与完整部署方向；已实现能力与剩余目标分开。
+
+- [Channel Gateway 实施状态](architecture-next/channel-gateway/implementation-status.md)：入站切片、持续积压门禁、公开企微 P0、分项/最终验证状态和完整目标缺口。
+
+- [Channel Gateway 四 Module 入门说明](architecture-next/channel-gateway/module-introduction.md)：一条消息的职责流、各 Module 的拥有事实/例子、公开库与 Adapter、开发分工和部署阶段。
+
+- [Channel Gateway 四个业务 Module](architecture-next/channel-gateway/module-boundaries.md)：解释 routing、admission、connection、delivery 为何在同一 Workload 内分开，以及消息追踪、代码/人员分工、接口、同事务校验与失败归属。
+
+- [Channel Gateway 设计复审](architecture-next/channel-gateway/design-review.md)：列出已修订矛盾、剩余 D0 决策，以及历史分支同步与分阶段运行验收。
+
+- [Channel Gateway：Telegram 与企业微信智能机器人](architecture-next/channel-gateway/im-channel-sdk-semantics.md)：机器人行为、SDK 接纳边界与真实实验记录；历史 SDK 实验与当前真实 Gateway 入站验收分列，均不表示完整 Worker 回复链路已验收。
+
+- [公开 Go Connector 设计](architecture-next/channel-gateway/public-go-connector.md)：企微库直接导入，Telegram SDK 直接引用；无独立 Connector 部署单元。

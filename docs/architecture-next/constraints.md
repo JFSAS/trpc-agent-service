@@ -4,8 +4,9 @@
 - **实现状态**：Control API 的 Identity、Admin、Tenant、Agent、Runtime Profile V1 与
   PostgreSQL 基线已实现；Deployment Control Publication 的 Compiler、Application、
   PostgreSQL 原子发布 / `PENDING` Outbox、八个 HTTP 路由和固定 Digest 启动门禁已实现。
-  ChannelAccount / ChannelBinding、内部 mTLS 供应和路由专用 Relay 已实现；独立 Gateway
-  工作树完成 Control 接入与真实 Telegram 入站验收。Manifest 发布事件分发、Worker 与完整回复仍待接线。
+  ChannelAccount / ChannelBinding、内部 mTLS 供应和路由专用 Relay 已实现；Gateway
+  已接 Control 来源、四 Module 与运行调度，真实 Telegram 入站已验收。Manifest 发布事件
+  分发、ReplyIntent Consumer、Worker 与完整回复仍待接线。
 - **确认日期**：2026-09-04；实现状态于 2026-09-06 按代码与联合验收记录复核
 - **适用范围**：新建的生产代码、协议、数据库迁移、镜像和部署配置
 
@@ -25,7 +26,7 @@
 当前尚未形成稳定对外版本。字段与凭据模型直接收敛到现有 `/v1` 和 `schema_version=v1`，
 不因本次修改新增协议代际、兼容双栈或开发期旧 Reader。开发期旧数据、Digest、Receipt
 无需保存，协议调整可同步更新现有 Schema、Fixture 和数据库基线并重建测试数据；不增加
-仅为兼容这些旧数据的迁移或历史存储。
+仅为兼容这些旧数据的迁移或历史存储。数据库重建是显式开发操作，不由文档更新隐式执行。
 
 这不取消目标运行模型中已发布 Revision / Manifest 的不可变性、并发控制或幂等规则。
 稳定对外发布后再建立版本演进与升级迁移契约；不得把未稳定的当前实现误作历史兼容负担。
@@ -59,7 +60,8 @@ Profile 直接录入凭据的当前 V1 设计引入一个明确例外：新 Atte
 认证批量凭据接口，授权后取得本次 Attempt 的固定凭据集合；该调用不重新选择资源
 或读取当前 Draft。它不是新的 Secret 服务，也不得变成逐节点、逐工具或逐 Provider
 调用的同步查询。Profile 已提供 CheckUsable、ResolveForAttempt 与可选的内部 HTTP
-Adapter；真实 Run/Attempt 授权拥有方、工作负载认证和 Worker 接线仍待后续实现。
+Adapter；默认 bootstrap 不注册 Profile 的 Worker 内部取值路由，真实 Run/Attempt
+授权拥有方、工作负载认证和 Worker 接线仍待后续实现。
 
 这项决策替代“Control API 不可用完全不影响新 Run 执行”的旧承诺：已投影路由可继续
 接收消息，但需要凭据的新 Attempt 会依赖该内部接口的可用性；接口不可用时以稳定、
@@ -73,7 +75,7 @@ Adapter；真实 Run/Attempt 授权拥有方、工作负载认证和 Worker 接�
 Worker 的 RuntimeManifest，也不修改其不可变性。正式产品的账户来自租户自助录入，
 文件和环境变量账户源仅作显式开发验证 Adapter。
 
-上述账户接入已在 Control 与 Gateway 独立工作树实现并完成真实 Telegram 入站验收。
+上述账户接入已在 Control 与 Gateway 实现并完成真实 Telegram 入站验收。
 具体同步范围、失效时限、工作负载/账户授权、OwnerGrant 本地检查及故障语义见 [ChannelAccount](control-api/channel-account.md)。它不增加独立Secret
 服务，不承诺 Control 不可用时仍可无限初始化连接或读取凭据。
 
@@ -106,15 +108,33 @@ Channel Binding 管理。
 每个生产 Workload 必须位于自己的 `services/<workload>/` 下，并使用服务本地的
 `internal/`。一个 Workload 禁止导入另一个 Workload 的 `internal` 包。
 
-### ARC-102：共享区域只允许协议和生成代码
+### ARC-102：业务协议共享与公开技术库分开
 
-跨 Workload 共享只允许通过以下区域发生：
+跨 Workload 的业务协议继续只通过以下区域共享：
 
 - `api/`：OpenAPI、AgentSpec Schema 和版本化事件定义。
 - `gen/`：由 `api/` 生成的协议代码。
 
-`api/` 和 `gen/` 中禁止放置 Repository、业务 Service、领域实体或手写的全局
-`contract/common/types`。协议 DTO 不得直接充当领域实体或数据库 Row。
+2026-09-04 按 Channel Gateway 设计修正，明确允许一个有限的公开技术库入口：
+`platform/im/wecom`，用于可直接 import 的企微外部协议 Client，编译进使用它的 Go Workload，
+不形成独立服务。后续公开技术包必须分别说明职责和依赖，不把本条解释为任意共享实现的许可。
+
+公开技术库必须满足：
+
+- 不依赖 `services/`、平台 Domain/Application 或业务数据库；不接收 TenantID、BindingID、
+  RunID、Admission、平台租约、Profile 凭据解析器等业务输入。
+- 只拥有外部协议 DTO、连接/帧处理、请求相关性、协议方法与错误；不拥有业务 Repository、
+  PG/NATS、租户路由、持久 Inbox/Outbox、业务限流或投递账本。
+- 生命周期由调用方通过 context 显式启动和结束；构造/`init()` 不自动联网、不读取全局环境，
+  不监听管理端口或接管进程信号。库可持有调用方实例范围内的有界协议内存状态。
+- 沿用根 Go Module，不增加子 `go.mod`、Dockerfile、数据库迁移或部署单元。
+  `platform` / `platform/im` 只是目录命名空间，不建立可堆放业务的同名大包。
+- 业务模块的 Adapter 使用库；Domain/Application 继续依赖自己的 Port，不依赖 SDK。
+  Telegram 直接引用已选第三方 Go SDK，不为对称性再建透明转发的公开 wrapper。
+
+`api/`、`gen/`、`platform/` 均禁止放置共享 Repository、业务 Service、领域实体或全局
+`contract/common/types`。外部 Provider DTO 和跨 Workload 协议 DTO 都不得直接充当领域实体
+或数据库 Row。公开技术库的具体 API 与实现仍须按对应设计通过契约测试。
 
 ### ARC-103：每个二进制只有一个 Composition Root
 
@@ -517,18 +537,53 @@ scope/账户授权校验的账户投影；消息接纳的运行Tenant由可信Ch
 Control内部Outbox行仍保存Tenant；Gateway仅允许可信Control来源以全局不复用的账户身份
 撤销对应资格，不能从无Tenant的tombstone授予新路由或凭据权限。
 
-### ARC-502：凭据值不进入配置快照或公开读模型
+### ARC-502：Profile 内部凭据与不可变配置分离
 
 AgentSpec 不包含凭据值或具体凭据关联；内部 Canonical ProfileRevision 与
 RuntimeManifest 只固定所需内部关联及用途，不包含明文、密文或 live 状态。公开
 Profile 读取只返回非秘密 config 与允许的状态元数据，不返回内部 CredentialID。
 日志、Trace、审计、业务 Outbox 和 NATS 事件均不记录或传播凭据值。
 
-Profile 运行凭据的明文只允许出现在受限 write-only 输入、拥有方的加解密过程，以及经过可信
-工作负载认证和当前 Run/Attempt 授权的内部批量解析响应。后续运行接线必须使用
-加密传输，Worker 只在当前 Attempt 内存中消费；内部接口不是公开 GET，也不因
-工作负载身份或客户端自述 tenant_id 自动授权。当前默认未注册该内部路由。
-Profile 只持久化加密当前值，外部主 Key 必须由部署配置注入，禁止硬编码或缺省生成。
+内部凭据身份与授权至少包含 `(TenantID, ProfileID, CredentialID, Purpose)`，并固定
+非秘密目标与 audience；名称、ID 或调用方传入的 tenant_id 本身不是授权。DSN 的
+host、port、database 和 TLS 等非秘密连接配置进入不可变配置，不允许仅轮换凭据值就
+改换目标。改变目标或 audience 必须生成新 CredentialID 并发布新的配置 Revision。
+
+Deployment Application 经 ProfileCredentialChecker.CheckUsable 读取最小执行闭包的
+凭据 configured/status、所属关系、用途和授权结果，不解密、不取得真实值。纯 Compiler
+只消费固定配置并输出凭据 uses 闭包；动态 Checker 结果仅用于 Application Report 与
+发布准入，不进入 Compiler 输入、Canonical Content 或 Digest。RuntimeManifest 保留
+必要内部凭据身份、用途和固定目标，不携带真实值或密文；公开读取对内部身份做投影。
+Outbox、事件和运行投影可传播受控的内部引用，但禁止传播真实凭据或密文。
+
+Worker 的 RuntimeCredentialResolver.ResolveForAttempt 通过 ARC-002 规定的 Profile
+Owner 内部认证批量接口取值，不跨域读取 SQL。Profile Owner 验证执行身份，并核对
+可信 Tenant、Profile、Manifest、Attempt、用途和实际凭据闭包，拒绝仅凭任意 ID 取值。
+首版执行授权通过 Run/Attempt 拥有方的在线可信 Query 核验 active、当前 lease epoch/fence
+及 Worker 归属；未过期签名不代替当前状态检查。该查询也是新 Attempt 的显式依赖，不跨域
+读表、不新增服务；查询后撤销的在途竞争由接收和执行侧 fence 处理。
+该接口与普通 Profile 读取分离；值只沿授权加密连接返回 Worker，不进入事件或日志。
+同一 Attempt 完整验收批量响应后，仅在本进程内存中复用固定集合，后续不再 Resolve；
+连接重试使用已解析集合。响应结果不确定、进程崩溃或租约失效均结束当前 Attempt，
+以新 AttemptID 恢复并重新授权取值；不承诺同 Attempt 跨进程恢复，不建立历史密文
+或版本固定表。新 Attempt 可以取得轮换后的值。
+
+普通 Draft 的 keep/replace/clear 只改变草稿关联：keep 保留 ID，replace 写时复制生成
+新 ID，clear 脱离当前草稿，不修改历史执行。Profile 已提供显式“更新已使用凭据”
+动作，由 OWNER 授权并使用独立 Credential CAS，对稳定 ID 执行 replace/clear；调用方
+通过 ProfileRevision 与资源字段定位，服务器解析内部 ID，不接受任意 ID 更新。该动作
+明确影响已有 Manifest 的新 Attempt。普通配置 CAS 与凭据 CAS 分开；同 ID 轮换不修改
+ProfileRevision、DeploymentRevision 或 Manifest Digest，不承诺秘密值的历史重放。
+live clear 对该 ID 作终止性撤销，后续解析返回稳定不可用结果；普通 replace 不复活
+已撤销 ID，重新录入通过 Draft 新 ID 和新配置发布完成。已解析的运行中 Attempt 不因
+后台 clear 立即擦除已交给客户端的值，紧急停止仍需独立执行终止或 Provider 撤销机制。
+
+当前 V1 的直接录入、加密存储、COW/live/CAS 与 Profile 消费方法已实现；
+`CheckUsable` 的真实 Deployment Adapter、Run/Attempt 授权拥有方、可信 Workload 认证
+与 Worker 批量解析接线仍待完成。默认 bootstrap 不注册内部解析路由，必须同时注入可信
+工作负载认证与 `ExecutionAuthorizationVerifier` 才启用。Profile 只持久化加密当前值；
+外部 `CONTROL_PROFILE_CREDENTIAL_KEY` 由部署配置注入，代码不生成默认 Key。
+按 ARC-000 不维护开发期 ref-only 兼容分支，不扩展成 Secret 平台或 OAuth 池。
 
 渠道账户凭据由 `channelbinding` Owner 加密保存，普通读取只给configured/version等脱敏
 元数据；内部解析认证Gateway principal并校验scope、Tenant、账户启用、用途与精确版本。
@@ -578,6 +633,7 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
   Schema/Adapter Kind 兼容规则已经由 Deployment V1 文档冻结，按该文档实施和验证。
 - Worker 的数据库表所有权和完成 Run 的精确事务边界，以及与 ReplyIntent 的跨 Workload 接线；
   Gateway 已实现账户/路由投影、Inbox、Admission、Outbox 与 Delivery 持久化，不再整体列为未设计。
+- Profile 加密主 Key 轮换仍需单独设计；当前没有自动轮换流程。
 - Platform Operator 全部丢失后的 Break-glass 恢复、密码恢复、MFA、Session
   过期策略与 PostgreSQL RLS。
 - 共享库与独立库的物理隔离策略。
@@ -598,6 +654,6 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 5. 可变配置是否在进入运行链路前冻结为不可变 Revision？
 6. 数据库写入与事件发布是否使用 Transactional Outbox？
 7. Tenant Context 是否来自可信来源并贯穿所有数据访问？
-8. 是否只跨 Workload 共享版本化协议，而没有共享业务实现？
+8. 业务协议是否只经 api/gen 共享，公开技术库是否仅限 ARC-102 明确职责且未共享业务实现？
 9. 新后台任务是否仍由唯一 bootstrap 管理生命周期？
 10. 对应测试验证的是实际行为，还是只有目录、接口或容器存在？

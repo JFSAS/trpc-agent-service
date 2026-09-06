@@ -45,9 +45,25 @@
   账户 RouteGeneration、账户启停联动、事务 Outbox 及路由发布；管理 API/受限 Producer 已实现。
 - [Gateway Control 接入与验收](channel-gateway/control-integration-v1.md)：可信快照/凭据 Adapter、
   动态 Telegram、启动装配与运行观测已实现；真实 Telegram 入站到 RunRequested 已验收。
-  正文由 Gateway 工作树维护，本目录只保留入口；不等同 Worker 执行或完整回复。
+  此入口区分已验收入站与仍待实现的 Worker 执行、ReplyIntent Consumer 和完整回复。
 - [产品易用性 TODO](control-api/product-usability-todo.md)：同名表单骨架、托管 Session Storage、
   模板/独立连接测试、分层状态展示和客户端技术字段处理；目标已确认，能力待设计与实现。
+- [Channel Gateway 技术栈、代码结构与部署设计](channel-gateway/README.md)：Go Gateway、
+  进程内公开 Go 企微库、四 Module 与持久接纳/执行所有权；当前 Control 默认来源已接
+  账户/凭据和 Delivery Runner，由 Runner 独占 Maintenance，共 10 个迁移（0001–0010）。
+  ReplyIntent Consumer、真实 Worker 和完整 Final 回复仍待交付。
+- [Channel Gateway 实施状态](channel-gateway/implementation-status.md)：保留各切片历史验收，当前 Control 接入与真实 Telegram 入站集中于 §13–14。
+- [Delivery Runtime V1](channel-gateway/delivery-runtime-v1.md)：独立维护、有界 Runner/PG RuntimePorts、LocalOwner，以及 Control Runner 与 fixture 独立维护的互斥装配。
+- [Channel Gateway 四 Module 入门说明](channel-gateway/module-introduction.md)：先理解四类事实和调用关系，再读详细规范。
+- [Channel Gateway 四个业务 Module](channel-gateway/module-boundaries.md)：解释单一 Gateway
+  Workload 内 routing、admission、connection、delivery 的职责追踪、目录分工、深接口、事务 seam 和故障时序。
+- [Channel Gateway 设计复审](channel-gateway/design-review.md)：记录本轮已修正问题、仍需冻结
+  的 D0 决策、历史分支同步及分阶段实施门禁。
+- [公开 Go Connector 设计](channel-gateway/public-go-connector.md)：`platform/im/wecom` 的
+  包职责、导入方式、生命周期、ACK 相关性和故障测试；不独立部署。
+- [Channel Gateway：首批 IM 行为与 SDK 调研](channel-gateway/im-channel-sdk-semantics.md)：
+  Telegram 与企业微信智能机器人接入语义、固定 SDK 源码和历史实验；SDK 行为验证
+  与当前 Gateway 真实入站验收分列，不表示完整执行/回复闭环已实现。
 - [首个 Platform Operator 引导决策](decisions/0001-initial-platform-operator-bootstrap.md)：
   首次启动的数据库判定、Secret 输入、并发原子性与管理员直接创建用户。
 - [部署目录结构](operations/deployment.md)：Compose、NATS、Observability 与
@@ -82,9 +98,10 @@ Deployment 的 Control Publication 已经落地并覆盖以下阶段：
 5. Worker：固定Manifest、新Attempt凭据授权与真实执行，仍为独立Runtime切片。
 
 上面1～4的Control代码与真实PG/mTLS/NATS回归已接通，公开11个操作列入OpenAPI；
-Gateway对齐代码由独立任务维护。联合真实Telegram收信已通过，见[Channel联合验收](control-api/channel-acceptance.md)；
-模型/Storage/Worker 执行与完整回复仍不属于本次收信验收。实现保留于两份独立工作树，
-不以本页推断已经合入 main 或当前服务在线；Channel Web 与产品易用性 TODO 另行交付。
+Gateway 的账户门禁、动态 Telegram 和运行观测已接线。联合真实 Telegram 收信已通过，
+见[Control 联合验收](control-api/channel-acceptance.md)与[Gateway 入站证据](channel-gateway/telegram-real-inbound-20260906.md)；
+模型/Storage/Worker 执行与完整回复仍不属于本次收信验收，当前服务在线状态另行检查。
+Channel Web 与产品易用性 TODO 另行交付；Helm 留到全部 Workload 完成后的 FINAL-INTEGRATION。
 已完成的多副本Digest门禁仍是平台发布配置，不引入Environment、Secret产品或用户映射表。
 
 发布、持久 Outbox、事件已分发、运行面实际执行分别记录状态；Control 发布成功不

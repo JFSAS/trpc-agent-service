@@ -25,10 +25,14 @@ Runtime Profile 当前 V1 实现四个资源 Kind、11 个管理 HTTP 操作、�
 Schema / Event 契约、Application、PostgreSQL 原子发布、Gin/Bootstrap 接线和真实
 PostgreSQL 集成测试。Profile 消费方法与可选内部取值 Adapter 已有代码，
 但默认 bootstrap 不注册 Profile 的 Worker 内部取值路由。ChannelAccount / ChannelBinding
-及其路由专用 Relay 已实现；Gateway 的 Control 接入在独立工作树完成，真实 Telegram
+及其路由专用 Relay 已实现；Gateway 的 Control 接入已有实现，真实 Telegram
 收信到持久 RunRequested 已通过联合验收。Deployment 的 Manifest 发布事件仍为 `PENDING`，
 不能与已投递的 Channel 路由事件混淆。Worker 执行、完整回复和 Local IM 仍是后续切片。
-这些状态描述两份工作树中的实现与验收，不表示改动已全部合并 main 或实例当前在线。
+实现与历史验收不等于实例当前在线，运行健康需独立检查。
+Gateway 的 Routing / Admission / Connection / Delivery 四个 Module 同处一个 Go Workload；
+当前默认 Control 来源已接托管凭据、Telegram 动态注册、运行观测和有界 Delivery Runner，
+由 Runner 独占 Maintenance；显式 fixture 来源只独立维护。Gateway 共有 10 个迁移
+（0001–0010），精确边界见[实施状态](docs/architecture-next/channel-gateway/implementation-status.md)。
 Control API 启动必需外部 `CONTROL_PROFILE_CREDENTIAL_KEY`；配置要求及本地命令见
 [Compose 启动说明](deploy/compose/README.md)。
 
@@ -64,7 +68,7 @@ Manifest 发布事件的 Distribution 与 Channel 路由分发分别验收，不
 | Workload | 职责 | 状态 |
 | --- | --- | --- |
 | `control-api` | 身份/租户、Agent/Profile/Deployment、ChannelAccount/ChannelBinding | 管理、发布、账户供应与路由 Relay 已实现 |
-| `channel-gateway` | IM Webhook、Run Admission、运行投影和回复投递 | 独立工作树实现 Control 接入；真实 Telegram 入站已验收，完整执行/回复待接线 |
+| `channel-gateway` | IM Webhook、Run Admission、运行投影和回复投递 | 四 Module、Control 接入与 Runner 已实现；真实 Telegram 入站已验收，ReplyIntent Consumer / Worker / 完整回复待接线 |
 | `agent-worker` | 消费 Run、执行 Agent、完成 Run、产生 ReplyIntent | 待设计 |
 | `local-im-provider` | 与外部 IM Adapter 统一的本地调试服务 | 待设计 |
 | `control-web` | Control 管理界面，仅连接 Control API | 已有账号/租户、Agent、Profile、Deployment 页面；本工作树未接入 Channel 页面 |
@@ -74,13 +78,25 @@ Manifest 发布事件的 Distribution 与 Channel 路由分发分别验收，不
 
 ```text
 ├── services/                 # 独立构建的生产 Workload
-│   └── control-api/
+│   ├── control-api/
+│   └── channel-gateway/      # Routing / Admission / Connection / Delivery Final；生产 Final 接线待完成
 ├── api/                      # OpenAPI、Schema、版本化事件源文件
 ├── gen/                      # 仅存放协议生成代码
+├── platform/im/wecom/        # 公开 Go 企微 P0 协议库；Gateway 已进程内直接装配
 ├── docs/architecture-next/   # 当前规范性架构文档
 ├── tests/                    # 跨包集成与端到端测试
 └── go.mod                    # 单一根 Go Module
 ```
+
+公开技术库 `platform/im/wecom` 已有纯 Go 企微 P0 协议 Client 与本地真实 WebSocket
+测试；Gateway 已进程内直接引用，不新增独立 Connector 服务。Telegram 入站已直接
+引用第三方 Go SDK；出站与注册也在同一进程中使用该 SDK。
+公开包接口与职责见 [Go Connector 设计](docs/architecture-next/channel-gateway/public-go-connector.md)。
+当前可按账户配置启动 Connection 与企微入站。Delivery Final、Sender lookup、原 ReplyOrigin
+已另有源码与本地纵切；Control 模式已启动生产调度，ReplyIntent Consumer、
+真实 Worker 完成证明和完整回复链路仍待交付。Helm 在全部生产 Workload 完成后
+进入 FINAL-INTEGRATION，不增加独立 Connector 部署单元。
+精确当前验证以实施状态最新章节为准。
 
 ## 当前验证命令
 
@@ -89,6 +105,10 @@ just test
 just vet
 just vuln
 just build
+
+# Gateway 源码验证入口，不表示完整 Agent E2E 已通过
+just gateway-build
+just gateway-test
 ```
 
 Control API 的详细目录说明见

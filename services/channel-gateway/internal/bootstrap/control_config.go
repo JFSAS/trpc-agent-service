@@ -1,0 +1,42 @@
+package bootstrap
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	httpadapter "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
+	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
+	"net/url"
+	"os"
+	"strings"
+)
+
+type ControlConfig struct{ URL, CAFile, CertificateFile, KeyFile, ScopeID, SourceEpoch, PublicOrigin string }
+
+func (c1 ControlConfig) validate(instance string) error {
+	if !c.ValidID(instance) || !c.ValidID(c1.ScopeID) || !c.ValidEpoch(c1.SourceEpoch) || c1.CAFile == "" || c1.CertificateFile == "" || c1.KeyFile == "" {
+		return errors.New("Control identity and mTLS file references are required")
+	}
+	for _, raw := range []string{c1.URL, c1.PublicOrigin} {
+		u, e := url.Parse(raw)
+		if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("Control and public origin must be HTTPS origins")
+		}
+	}
+	return nil
+}
+func (c1 ControlConfig) client(instance string) (*httpadapter.Client, error) {
+	ca, e := os.ReadFile(c1.CAFile)
+	if e != nil {
+		return nil, errors.New("read Control CA failed")
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, errors.New("invalid Control CA")
+	}
+	cert, e := tls.LoadX509KeyPair(c1.CertificateFile, c1.KeyFile)
+	if e != nil {
+		return nil, errors.New("read Control client identity failed")
+	}
+	return httpadapter.New(httpadapter.Options{BaseURL: strings.TrimSuffix(c1.URL, "/"), ScopeID: c1.ScopeID, SourceEpoch: c1.SourceEpoch, InstanceID: instance, RootCAs: pool, Certificate: cert})
+}

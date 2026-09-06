@@ -170,7 +170,7 @@ V1 将校验分为三层：
    固定目的范围匹配且当前可用；以及能否生成最小、不可变、保留节点工具分配的
    RuntimeManifest。检查只读元数据，不解密或探测 Provider。V1 不引入独立
    Environment，测试与生产使用不同 RuntimeProfile。Profile 的 CheckUsable
-   Application Port 已实现，Deployment 对它的调用仍待本切片接入。
+   Application Port 已实现，Deployment 已通过发布装配调用它。
 
 AgentSpec 不保存 SecretRef、内部 CredentialID 或凭据值。Profile 直接接收凭据并拥有
 加密存储，Agent 不直接访问其表或解密。Worker 的新 Attempt 必须通过
@@ -309,7 +309,7 @@ services/control-api/internal/agent/
 - 单元测试、集成测试和对应 HTTP 纵向测试通过。
 
 最终可观察结果是：客户端可以把一份 Draft 校验并发布为一个包含 Canonical
-AgentSpec 的 AgentVersion。生成 RuntimeManifest 和实际执行 Agent 属于后续
+AgentSpec 的 AgentVersion。Deployment 已生成 RuntimeManifest；实际执行 Agent 属于后续
 Runtime Profile、Deployment 与 Worker 切片。
 
 ## 12. 明确不在 V1

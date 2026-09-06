@@ -310,7 +310,7 @@ Control 读模型返回 binding_revision、desired.enabled、精确 target、当
 | B3 PostgreSQL | 所属 Binding/Account/Route Repository 与现有基线表 | 账户停用/绑定启用竞争、事务原子、唯一键、并发重试 |
 | B4 HTTP / wiring | 所属 inbound/http、模块wiring、bootstrap | 后端真实接口与OpenAPI一致，不抢先改Web |
 | B5 Distribution | 模块事件映射、Control Relay/infra连接及NATS受限权限 | 真PG+JetStream、PubAck丢失/重投/断电、保留与恢复 |
-| B6 Gateway组合 | 独立 Gateway 工作树的 Control 接入实现与验收文档 | 账户/路由乱序、动态接入、凭据轮换、已接纳快照不变 |
+| B6 Gateway组合 | Gateway 的 Control 接入实现与验收文档 | 账户/路由乱序、动态接入、凭据轮换、已接纳快照不变 |
 
 上述 B0～B6 已落地；账户生命周期与 Binding 在同一模块内按聚合和用例组织，
 不新建共享 Repository 或全局业务事件工具箱。真实 Telegram 收信到 RunRequested 已验收；

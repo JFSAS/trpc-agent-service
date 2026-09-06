@@ -1,0 +1,74 @@
+# Control-backed Gateway Runtime (GCI2)
+
+## 本地启动
+
+在仓库根目录执行。先由部署所有者准备 Gateway PG 和已 reconcile 的
+NATS；Control 发放与 Gateway 实例对应的 mTLS 身份、scope 和 source epoch。
+Bot Token / webhook secret 只从 Control `credentials:resolve` 取得，不写入本机 env 文件。
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export GATEWAY_ACCOUNT_SOURCE=control
+export GATEWAY_HTTP_ADDRESS=127.0.0.1:8090
+export GATEWAY_ADMIN_ADDRESS=127.0.0.1:8091
+export GATEWAY_INSTANCE_ID=gw-1
+# 以下变量由受限运行配置提供，示例不是有效凭据/服务地址：
+# GATEWAY_DATABASE_URL, GATEWAY_NATS_URL, GATEWAY_NATS_USER, GATEWAY_NATS_PASSWORD
+# GATEWAY_CONTROL_URL, GATEWAY_CONTROL_SCOPE_ID, GATEWAY_CONTROL_SOURCE_EPOCH
+# GATEWAY_CONTROL_CA_FILE, GATEWAY_CONTROL_CERT_FILE, GATEWAY_CONTROL_KEY_FILE
+# GATEWAY_PUBLIC_ORIGIN
+export GATEWAY_NATS_TOPOLOGY_FILE=deploy/nats/streams.yaml
+go build -o ./bin/channel-gateway ./services/channel-gateway/cmd/channel-gateway
+./bin/channel-gateway
+```
+
+`fixture` 是显式开发来源；生产 `control` 模式拒绝静态 Telegram/WeCom 账户输入。
+空模式只保留 Go 内部 fixture 构造兼容，不由 `LoadConfig` 默认选择。
+
+## 实际运行接线
+
+1. 私有 mTLS HTTP 客户端拉完整快照，PG 原子发布、30 秒新鲜度按请求开始计。
+2. 可信本地账户使用上下文绑定 scope/source/tenant/account/连接版本/实例资格/客户端代。
+3. WeCom 凭据 bridge 获得 Supervisor 原始 OwnerGrant，解析前后复核；源失败和换代取消旧 Client。
+4. Telegram 各副本安装当前版本 Secret 的 immutable Handler；账户级持久注册 fence 的
+   持有者批量解析同版 token+secret，GetMe 核对物理身份，BEGIN_CALL 后 SetWebhook。
+   注册不依赖先有 Binding 或先收到一条 webhook，不使用企微租约。
+5. Admission 在资格 guard 后取得幂等/预算/owner/route 锁；已存在 Receipt 仍优先返回。
+6. Delivery A1 把资格/Client 绑定摘要写入 Claim；A2 必须再次匹配。实际 Sender 也在调用前
+   检查原上下文。Finish/Observation/Maintenance 不重新申请当前账户资格。
+7. Control 模式默认启动有界 Delivery Runner，由 Runner 独占 Maintenance 生命周期；fixture 才独立维护。不存在 Final 输入时不会制造发送任务。
+8. 状态变化及 30 秒心跳经 mTLS 上报，失败不修改授权或更新 freshness。
+
+新增迁移 `0009_control_use_binding.sql`、`0010_telegram_registration.sql`；0001–0008 保持原哈希。
+本轮没有 Worker 实现，没有 ReplyIntent NATS consumer，也没有自行填造 committed-Final verifier。
+
+## Telegram 真实入站就绪条件
+
+- Control 对真实 Telegram Account 发布 enabled 的最新完整快照，保存两项同版托管凭据。
+- Gateway mTLS principal 可读取该 scope/tenant/account 以及 registration/webhook 用途。
+- 公共 HTTPS origin 实际转发到 Gateway 公共 listener，Telegram 能访问当前账户路径。
+- Control Relay 只发布已提交且真实固定发布目标的 route 三元组，NATS retained route 流及
+  Gateway replay/checkpoint 正常；账户 route floor 已追上。
+- registration 当前版本 READY；源新鲜，readyz 204。随后才请用户在机器人私聊发文本。
+- 收消息验收为 Telegram HTTP → Receipt/Admission/Outbox → NATS RunRequested，固定
+  tenant、binding、DeploymentRevision 和 Manifest 身份。它不等于 Worker 已执行/已回复。
+
+## 远端注册的事实边界
+
+PG fence 不会撤回 Telegram 已接收的旧 HTTP。超时/失去资格时保留原 operation 的 UNKNOWN
+或迟到事实；旧 ACK 不标记新版本 READY，不恢复旧 Secret。当前 holder 按持久 next_due
+重新协调最新期望值；正常 READY 每 60 秒重申，失败有 5 秒退避。每次注册的本地 lease 25 秒，
+解析/SDK 操作各最多 5 秒；进程最多 8 个并发账户。凭据材料不进入注册表或 observations。
+
+
+## 2026-09-06 真实入站验收记录
+
+实际 Control mTLS 与 Gateway 进程已接入真实 Telegram。06:55:45 +08:00 的测试消息
+update_id=`309271229` / message_id=`6`，产生
+admission/event_id=`c00f77d6b3a94dcd98b77ccf071b047b`，
+run_id=`45ccc1ec2d4b600a656ed0b489497e5c`。PG Inbox/Admission/Outbox/published各1，
+NATS RUN_REQUESTS_V1 sequence1 的严格Schema和规范payload匹配，DeliveryIntent=0。
+
+[完整脱敏验收报告](../../docs/architecture-next/channel-gateway/telegram-real-inbound-20260906.md)
+区分真实入站与 Worker/Manifest正文/模型/Storage/回复执行，并说明 PubAck 交叉证据而非原帧抓取。
+本次目标的模型与Storage配置仅为 admission-only fixture，没有宣称其真实执行能力。

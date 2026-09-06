@@ -40,7 +40,93 @@ services:
       CONTROL_BOOTSTRAP_PASSWORD: ${CONTROL_BOOTSTRAP_PASSWORD:-admin1234567}
     expose:
       - "8080"
-    stop_grace_period: 15s
+    stop_grace_period: 30s
+
+  gateway-database:
+    image: postgres:17.6-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${CONTROL_POSTGRES_USER:-control}
+      PGDATABASE: ${CONTROL_POSTGRES_DB:-control}
+      PGPASSWORD: ${CONTROL_POSTGRES_PASSWORD:-control-local-only}
+      GATEWAY_POSTGRES_PASSWORD: ${GATEWAY_POSTGRES_PASSWORD:?set Gateway database password}
+    volumes:
+      - ./provision-gateway.sh:/provision-gateway.sh:ro
+    entrypoint: ["/bin/sh", "/provision-gateway.sh"]
+
+  nats:
+    image: nats:2.11.8-alpine
+    restart: unless-stopped
+    command: ["-c", "/etc/nats/server.conf"]
+    environment:
+      NATS_GATEWAY_PASSWORD: ${NATS_GATEWAY_PASSWORD:?set Gateway NATS password}
+      NATS_CONTROL_PASSWORD: ${NATS_CONTROL_PASSWORD:?set Control publisher NATS password}
+      NATS_RECONCILER_PASSWORD: ${NATS_RECONCILER_PASSWORD:?set NATS topology administration password}
+    volumes:
+      - ../nats/server.conf:/etc/nats/server.conf:ro
+      - gateway-nats-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4222"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    expose: ["4222"]
+
+  nats-reconcile:
+    image: ${CHANNEL_GATEWAY_IMAGE:-trpc-agent-service/channel-gateway:local}
+    restart: "no"
+    command: ["reconcile"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      GATEWAY_NATS_URL: nats://nats:4222
+      GATEWAY_NATS_USER: reconciler
+      GATEWAY_NATS_PASSWORD: ${NATS_RECONCILER_PASSWORD:?set NATS topology administration password}
+      GATEWAY_NATS_TOPOLOGY_FILE: /etc/gateway/streams.yaml
+    volumes:
+      - ../nats/streams.yaml:/etc/gateway/streams.yaml:ro
+
+  channel-gateway:
+    image: ${CHANNEL_GATEWAY_IMAGE:-trpc-agent-service/channel-gateway:local}
+    restart: unless-stopped
+    depends_on:
+      gateway-database:
+        condition: service_completed_successfully
+      nats-reconcile:
+        condition: service_completed_successfully
+    environment:
+      GATEWAY_HTTP_ADDRESS: :8090
+      GATEWAY_ADMIN_ADDRESS: :8091
+      GATEWAY_DATABASE_URL: ${GATEWAY_DATABASE_URL:?set Gateway DSN for gateway role and channel_gateway database}
+      GATEWAY_NATS_URL: nats://nats:4222
+      GATEWAY_NATS_USER: gateway
+      GATEWAY_NATS_PASSWORD: ${NATS_GATEWAY_PASSWORD:?set Gateway NATS password}
+      GATEWAY_NATS_TOPOLOGY_FILE: /etc/gateway/streams.yaml
+      GATEWAY_ACCOUNT_SOURCE: control
+      GATEWAY_INSTANCE_ID: ${GATEWAY_INSTANCE_ID:-gateway-1}
+      GATEWAY_CONTROL_URL: ${GATEWAY_CONTROL_URL:-}
+      GATEWAY_CONTROL_SCOPE_ID: ${GATEWAY_CONTROL_SCOPE_ID:-}
+      GATEWAY_CONTROL_SOURCE_EPOCH: ${GATEWAY_CONTROL_SOURCE_EPOCH:-}
+      GATEWAY_PUBLIC_ORIGIN: ${GATEWAY_PUBLIC_ORIGIN:-}
+      GATEWAY_CONTROL_CA_FILE: /run/gateway-control/ca.pem
+      GATEWAY_CONTROL_CERT_FILE: /run/gateway-control/client.pem
+      GATEWAY_CONTROL_KEY_FILE: /run/gateway-control/client-key.pem
+    volumes:
+      - ../nats/streams.yaml:/etc/gateway/streams.yaml:ro
+      - ${GATEWAY_CONTROL_CERTS_DIR:-./control-mtls}:/run/gateway-control:ro
+    expose: ["8090", "8091"]
+    healthcheck:
+      test: ["CMD", "/channel-gateway", "probe", "http://127.0.0.1:8091/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 30s
 
 volumes:
   control-postgres-data:
+  gateway-nats-data:

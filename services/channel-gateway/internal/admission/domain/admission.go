@@ -1,0 +1,187 @@
+// Package domain owns immutable Gateway acceptance facts, not Provider DTOs.
+package domain
+
+import (
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+	"time"
+	"unicode"
+)
+
+var (
+	ErrInvalidInput       = errors.New("invalid inbound event")
+	ErrConflict           = errors.New("event identity conflicts with previous content")
+	ErrAccountUnavailable = errors.New("account use eligibility unavailable")
+	ErrUnavailable        = errors.New("admission temporarily unavailable")
+	ErrRouteChanged       = errors.New("route changed before acceptance")
+	ErrClaimLost          = errors.New("outbox claim expired or replaced")
+)
+
+type EventKey struct {
+	Provider  string `json:"provider"`
+	AccountID string `json:"account_id"`
+	EventID   string `json:"event_id"`
+}
+
+// ConnectionFence is a process-local authorization fence, not source content or wire data.
+// Revision identifies the connection configuration, independently of route generation.
+type ConnectionFence struct {
+	InstanceID string
+	Epoch      int64
+	Revision   int64
+}
+
+func (f ConnectionFence) Validate() error {
+	if !identifier.MatchString(f.InstanceID) || f.Epoch < 1 || f.Revision < 1 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+// ReplyOrigin preserves the first accepted callback's local socket identity.
+// It is stored only beside the Admission, never in execution wire/source digest.
+// A nil origin means legacy/unknown, not permission to infer a current socket.
+type ReplyOrigin struct {
+	InstanceID       string `json:"instance_id"`
+	Epoch            int64  `json:"epoch"`
+	Revision         int64  `json:"revision"`
+	SocketGeneration uint64 `json:"socket_generation"`
+}
+
+func (o ReplyOrigin) Validate() error {
+	if (ConnectionFence{InstanceID: o.InstanceID, Epoch: o.Epoch, Revision: o.Revision}).Validate() != nil || o.SocketGeneration == 0 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+type Inbound struct {
+	ReplyOrigin     *ReplyOrigin     `json:"-"`
+	ConnectionFence *ConnectionFence `json:"-"`
+	Key             EventKey         `json:"key"`
+	Kind            string           `json:"kind"`
+	ConversationID  string           `json:"conversation_id"`
+	ThreadID        string           `json:"thread_id,omitempty"`
+	SenderID        string           `json:"sender_id,omitempty"`
+	Text            string           `json:"text,omitempty"`
+	ReplyContext    json.RawMessage  `json:"reply_context,omitempty"`
+	SourceDigest    string           `json:"source_digest"`
+	ReceivedAt      time.Time        `json:"received_at"`
+}
+type Receipt struct {
+	Decision    string `json:"decision"`
+	Reason      string `json:"reason,omitempty"`
+	AdmissionID string `json:"admission_id,omitempty"`
+	RunID       string `json:"run_id,omitempty"`
+}
+type RouteSnapshot struct {
+	Provider             string `json:"provider"`
+	AccountID            string `json:"account_id"`
+	TenantID             string `json:"tenant_id"`
+	BindingID            string `json:"binding_id"`
+	Generation           int64  `json:"generation"`
+	DeploymentRevisionID string `json:"deployment_revision_id"`
+	ManifestRef          string `json:"manifest_ref"`
+	ManifestDigest       string `json:"manifest_digest"`
+}
+type Acceptance struct {
+	Input   Inbound
+	Receipt Receipt
+	Route   *RouteSnapshot
+}
+
+var identifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+var manifestReference = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
+var manifestDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var sourceDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func opaque(value string, max int, required bool) bool {
+	if value == "" {
+		return !required
+	}
+	if len(value) > max || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+func (i Inbound) Validate() error {
+	if i.Key.Provider == "wecom" {
+		if i.ConnectionFence == nil || i.ConnectionFence.Validate() != nil {
+			return ErrInvalidInput
+		}
+		if i.ReplyOrigin != nil && (i.ReplyOrigin.Validate() != nil || i.ReplyOrigin.InstanceID != i.ConnectionFence.InstanceID || i.ReplyOrigin.Epoch != i.ConnectionFence.Epoch || i.ReplyOrigin.Revision != i.ConnectionFence.Revision) {
+			return ErrInvalidInput
+		}
+	} else if i.ConnectionFence != nil || i.ReplyOrigin != nil {
+		return ErrInvalidInput
+	}
+	if (i.Key.Provider != "telegram" && i.Key.Provider != "wecom") || !identifier.MatchString(i.Key.AccountID) || !opaque(i.Key.EventID, 256, true) || !sourceDigest.MatchString(i.SourceDigest) || i.ReceivedAt.IsZero() {
+		return ErrInvalidInput
+	}
+	if !opaque(i.ConversationID, 256, false) || !opaque(i.ThreadID, 256, false) || !opaque(i.SenderID, 256, false) || len(i.Text) > 65536 || len(i.ReplyContext) > 65536 || (len(i.ReplyContext) > 0 && !json.Valid(i.ReplyContext)) {
+		return ErrInvalidInput
+	}
+	switch i.Kind {
+	case "text":
+		if strings.TrimSpace(i.Text) == "" || i.ConversationID == "" || i.SenderID == "" {
+			return ErrInvalidInput
+		}
+	case "ignore", "interaction":
+		if i.Text != "" {
+			return ErrInvalidInput
+		}
+	default:
+		return ErrInvalidInput
+	}
+	return nil
+}
+func (r RouteSnapshot) ValidateFor(k EventKey) error {
+	if r.Provider != k.Provider || r.AccountID != k.AccountID || r.Generation < 1 || r.Generation > 9007199254740991 || !identifier.MatchString(r.TenantID) || !identifier.MatchString(r.BindingID) || !identifier.MatchString(r.DeploymentRevisionID) || len(r.ManifestRef) > 2048 || !manifestReference.MatchString(r.ManifestRef) || !manifestDigest.MatchString(r.ManifestDigest) {
+		return ErrInvalidInput
+	}
+	return nil
+}
+func (r Receipt) Validate() error {
+	switch r.Decision {
+	case "admit-run":
+		if !identifier.MatchString(r.AdmissionID) || !identifier.MatchString(r.RunID) || r.Reason != "" {
+			return ErrInvalidInput
+		}
+	case "ignore", "interaction":
+		if r.AdmissionID != "" || r.RunID != "" || !opaque(r.Reason, 256, false) {
+			return ErrInvalidInput
+		}
+	default:
+		return ErrInvalidInput
+	}
+	return nil
+}
+func (c Acceptance) Validate() error {
+	if err := c.Receipt.Validate(); err != nil {
+		return err
+	}
+	if err := c.Input.Validate(); err != nil {
+		return err
+	}
+	switch c.Receipt.Decision {
+	case "admit-run":
+		if c.Input.Kind != "text" || c.Route == nil || !identifier.MatchString(c.Receipt.AdmissionID) || !identifier.MatchString(c.Receipt.RunID) || c.Receipt.Reason != "" {
+			return ErrInvalidInput
+		}
+		return c.Route.ValidateFor(c.Input.Key)
+	case "ignore", "interaction":
+		if c.Receipt.Decision != c.Input.Kind || c.Route != nil || c.Receipt.AdmissionID != "" || c.Receipt.RunID != "" || !opaque(c.Receipt.Reason, 256, false) {
+			return ErrInvalidInput
+		}
+	default:
+		return ErrInvalidInput
+	}
+	return nil
+}

@@ -169,8 +169,11 @@ and real PostgreSQL integration. Deployment Manifest-publication Outbox rows rem
 implemented Channel route-only Relay and Gateway route consumer. Multi-replica PlatformExecutionContract identity
 is enforced by a release-pinned expected digest before database access or HTTP
 startup. Channel account/binding management, route changes and Gateway Control integration
-are implemented, with real Telegram inbound-to-RunRequested acceptance in the separate
-Gateway worktree. Worker execution, Manifest body retrieval and the complete reply chain
+are implemented, with separately recorded real Telegram inbound-to-RunRequested acceptance.
+The Gateway embeds Routing, Admission, Connection, and Delivery in one Go workload;
+its Control source starts one Delivery Runner that owns Maintenance, while explicit
+fixture mode keeps standalone maintenance. Its migrations are 0001–0010.
+Worker execution, Manifest body retrieval, the ReplyIntent consumer, and the complete reply chain
 remain follow-up integration. See the [product usability TODO](../../docs/architecture-next/control-api/product-usability-todo.md)
 for planned UX changes; those entries are not implemented management endpoints.
 
@@ -234,7 +237,7 @@ services/control-api/
 │   ├── agent/              # Agent, Draft, validation, immutable Version
 │   ├── runtimeprofile/     # Profile, Draft, immutable Revision, private credentials
 │   ├── deployment/         # match, compile, atomically publish fixed Manifest
-│   ├── channelbinding/     # later vertical slice
+│   ├── channelbinding/     # accounts, private credentials, exact bindings, route Relay
 │   ├── infra/              # shared process connections and mechanics
 │   └── bootstrap/          # the single process composition root
 ├── integration/
@@ -267,4 +270,8 @@ listener serves snapshots, exact current credential sets, and observations.
 The route-only Relay publishes committed immutable route events to JetStream;
 Deployment Manifest events remain independent. See [Channel runtime](CHANNEL_RUNTIME.md)
 and the referenced [public OpenAPI](../../api/openapi/control/v1/channel-public.yaml).
-Real Telegram reception is a separate joint acceptance step, not implied by build/test success.
+Real Telegram reception has separate [joint acceptance evidence](../../docs/architecture-next/control-api/channel-acceptance.md)
+and [Gateway inbound evidence](../../docs/architecture-next/channel-gateway/telegram-real-inbound-20260906.md),
+not inferred from build/test success. Telegram and the public Go WeCom connector remain
+in-process Gateway dependencies, not separate connector deployments. Helm stays at
+FINAL-INTEGRATION after all production workloads are complete.
