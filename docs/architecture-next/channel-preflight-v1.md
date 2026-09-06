@@ -170,22 +170,52 @@ route generation、Gateway registrations/receipts/admissions，确认无启用/�
   webhook_registration=TOKEN_REJECTED/FAIL、presence=null/relation=UNKNOWN。
 - 根任务已下发“契约冻结，开始实现”；后端只完成各自实现/测试/功能分支提交，
   远端main合并继续等待根任务串行门禁。
-- 提交SHA、远端mainSHA、运行版本、独立验收结果：待实现结束填写，当前不作完成声明。
+- 冻结时尚无实现完成声明；后续源码实现和验收边界见第11节。
 
 
-## 11. 实现与集成状态（2026-09-06 23:54 CST）
+## 11. 实现与验收边界（2026-09-07）
 
-两侧任务此前分别暂停在实现和发布的直接授权门槛。用户已在Control和Gateway任务直接确认，
-Control恢复实现，Gateway已正常推送功能分支。协调侧继续按第8节串行门禁推进，不提前合入main。
+### 11.1 模块交付
 
-- Control：正式设计完成，Application/PostgreSQL/HTTP与真实集成测试进行中；尚未交付可联调版本。
-- Gateway：只读Adapter/Runner/Bootstrap本地实现完成，功能分支提交为
-  `7e22af0d2cba3f68cee4e208f194a3f917462bb2`；Gateway与platform共30包1098项race测试通过，
-  副本回滚后28包793项通过。独立源码审查及3个定向包测试通过，仍待真实Control契约集成。
-- Web：独立客户端、预检面板、分享入口、恢复、权限处理与Channel操作优化已完成本地验证；
-  38文件525项测试、类型检查、生产构建通过，副本回滚恢复36文件457项测试通过。
-- 浏览器：最终构建已在临时13002检查桌面/移动布局，连接的是旧后端；缺少预检接口时明确报错，
-  不作为新版真实预检成功证据。临时预览已关闭，现有13001服务和机器人Webhook未改。
-- 联调：当前运行后端仍为661e4a8，不含预检；协调侧正在复核环境与真实HTTP验收驱动。
-- 后续：Control完成后先评审/合入，Gateway拉取并做真实契约回归再合入，最后由协调侧拉取两端，
-  构建部署并完成真实账号HTTP、浏览器和只读Telegram验收；远端main合并尚未发生。
+- Control 实现提交 `c7cf4e184e0355f2da635f0b43d91b18ab580952`：
+  2个公开操作、3个私有操作、共享 DTO/Schema、PostgreSQL 任务和幂等回执、
+  真实 Session/OWNER 检查、claim/lease/版本围栏、有界维护循环及 additive 0002 migration。
+  首次完成发现 Gateway 配置变化会先提交 STALE，再返回冲突；撤权 Session 的创建请求保持零写入。
+- Gateway 实现提交 `7e22af0d2cba3f68cee4e208f194a3f917462bb2`，
+  共享契约集成提交 `6114ea2a43bb5d532c09faf0c09ddcb5132e052a`：
+  只读 Telegram Adapter、4并发 Runner、独立 mTLS 连接池和显式启动开关。
+  HTTP 适配器消费 Control 所有的共享 DTO 和校验器，保留本地任务、配置、时间和凭据围栏，
+  不另行维护私有 wire 结构或第二套8项检查语义。
+- Web 实现提交 `b36104094dcb1a508ee719c9e796272544ba2509`：
+  独立预检客户端、202回执、120秒有界轮询、原 key 恢复、MEMBER分享只读、
+  8项检查及配置/投递边界说明；同时优化名称保存、固定目标显示和双开关影响说明。
+
+### 11.2 已执行的源码验证
+
+- Control/API：39个有测试包、1336项测试、0测试跳过、0失败，真实 PostgreSQL、
+  Session 和 mTLS；副本回滚恢复基线37包1075项。无测试文件的包单独统计。
+- Gateway 与 Control 契约集成：69个有测试包、2554项测试、0测试跳过、0失败，
+  包括实际启动 Control 二进制的跨进程测试；该测试覆盖真实 Session、PostgreSQL、mTLS、
+  Gateway HTTP Adapter/Service、完成重放与公开查询，**TelegramProbe 为测试替身**。
+  此结果不等于真实 Telegram 调用，也不代替部署后 Runner 生命周期验收。
+- Web：38文件525项测试、类型检查和生产构建通过。
+  第一阶段仅前端增量的副本回滚恢复36文件457项；整合后阶段以已提交525项为基线，
+  两个不同范围的回滚统计不得混写。
+
+### 11.3 部署和真实验收单独记录
+
+运行版本取决于实际构建提交、镜像 ID、容器启动状态和配对配置，而非源码已合并。
+部署报告须记录远端 main 包含关系、Web工作树拉取后的提交、3个镜像的源码标签，
+并比较部署前后 PostgreSQL、NATS、Ingress 的实例身份，避免只凭健康检查宣称版本一致。
+
+预检启用要求 Control workload consumers 含 `telegram_preflight`，Gateway 显式设置
+`GATEWAY_TELEGRAM_PREFLIGHT_ENABLED=true`。旧 Control 不接受新增 consumer；
+回滚必须同时还原旧镜像和旧配置引用，保留 additive 数据库表及原有数据。
+
+部署后使用真实账号密码经 Web BFF 和 Control 公共入口分别验证202、权限、CAS、幂等和终态；
+再通过浏览器核对实际结果、分享只读和移动布局。真实机器人只执行 `getMe`、`getWebhookInfo`，
+检查前后核对账号/凭据/路由/运行账本及远端 Webhook，不调用注册、删除或发送方法。
+公网 origin 格式检查失败、缺 Token 等诊断可以正确终止为 COMPLETED / FAIL；
+这表示发现接入问题，不是测试驱动失败，也不是实际消息投递成功。
+
+运行验收报告必须保留具体时间、版本、请求与结果，不用本节的源码测试结论替代现场证据。
