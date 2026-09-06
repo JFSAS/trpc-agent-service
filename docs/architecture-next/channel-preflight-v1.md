@@ -181,6 +181,8 @@ route generation、Gateway registrations/receipts/admissions，确认无启用/�
   2个公开操作、3个私有操作、共享 DTO/Schema、PostgreSQL 任务和幂等回执、
   真实 Session/OWNER 检查、claim/lease/版本围栏、有界维护循环及 additive 0002 migration。
   首次完成发现 Gateway 配置变化会先提交 STALE，再返回冲突；撤权 Session 的创建请求保持零写入。
+  真实联调后的可见性修复 `48d589e793950d8e09988710c9162fb516b527ce` 使非成员的预检
+  POST/GET 在参数解析前统一404，保留可读 MEMBER 发起403及提交时 Session 撤销403。
 - Gateway 实现提交 `7e22af0d2cba3f68cee4e208f194a3f917462bb2`，
   共享契约集成提交 `6114ea2a43bb5d532c09faf0c09ddcb5132e052a`：
   只读 Telegram Adapter、4并发 Runner、独立 mTLS 连接池和显式启动开关。
@@ -192,9 +194,9 @@ route generation、Gateway registrations/receipts/admissions，确认无启用/�
 
 ### 11.2 已执行的源码验证
 
-- Control/API：39个有测试包、1336项测试、0测试跳过、0失败，真实 PostgreSQL、
+- Control/API：39个有测试包、1358项测试、0测试跳过、0失败，真实 PostgreSQL、
   Session 和 mTLS；副本回滚恢复基线37包1075项。无测试文件的包单独统计。
-- Gateway 与 Control 契约集成：69个有测试包、2554项测试、0测试跳过、0失败，
+- Gateway 与 Control 首次契约集成：69个有测试包、2554项测试、0测试跳过、0失败，
   包括实际启动 Control 二进制的跨进程测试；该测试覆盖真实 Session、PostgreSQL、mTLS、
   Gateway HTTP Adapter/Service、完成重放与公开查询，**TelegramProbe 为测试替身**。
   此结果不等于真实 Telegram 调用，也不代替部署后 Runner 生命周期验收。
