@@ -1,6 +1,6 @@
 # Telegram 接入预检 V1：Gateway 执行设计
 
-- 日期：2026-09-06；状态：**契约已对齐；Gateway独立代码实施中，跨端联调尚未完成**。
+- 日期：2026-09-07；状态：**Gateway 独立实现已发布，共享契约已整合；真实 Control 进程互操作已通过，完整回归与协调验收单独记录**。
 - 工作树：`/Users/jfs/Projects/trpc-agent-service-channel-gateway`；分支：`codex/channel-gateway`。
 - 代码审查基线：`661e4a826ce8f539d8f610b3f1ef99cdbe4a4fdd`。
 - 本文只定义 Gateway 的 Module、Interface、Adapter、执行规则及验收项；不创建新工作负载，不改变已合并的正常接入链路。
@@ -13,7 +13,7 @@
 
 **执行前提是已保存且 disabled 的 Telegram ChannelAccount；不要求 Binding、Deployment、RuntimeManifest、运行目录 READY 或真实 Worker。** 预检完成不等于账户启用、Webhook 接管或真实消息投递。现有启用操作不强制要求预检 PASS。
 
-Gateway 的本地应用、Adapter、Runner、Bootstrap 与 Compose 开关已按本次冻结契约实现；Control 迁移/Schema/Handler由其拥有方交付，真实跨端与Bot验收由协调任务推进，本文不把局部实现计为整体完成。
+Gateway 的本地应用、Adapter、Runner、Bootstrap 与 Compose 开关已按本次冻结契约实现；Control 迁移/Schema/Handler 已由其拥有方正式交付，真实跨端与Bot验收由协调任务推进，本文不把局部实现计为整体完成。
 
 ## 2. Module 与代码落点
 
@@ -26,16 +26,17 @@ services/channel-gateway/internal/
 ├── connection/application/preflight/
 │   ├── service.go              # 一个已领取任务：元数据检查、只读检查、结果组装
 │   ├── runner.go               # 共享领取调度、槽位、deadline、完成重报与停止
-│   ├── ports.go                # 应用拥有 Control 和 Telegram 的小 Interface
-│   ├── types.go                # 任务/结果/稳定错误；秘密不进入结果类型
+│   ├── types.go                # 应用拥有的小 Interface、任务/结果/稳定错误
 │   ├── config.go               # origin 静态规范化与诊断配置 JCS 指纹
 │   ├── service_test.go
 │   ├── runner_test.go
-│   └── config_test.go
+│   ├── config_test.go
+│   └── shared_contract_test.go # 应用输出与真实共享契约的跨层一致性回归
 ├── connection/adapter/outbound/
 │   ├── controlhttp/
 │   │   ├── preflight.go        # 适配唯一 claim/resolve/complete wire
-│   │   └── preflight_test.go
+│   │   ├── preflight_test.go
+│   │   └── preflight_joint_integration_test.go # 真实 Control 进程/PG/Session/mTLS 互操作
 │   └── telegrampreflight/
 │       ├── client.go           # 私有 SDK；只暴露一次 Inspect
 │       ├── transport.go        # 方法白名单、固定出网、大小/时间/日志限制
@@ -48,7 +49,7 @@ services/channel-gateway/internal/
 Bootstrap 创建 Adapter 并注入应用；Adapter 依赖应用拥有的 Interface，应用不导入 SDK、Control 内部包或数据库实现。建议本地 seam：
 
 - `Control`：`Claim`、`ResolveBotToken`、`Complete`；本地强类型与 wire 映射集中在 Adapter。
-- `TelegramProbe`：`Inspect(ctx, token, expectedIdentity, expectedWebhook)`；Adapter 内先确认身份再读 Webhook，返回已去秘密的受限观测。
+- `TelegramProbe`：`Inspect(context.Context, ProbeRequest)`；Adapter 内先确认身份再读 Webhook，返回已去秘密的受限观测。
 - Runner 调用 Service 执行单任务；测试通过以上相同 seam 注入假的 Control、Telegram 与时间源，验证行为而不是复制实现。
 
 不复用 registration 的 `Remote.Identity/Register` 作为预检 Interface；它暴露写入能力。正常 `accountuse`、`AccountUsePermit` 和 disabled 守卫保持原样，诊断不经过运行注册循环，也不安装 Handler。
@@ -72,6 +73,10 @@ Control claim/resolve/首次 complete 持续复核 requested_by 为 ACTIVE 用�
 已接受的同 claim 同摘要完成重放是历史回执确认：Control 先认证原 mTLS+claim，再查已完成回执，命中返回 204；只有首次完成才执行持续 OWNER、Tenant ACTIVE、lease 和版本检查。Gateway 不把重报当作重新授权或重新探测。
 
 Control HTTP Adapter 保留现有 mTLS、固定 HTTPS origin、禁重定向、有界响应和脱敏策略，使用独立连接池以免诊断占满正常目录/注册连接。新方法保留预检闭合错误分类，不能把所有 409 压成普通版本错误。Claim/Resolve 请求≤4KiB，Resolve 响应≤20KiB，Complete 请求≤16KiB；其余响应也必须有显式上限。
+
+共享契约接入直接导入 `api/schemas/channel/v1` 的 `PreflightClaimRequest`、`PreflightGrant`、`PreflightResolveRequest`、`PreflightResolveResponse`、`PreflightCompleteRequest` 和 `PreflightCheck`。请求调用 `Validate`，响应调用 `Decode`，固定八项检查调用 `ValidatePreflightChecks`；Adapter 不再维护镜像 DTO、反射式 JSON 防火墙或另一套八项语义校验。应用的 Grant/Result 仍是应用类型，不依赖 HTTP wire；转换集中在 Adapter。共享 Schema 负责闭合字段、重复键、大小写别名、值域及协议内部语义，Gateway 继续负责与本地领取请求、配置快照、凭据版本和租约的精确比对。
+
+单次 HTTP 的 5s 子期限到期但父任务预算仍有效时，Adapter 返回可重试的 `ErrUnavailable`，由 Runner 原样重传 claim/complete；父 context 取消或过期才映射 `ErrExpired`。真实 lease-expired 409 仍直接结束旧领取，不混淆 HTTP 尝试期限与任务期限。
 
 ## 4. 执行顺序与固定检查结果
 
@@ -158,6 +163,8 @@ Control 没有当前 Gateway 配置注册表：gateway_config_freshness 首次 c
 
 Control模式通过LoadConfig默认启用，GATEWAY_TELEGRAM_PREFLIGHT_ENABLED=false可在Control接口/诊断权限升级前关闭；fixture不启动预检，直接Go构造Config需明确设置TelegramPreflightEnabled。Compose已增加此开关；不新增Node镜像、wecom-connector进程、CronJob或Helm发布任务。Helm继续等所有workload完成后的最终集成阶段。
 
+升级和回滚须将 Control 镜像与 mTLS principal 的 diagnostic consumer kinds 配置成对切换：旧 Control 枚举不接受 `telegram_preflight`，单独回退镜像而保留新权限配置会导致启动失败。测试环境原有 `https://localhost:18443` 按端口优先规则得到 `PUBLIC_ORIGIN_INVALID`；负面验收保留此配置，不通过新增 Tunnel 或改 Webhook 把静态 FAIL 变成 PASS。
+
 ## 9. 冻结后验收矩阵
 
 下列是必须实现的测试，不是本次已跑通过的产品测试：
@@ -193,4 +200,25 @@ Control模式通过LoadConfig默认启用，GATEWAY_TELEGRAM_PREFLIGHT_ENABLED=f
 
 文档核验还包括：Control八段JSON语法解析、三项私有路径与八项检查ID对齐、引用文档存在、正式文件复制后一致性及git diff检查。后续实现已落盘Gateway代码、测试及部署开关；未改已有运行服务或Control拥有的文件。
 
-协调任务已完成契约对齐。Gateway应用/配置、两个Adapter与Runner/Bootstrap已有本地验证；真实Control Schema/Handler接入、Control/Web联调与最终main合并仍单独验收，不在各端重复定义wire。
+协调任务已完成契约对齐。Gateway 应用/配置、两个 Adapter 与 Runner/Bootstrap 已有本地验证，独立实现已推送 `codex/channel-gateway` 的 `7e22af0d2cba3f68cee4e208f194a3f917462bb2`。共享契约接入先在独立副本验证实际 Schema/DTO/fixture 快照。Control 正式提交 `c7cf4e184e0355f2da635f0b43d91b18ab580952` 进入远端 main 后，Gateway 正常合入该提交并直接消费正式共享包；60 个契约文件与此前冻结快照逐字一致，Gateway 不另行修改 Control 文件。
+
+共享 Schema 加本地 mTLS 测试替身证明的是 wire 互操作与本地约束，不等于真实 Control Handler/PostgreSQL、Control/Web 联调或 Telegram 验收。最终 main 合并仍由协调任务根据串行验收结论推进。
+
+
+### 真实 Control 进程互操作回归
+
+`TestPreflightGatewayClientAgainstControlBinary` 从 Gateway 测试启动当前源码构建的 Control 二进制，在专用 PostgreSQL 中创建随机独立 Schema，并生成临时 CA、服务端证书和 Gateway mTLS 身份。测试经真实登录、首次改密和租户 OWNER API 保存 disabled 且没有 Binding/Deployment 的账户，再用实际 Gateway `NewPreflight` 完成 Claim/Resolve、实际应用 Service 组装结果、Complete 和公开 View 读取。
+
+测试覆盖 `https://localhost:18443` 的 INVALID、无端口 loopback 的 NOT_PUBLIC 和合法 origin 三条分支；验证八项结果、同 Complete 历史回执重放、公开结果与进程日志的秘密 canary，以及八张运行态表前后摘要不变。Claim 间隔遵守实例限速；Control 进程通过 SIGTERM 停止并校验退出状态，随后删除该测试 Schema。
+
+此项只以 TelegramProbe 替身提供只读观测，不连接 Telegram，不替代 SDK transport 测试、Runner 调度测试或真实平台验收。执行需要设置 `GATEWAY_TEST_DATABASE_URL`、`GATEWAY_CONTROL_PREFLIGHT_BINARY` 和 `GATEWAY_CONTROL_PREFLIGHT_NATS_FILE`；缺失时明确跳过，不算真实集成通过。NATS 配置文件为 owner-only 的 `{url,user,password}` JSON，指向专用测试 broker 的 Control producer；不要使用现有部署的 broker。完整测试入口应先构建当前源码的 Control 二进制，再注入这三个变量：
+
+```bash
+go build -o /tmp/control-api-preflight-test ./services/control-api/cmd/control-api
+GATEWAY_CONTROL_PREFLIGHT_BINARY=/tmp/control-api-preflight-test \
+  go test -race -count=1 \
+  ./services/channel-gateway/internal/connection/adapter/outbound/controlhttp \
+  -run '^TestPreflightGatewayClientAgainstControlBinary$'
+```
+
+2026-09-07 本次独立进程互操作的三个分支与父测试均通过，退出 0。Control/API 与 Gateway/platform 全量测试、修改前后清单及副本回滚结果保存在本次交付验证记录；部署与 main 合并仍以协调任务结论为准。

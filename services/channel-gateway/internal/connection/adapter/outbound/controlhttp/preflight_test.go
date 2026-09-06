@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	p "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/preflight"
 )
 
@@ -32,7 +33,7 @@ func preflightTLSFixture(t *testing.T, h http.Handler) *PreflightClient {
 	t.Cleanup(cl.Close)
 	return cl
 }
-func preflightFixture(t *testing.T) (p.ClaimRequest, preflightGrant, p.Grant) {
+func preflightFixture(t *testing.T) (p.ClaimRequest, wire.PreflightGrant, p.Grant) {
 	t.Helper()
 	config, err := p.NewConfig("pool", fixture().SourceEpoch, "https://gateway.example.com")
 	if err != nil {
@@ -42,8 +43,8 @@ func preflightFixture(t *testing.T) (p.ClaimRequest, preflightGrant, p.Grant) {
 	// Deliberately years away from the test machine's clock: lease comparison
 	// must be anchored to Control server_time, never time.Now().
 	now := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	w := preflightGrant{SchemaVersion: 1, ServerTime: now, ID: "cpf_test", ScopeID: "pool", SourceEpoch: config.SourceEpoch, TenantID: "tnt_test", AccountID: "cha_test", Provider: "telegram", ProviderAccountID: "123456789", AccountRevision: 7, ConnectionRevision: 4, WebhookPath: "/v1/telegram/cha_test", Credentials: preflightCredential{Purpose: "telegram.bot_token", ID: "ccr_test", Version: 2, Configured: true}, WebhookSecretConfigured: true, LeaseEpoch: 1, LeaseExpiresAt: now.Add(30 * time.Second), JobDeadlineAt: now.Add(120 * time.Second), ConfigDigest: config.Digest}
-	g := p.Grant{PreflightID: w.ID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.ID, Version: w.Credentials.Version, Configured: true}, WebhookSecretConfigured: true, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.ConfigDigest, Request: req}
+	w := wire.PreflightGrant{SchemaVersion: 1, ServerTime: now, PreflightID: "cpf_test", ScopeID: "pool", SourceEpoch: config.SourceEpoch, TenantID: "tnt_test", AccountID: "cha_test", Provider: "telegram", ProviderAccountID: "123456789", AccountRevision: 7, ConnectionRevision: 4, WebhookPath: "/v1/telegram/cha_test", Credentials: wire.PreflightCredential{Purpose: "telegram.bot_token", CredentialID: "ccr_test", CredentialVersion: 2, Configured: true}, WebhookSecretConfigured: true, LeaseEpoch: 1, LeaseExpiresAt: now.Add(30 * time.Second), JobDeadlineAt: now.Add(120 * time.Second), GatewayConfigDigest: config.Digest}
+	g := p.Grant{PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: true}, WebhookSecretConfigured: true, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: req}
 	return req, w, g
 }
 func preflightResult(g p.Grant) p.Result {
@@ -63,7 +64,7 @@ func preflightHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 }
 func TestPreflightMutualTLSClaimResolveCompleteExactWire(t *testing.T) {
-	req, wire, _ := preflightFixture(t)
+	req, grantWire, _ := preflightFixture(t)
 	var calls atomic.Int32
 	var completions [][]byte
 	cl := preflightTLSFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,12 +86,12 @@ func TestPreflightMutualTLSClaimResolveCompleteExactWire(t *testing.T) {
 			if len(body) != 10 || string(body["limit"]) != "1" || string(body["expected_public_origin"]) != `"https://gateway.example.com"` || string(body["origin_status"]) != `"PUBLIC_ORIGIN_STATIC_VALID"` || string(body["claim_token"]) != `"`+req.Token.Reveal()+`"` {
 				t.Error("claim wire mismatch")
 			}
-			_ = json.NewEncoder(w).Encode(wire)
+			_ = json.NewEncoder(w).Encode(grantWire)
 		case "/internal/v1/channel-preflights/cpf_test/credentials:resolve":
 			if len(body) != 6 || body["uses"] != nil || body["purpose"] != nil {
 				t.Error("resolve exposes runtime credential selectors")
 			}
-			_ = json.NewEncoder(w).Encode(preflightResolved{1, wire.ID, wire.ConnectionRevision, "telegram.bot_token", wire.Credentials.ID, wire.Credentials.Version, "synthetic-token-do-not-log", wire.LeaseExpiresAt})
+			_ = json.NewEncoder(w).Encode(wire.PreflightResolveResponse{SchemaVersion: 1, PreflightID: grantWire.PreflightID, ConnectionRevision: grantWire.ConnectionRevision, Purpose: "telegram.bot_token", CredentialID: grantWire.Credentials.CredentialID, CredentialVersion: grantWire.Credentials.CredentialVersion, Value: "synthetic-token-do-not-log", LeaseExpiresAt: grantWire.LeaseExpiresAt})
 		case "/internal/v1/channel-preflights/cpf_test:complete":
 			if len(body) != 10 || body["result"] != nil || body["outcome"] != nil || body["origin_status"] != nil {
 				t.Error("complete envelope mismatch")
@@ -161,7 +162,7 @@ func TestPreflightClaimRejectsMalformedOrMismatchedGrant(t *testing.T) {
 		"wrong_epoch":     strings.Replace(string(raw), w.SourceEpoch, "00000000-0000-4000-8000-000000000099", 1),
 		"wrong_provider":  strings.Replace(string(raw), `"provider":"telegram"`, `"provider":"wecom"`, 1),
 		"wrong_purpose":   strings.Replace(string(raw), `"telegram.bot_token"`, `"telegram.webhook_secret"`, 1),
-		"wrong_digest":    strings.Replace(string(raw), w.ConfigDigest, "sha256:"+strings.Repeat("0", 64), 1),
+		"wrong_digest":    strings.Replace(string(raw), w.GatewayConfigDigest, "sha256:"+strings.Repeat("0", 64), 1),
 		"wrong_path":      strings.Replace(string(raw), `/v1/telegram/cha_test`, `/v1/telegram/cha_other`, 1),
 		"trailing":        string(raw) + ` {}`,
 		"unknown":         strings.Replace(string(raw), `"configured":true`, `"configured":true,"value":"secret"`, 1),
@@ -185,21 +186,30 @@ func TestPreflightClaimRejectsMalformedOrMismatchedGrant(t *testing.T) {
 	}
 }
 func TestPreflightStrictDecoder(t *testing.T) {
-	var out struct {
-		Value int64 `json:"value"`
-	}
-	for _, raw := range []string{`{"value":1,"value":2}`, `{"VALUE":1}`, `{}`, `{"value":null}`, `{"value":"1"}`, `{"value":9007199254740992}`, `{"value":1e400}`, `{"value":1}true`, `{"value":1,"extra":0}`, `{"value":` + strings.Repeat("[", 18) + `0` + strings.Repeat("]", 18) + `}`, "{\"value\":1,\"bad\":\"\xff\"}"} {
-		if err := preflightDecode([]byte(raw), &out); !errors.Is(err, p.ErrInvalid) {
-			t.Fatal("malformed JSON accepted")
+	_, grant, _ := preflightFixture(t)
+	raw, _ := json.Marshal(grant)
+	original := string(raw)
+	var out wire.PreflightGrant
+	for _, value := range []string{`7,"account_revision":8`, `null`, `"7"`, `9007199254740992`, `1e400`, strings.Repeat("[", 18) + `0` + strings.Repeat("]", 18)} {
+		bad := strings.Replace(original, `"account_revision":7`, `"account_revision":`+value, 1)
+		if err := preflightWireError(wire.Decode("preflight-grant.schema.json", []byte(bad), &out)); !errors.Is(err, p.ErrInvalid) {
+			t.Fatal("malformed JSON accepted", err)
 		}
 	}
-	if err := preflightDecode([]byte(`{"value":9007199254740991}`), &out); err != nil {
+	for _, bad := range []string{strings.Replace(original, `"account_revision"`, `"ACCOUNT_REVISION"`, 1), original + `true`, strings.Replace(original, `"credentials":{`, `"credentials":{"bad":"\xff",`, 1)} {
+		if err := preflightWireError(wire.Decode("preflight-grant.schema.json", []byte(bad), &out)); !errors.Is(err, p.ErrInvalid) {
+			t.Fatal("malformed JSON accepted", err)
+		}
+	}
+	safe := strings.Replace(original, `"account_revision":7`, `"account_revision":9007199254740991`, 1)
+	if err := wire.Decode("preflight-grant.schema.json", []byte(safe), &out); err != nil {
 		t.Fatal(err)
 	}
 }
+
 func TestPreflightResolveExactVersionLeaseAndRequiredFields(t *testing.T) {
 	_, _, g := preflightFixture(t)
-	w := preflightResolved{1, g.PreflightID, g.ConnectionRevision, "telegram.bot_token", g.Credential.ID, g.Credential.Version, "synthetic-do-not-echo", g.LeaseExpiresAt}
+	w := wire.PreflightResolveResponse{SchemaVersion: 1, PreflightID: g.PreflightID, ConnectionRevision: g.ConnectionRevision, Purpose: "telegram.bot_token", CredentialID: g.Credential.ID, CredentialVersion: g.Credential.Version, Value: "synthetic-do-not-echo", LeaseExpiresAt: g.LeaseExpiresAt}
 	raw, _ := json.Marshal(w)
 	cases := map[string]string{
 		"task":            strings.Replace(string(raw), g.PreflightID, "cpf_other", 1),

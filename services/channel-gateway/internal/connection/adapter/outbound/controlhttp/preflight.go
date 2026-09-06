@@ -9,11 +9,10 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	p "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/preflight"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 )
@@ -33,77 +32,8 @@ func NewPreflight(o Options) (*PreflightClient, error) {
 }
 func (cl *PreflightClient) Close() { cl.client.Close() }
 
-// These DTOs are deliberately private. Control owns the wire contract; neither
-// runtime ResolveRequest nor an application grant can be marshaled as that wire.
-type preflightClaimRequest struct {
-	SchemaVersion int     `json:"schema_version"`
-	ScopeID       string  `json:"scope_id"`
-	SourceEpoch   string  `json:"source_epoch"`
-	InstanceEpoch string  `json:"instance_epoch"`
-	RequestID     string  `json:"claim_request_id"`
-	Token         string  `json:"claim_token"`
-	ConfigDigest  string  `json:"gateway_config_digest"`
-	PublicOrigin  *string `json:"expected_public_origin"`
-	OriginStatus  string  `json:"origin_status"`
-	Limit         int     `json:"limit"`
-}
-type preflightCredential struct {
-	Purpose    string `json:"purpose"`
-	ID         string `json:"credential_id"`
-	Version    int64  `json:"credential_version"`
-	Configured bool   `json:"configured"`
-}
-type preflightGrant struct {
-	SchemaVersion           int                 `json:"schema_version"`
-	ServerTime              time.Time           `json:"server_time"`
-	ID                      string              `json:"preflight_id"`
-	ScopeID                 string              `json:"scope_id"`
-	SourceEpoch             string              `json:"source_epoch"`
-	TenantID                string              `json:"tenant_id"`
-	AccountID               string              `json:"account_id"`
-	Provider                string              `json:"provider"`
-	ProviderAccountID       string              `json:"provider_account_id"`
-	AccountRevision         int64               `json:"account_revision"`
-	ConnectionRevision      int64               `json:"connection_revision"`
-	WebhookPath             string              `json:"webhook_path"`
-	Credentials             preflightCredential `json:"credentials"`
-	WebhookSecretConfigured bool                `json:"webhook_secret_configured"`
-	LeaseEpoch              int64               `json:"lease_epoch"`
-	LeaseExpiresAt          time.Time           `json:"lease_expires_at"`
-	JobDeadlineAt           time.Time           `json:"job_deadline_at"`
-	ConfigDigest            string              `json:"gateway_config_digest"`
-}
-type preflightLeaseRequest struct {
-	SchemaVersion int    `json:"schema_version"`
-	ScopeID       string `json:"scope_id"`
-	SourceEpoch   string `json:"source_epoch"`
-	InstanceEpoch string `json:"instance_epoch"`
-	LeaseEpoch    int64  `json:"lease_epoch"`
-	Token         string `json:"claim_token"`
-}
-type preflightResolved struct {
-	SchemaVersion      int       `json:"schema_version"`
-	ID                 string    `json:"preflight_id"`
-	ConnectionRevision int64     `json:"connection_revision"`
-	Purpose            string    `json:"purpose"`
-	CredentialID       string    `json:"credential_id"`
-	Version            int64     `json:"credential_version"`
-	Value              string    `json:"value"`
-	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
-}
-type preflightCompleteRequest struct {
-	SchemaVersion int       `json:"schema_version"`
-	ScopeID       string    `json:"scope_id"`
-	SourceEpoch   string    `json:"source_epoch"`
-	InstanceEpoch string    `json:"instance_epoch"`
-	LeaseEpoch    int64     `json:"lease_epoch"`
-	Token         string    `json:"claim_token"`
-	ConfigDigest  string    `json:"gateway_config_digest"`
-	PublicOrigin  *string   `json:"expected_public_origin"`
-	ObservedAt    time.Time `json:"observed_at"`
-	Checks        []p.Check `json:"checks"`
-}
-
+// Control owns diagnostic wire DTOs and schemas. Application grants remain
+// independent of that transport contract and never marshal as runtime permits.
 func (cl *PreflightClient) validateClaim(r p.ClaimRequest) error {
 	if cl == nil || cl.client == nil || p.ValidateConfig(r.Config) != nil || r.Config.ScopeID != cl.client.scope || r.Config.SourceEpoch != cl.client.epoch || !c.ValidEpoch(r.InstanceEpoch) || !c.ValidEpoch(r.RequestID) {
 		return p.ErrInvalid
@@ -120,8 +50,8 @@ func (cl *PreflightClient) Claim(ctx context.Context, r p.ClaimRequest) (*p.Gran
 	if err := cl.validateClaim(r); err != nil {
 		return nil, err
 	}
-	req := preflightClaimRequest{1, r.Config.ScopeID, r.Config.SourceEpoch, r.InstanceEpoch, r.RequestID, r.Token.Reveal(), r.Config.Digest, r.Config.PublicOrigin, r.Config.OriginStatus, 1}
-	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights:claim", req, 4<<10)
+	req := wire.PreflightClaimRequest{SchemaVersion: 1, ScopeID: r.Config.ScopeID, SourceEpoch: r.Config.SourceEpoch, InstanceEpoch: r.InstanceEpoch, ClaimRequestID: r.RequestID, ClaimToken: r.Token.Reveal(), GatewayConfigDigest: r.Config.Digest, ExpectedPublicOrigin: r.Config.PublicOrigin, OriginStatus: r.Config.OriginStatus, Limit: 1}
+	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights:claim", req, 4<<10, "preflight-claim.schema.json")
 	if err != nil {
 		return nil, err
 	}
@@ -129,11 +59,11 @@ func (cl *PreflightClient) Claim(ctx context.Context, r p.ClaimRequest) (*p.Gran
 	if status == http.StatusNoContent {
 		return nil, nil
 	}
-	var w preflightGrant
-	if preflightDecode(raw, &w) != nil || w.SchemaVersion != 1 {
-		return nil, p.ErrInvalid
+	var w wire.PreflightGrant
+	if err := wire.Decode("preflight-grant.schema.json", raw, &w); err != nil {
+		return nil, preflightWireError(err)
 	}
-	g := p.Grant{PreflightID: w.ID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.ID, Version: w.Credentials.Version, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.ConfigDigest, Request: r}
+	g := p.Grant{PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
 	if err := p.ValidateGrant(g, r.Config); err != nil {
 		return nil, err
 	}
@@ -146,8 +76,8 @@ func (cl *PreflightClient) validateGrant(g p.Grant) error {
 	}
 	return p.ValidateGrant(g, g.Request.Config)
 }
-func leaseRequest(g p.Grant) preflightLeaseRequest {
-	return preflightLeaseRequest{1, g.ScopeID, g.SourceEpoch, g.Request.InstanceEpoch, g.LeaseEpoch, g.Request.Token.Reveal()}
+func leaseRequest(g p.Grant) wire.PreflightResolveRequest {
+	return wire.PreflightResolveRequest{SchemaVersion: 1, ScopeID: g.ScopeID, SourceEpoch: g.SourceEpoch, InstanceEpoch: g.Request.InstanceEpoch, LeaseEpoch: g.LeaseEpoch, ClaimToken: g.Request.Token.Reveal()}
 }
 func (cl *PreflightClient) ResolveBotToken(ctx context.Context, g p.Grant) (p.Secret, error) {
 	if err := cl.validateGrant(g); err != nil {
@@ -156,7 +86,7 @@ func (cl *PreflightClient) ResolveBotToken(ctx context.Context, g p.Grant) (p.Se
 	if !g.Credential.Configured {
 		return p.Secret{}, p.ErrInvalid
 	}
-	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights/"+g.PreflightID+"/credentials:resolve", leaseRequest(g), 4<<10)
+	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights/"+g.PreflightID+"/credentials:resolve", leaseRequest(g), 4<<10, "preflight-resolve.schema.json")
 	if err != nil {
 		return p.Secret{}, err
 	}
@@ -164,8 +94,11 @@ func (cl *PreflightClient) ResolveBotToken(ctx context.Context, g p.Grant) (p.Se
 	if status != http.StatusOK {
 		return p.Secret{}, p.ErrInvalid
 	}
-	var w preflightResolved
-	if preflightDecode(raw, &w) != nil || w.SchemaVersion != 1 || w.ID != g.PreflightID || w.ConnectionRevision != g.ConnectionRevision || w.Purpose != "telegram.bot_token" || w.Purpose != g.Credential.Purpose || w.CredentialID != g.Credential.ID || w.Version != g.Credential.Version || !w.LeaseExpiresAt.Equal(g.LeaseExpiresAt) || w.Value == "" || len(w.Value) > 16<<10 {
+	var w wire.PreflightResolveResponse
+	if err := wire.Decode("preflight-resolved.schema.json", raw, &w); err != nil {
+		return p.Secret{}, preflightWireError(err)
+	}
+	if w.PreflightID != g.PreflightID || w.ConnectionRevision != g.ConnectionRevision || w.Purpose != "telegram.bot_token" || w.Purpose != g.Credential.Purpose || w.CredentialID != g.Credential.ID || w.CredentialVersion != g.Credential.Version || !w.LeaseExpiresAt.Equal(g.LeaseExpiresAt) || w.Value == "" || len(w.Value) > 16<<10 {
 		return p.Secret{}, p.ErrInvalid
 	}
 	if ctx.Err() != nil {
@@ -180,8 +113,8 @@ func (cl *PreflightClient) Complete(ctx context.Context, g p.Grant, r p.Result) 
 	if err := validatePreflightResult(g, r); err != nil {
 		return err
 	}
-	req := preflightCompleteRequest{1, g.ScopeID, g.SourceEpoch, g.Request.InstanceEpoch, g.LeaseEpoch, g.Request.Token.Reveal(), r.Config.Digest, r.Config.PublicOrigin, r.ObservedAt, r.Checks}
-	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights/"+g.PreflightID+":complete", req, 16<<10)
+	req := wire.PreflightCompleteRequest{SchemaVersion: 1, ScopeID: g.ScopeID, SourceEpoch: g.SourceEpoch, InstanceEpoch: g.Request.InstanceEpoch, LeaseEpoch: g.LeaseEpoch, ClaimToken: g.Request.Token.Reveal(), GatewayConfigDigest: r.Config.Digest, ExpectedPublicOrigin: r.Config.PublicOrigin, ObservedAt: r.ObservedAt, Checks: preflightWireChecks(r.Checks)}
+	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights/"+g.PreflightID+":complete", req, 16<<10, "preflight-complete.schema.json")
 	clear(raw)
 	if err != nil {
 		return err
@@ -194,7 +127,7 @@ func (cl *PreflightClient) Complete(ctx context.Context, g p.Grant, r p.Result) 
 
 // exchange never returns an upstream body, URL, credential, or TLS detail as an
 // error. It does not retry: the runner owns the original claim/result replay.
-func (cl *PreflightClient) exchange(ctx context.Context, path string, payload any, requestLimit int) ([]byte, int, error) {
+func (cl *PreflightClient) exchange(ctx context.Context, path string, payload any, requestLimit int, requestSchema string) ([]byte, int, error) {
 	if ctx == nil {
 		return nil, 0, p.ErrInvalid
 	}
@@ -206,6 +139,9 @@ func (cl *PreflightClient) exchange(ctx context.Context, path string, payload an
 		return nil, 0, p.ErrInvalid
 	}
 	defer clear(body)
+	if err := wire.Validate(requestSchema, body); err != nil {
+		return nil, 0, preflightWireError(err)
+	}
 	// An HTTP-attempt deadline is not the diagnostic task/lease deadline.
 	// Preserve the caller so an uncertain local timeout remains retryable.
 	parentCtx := ctx
@@ -299,326 +235,48 @@ func headerNoStore(values []string) bool {
 	return false
 }
 
-// preflightDecode is a temporary wire firewall until Control supplies the shared
-// schemas. It rejects duplicate/case-folded keys, absent fields, null scalars,
-// unsafe integers, deep JSON, invalid UTF-8, unknown fields and trailing values.
-func preflightDecode(raw []byte, out any) error {
-	if len(raw) == 0 || !utf8.Valid(raw) {
-		return p.ErrInvalid
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	value, err := preflightJSONValue(dec, 0)
-	if err != nil {
-		return p.ErrInvalid
-	}
-	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
-		return p.ErrInvalid
-	}
-	typ := reflect.TypeOf(out)
-	if typ == nil || typ.Kind() != reflect.Pointer || preflightShape(value, typ.Elem()) != nil {
-		return p.ErrInvalid
-	}
-	if json.Unmarshal(raw, out) != nil {
-		return p.ErrInvalid
-	}
-	return nil
-}
-func preflightJSONValue(d *json.Decoder, depth int) (any, error) {
-	if depth > 16 {
-		return nil, p.ErrInvalid
-	}
-	tok, err := d.Token()
-	if err != nil {
-		return nil, p.ErrInvalid
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return tok, nil
-	}
-	switch delim {
-	case '{':
-		obj := map[string]any{}
-		for d.More() {
-			key, err := d.Token()
-			if err != nil {
-				return nil, p.ErrInvalid
-			}
-			s, ok := key.(string)
-			if !ok {
-				return nil, p.ErrInvalid
-			}
-			if _, exists := obj[s]; exists {
-				return nil, p.ErrInvalid
-			}
-			v, err := preflightJSONValue(d, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			obj[s] = v
-		}
-		end, err := d.Token()
-		if err != nil || end != json.Delim('}') {
-			return nil, p.ErrInvalid
-		}
-		return obj, nil
-	case '[':
-		arr := []any{}
-		for d.More() {
-			v, err := preflightJSONValue(d, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			arr = append(arr, v)
-		}
-		end, err := d.Token()
-		if err != nil || end != json.Delim(']') {
-			return nil, p.ErrInvalid
-		}
-		return arr, nil
-	default:
-		return nil, p.ErrInvalid
-	}
-}
-func preflightShape(value any, typ reflect.Type) error {
-	if typ.Kind() == reflect.Pointer {
-		if value == nil {
-			return nil
-		}
-		return preflightShape(value, typ.Elem())
-	}
-	if typ == reflect.TypeOf(time.Time{}) {
-		s, ok := value.(string)
-		if !ok || !strings.HasSuffix(s, "Z") {
-			return p.ErrInvalid
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, s)
-		if err != nil || parsed.IsZero() {
-			return p.ErrInvalid
-		}
+// Only the stable application errors cross this adapter; schema diagnostics
+// must not leak rejected credential-bearing values or implementation details.
+func preflightWireError(err error) error {
+	if err == nil {
 		return nil
 	}
-	if value == nil {
+	if errors.Is(err, wire.ErrInvalidDocument) {
 		return p.ErrInvalid
 	}
-	switch typ.Kind() {
-	case reflect.Struct:
-		obj, ok := value.(map[string]any)
-		if !ok || len(obj) != typ.NumField() {
-			return p.ErrInvalid
-		}
-		for i := 0; i < typ.NumField(); i++ {
-			field := typ.Field(i)
-			key := field.Tag.Get("json")
-			v, ok := obj[key]
-			if !ok || preflightShape(v, field.Type) != nil {
-				return p.ErrInvalid
-			}
-		}
-	case reflect.String:
-		if _, ok := value.(string); !ok {
-			return p.ErrInvalid
-		}
-	case reflect.Bool:
-		if _, ok := value.(bool); !ok {
-			return p.ErrInvalid
-		}
-	case reflect.Int, reflect.Int64:
-		n, ok := value.(json.Number)
-		if !ok {
-			return p.ErrInvalid
-		}
-		x, err := n.Int64()
-		if err != nil || x > c.MaxRevision || x < -c.MaxRevision {
-			return p.ErrInvalid
-		}
-	default:
-		return p.ErrInvalid
+	return p.ErrUnavailable
+}
+
+func preflightWireChecks(checks []p.Check) []wire.PreflightCheck {
+	result := make([]wire.PreflightCheck, len(checks))
+	for i, check := range checks {
+		result[i] = wire.PreflightCheck{ID: check.ID, Status: check.Status, Code: check.Code, Details: check.Details}
 	}
-	return nil
+	return result
 }
 
 var _ p.Control = (*PreflightClient)(nil)
 
+// Shared validation owns the eight closed facts and their cross-check semantics.
+// The adapter retains only the local grant/config/time and metadata fences.
 func validatePreflightResult(g p.Grant, r p.Result) error {
 	_, observedOffset := r.ObservedAt.Zone()
-	if p.ValidateConfig(r.Config) != nil || r.Config.Digest != g.ConfigDigest || r.Config.ScopeID != g.ScopeID || r.Config.SourceEpoch != g.SourceEpoch || !sameOrigin(r.Config.PublicOrigin, g.Request.Config.PublicOrigin) || r.Config.OriginStatus != g.Request.Config.OriginStatus || r.ObservedAt.IsZero() || observedOffset != 0 || len(r.Checks) != 8 {
+	if p.ValidateConfig(r.Config) != nil || r.Config.Digest != g.ConfigDigest || r.Config.ScopeID != g.ScopeID || r.Config.SourceEpoch != g.SourceEpoch || !sameOrigin(r.Config.PublicOrigin, g.Request.Config.PublicOrigin) || r.Config.OriginStatus != g.Request.Config.OriginStatus || r.ObservedAt.IsZero() || observedOffset != 0 {
 		return p.ErrInvalid
 	}
-	ids := []string{"credential_configuration", "bot_identity", "public_origin", "webhook_registration", "pending_updates", "delivery_errors", "recovery_materials", "delivery_verification"}
-	for i, ch := range r.Checks {
-		if ch.ID != ids[i] || len(ch.Details) > 4096 {
-			return p.ErrInvalid
-		}
+	checks := preflightWireChecks(r.Checks)
+	if _, err := wire.ValidatePreflightChecks(checks); err != nil {
+		return preflightWireError(err)
 	}
-	checks := r.Checks
+	// This is a projection of already schema-validated details, not another wire
+	// definition. Compare to the exact trusted credential metadata of this claim.
 	var credentials struct {
 		Bot     bool `json:"bot_token_configured"`
 		Webhook bool `json:"webhook_secret_configured"`
 	}
-	if preflightDecode(checks[0].Details, &credentials) != nil || credentials.Bot != g.Credential.Configured || credentials.Webhook != g.WebhookSecretConfigured {
-		return p.ErrInvalid
-	}
-	code, status := "CREDENTIALS_CONFIGURED", "PASS"
-	if !credentials.Bot {
-		code, status = "BOT_TOKEN_MISSING", "FAIL"
-	} else if !credentials.Webhook {
-		code, status = "WEBHOOK_SECRET_MISSING", "FAIL"
-	}
-	if !preflightCheckIs(checks[0], code, status) {
-		return p.ErrInvalid
-	}
-	var identity struct {
-		Match *bool `json:"identity_match"`
-	}
-	if preflightDecode(checks[1].Details, &identity) != nil {
-		return p.ErrInvalid
-	}
-	switch checks[1].Code {
-	case "BOT_IDENTITY_MATCH":
-		if checks[1].Status != "PASS" || identity.Match == nil || !*identity.Match {
-			return p.ErrInvalid
-		}
-	case "BOT_IDENTITY_MISMATCH":
-		if checks[1].Status != "FAIL" || identity.Match == nil || *identity.Match {
-			return p.ErrInvalid
-		}
-	case "TOKEN_REJECTED":
-		if checks[1].Status != "FAIL" || identity.Match != nil {
-			return p.ErrInvalid
-		}
-	case "NOT_EXECUTED":
-		if checks[1].Status != "SKIPPED" || identity.Match != nil {
-			return p.ErrInvalid
-		}
-	default:
-		if !preflightProviderFailure(checks[1].Code) || checks[1].Status != "UNKNOWN" || identity.Match != nil {
-			return p.ErrInvalid
-		}
-	}
-	if !credentials.Bot && checks[1].Code != "NOT_EXECUTED" {
-		return p.ErrInvalid
-	}
-	var origin struct {
-		Validation string `json:"validation"`
-	}
-	status = "FAIL"
-	if r.Config.OriginStatus == "PUBLIC_ORIGIN_STATIC_VALID" {
-		status = "PASS"
-	}
-	if preflightDecode(checks[2].Details, &origin) != nil || origin.Validation != "STATIC_ONLY" || !preflightCheckIs(checks[2], r.Config.OriginStatus, status) {
-		return p.ErrInvalid
-	}
-	var webhook struct {
-		Presence *bool  `json:"presence"`
-		Relation string `json:"relation"`
-	}
-	if preflightDecode(checks[3].Details, &webhook) != nil {
-		return p.ErrInvalid
-	}
-	switch checks[3].Code {
-	case "WEBHOOK_MATCH", "WEBHOOK_DIFFERENT":
-		relation, status := "MATCH", "PASS"
-		if checks[3].Code == "WEBHOOK_DIFFERENT" {
-			relation, status = "DIFFERENT", "WARN"
-		}
-		if checks[3].Status != status || webhook.Presence == nil || !*webhook.Presence || webhook.Relation != relation || r.Config.PublicOrigin == nil {
-			return p.ErrInvalid
-		}
-	case "WEBHOOK_NONE":
-		if checks[3].Status != "WARN" || webhook.Presence == nil || *webhook.Presence || webhook.Relation != "NONE" {
-			return p.ErrInvalid
-		}
-	case "WEBHOOK_COMPARISON_UNAVAILABLE":
-		if checks[3].Status != "UNKNOWN" || webhook.Presence == nil || !*webhook.Presence || webhook.Relation != "UNKNOWN" || r.Config.PublicOrigin != nil {
-			return p.ErrInvalid
-		}
-	case "TOKEN_REJECTED":
-		if checks[3].Status != "FAIL" || webhook.Presence != nil || webhook.Relation != "UNKNOWN" {
-			return p.ErrInvalid
-		}
-	case "NOT_EXECUTED":
-		if checks[3].Status != "SKIPPED" || webhook.Presence != nil || webhook.Relation != "UNKNOWN" {
-			return p.ErrInvalid
-		}
-	default:
-		if !preflightProviderFailure(checks[3].Code) || checks[3].Status != "UNKNOWN" || webhook.Presence != nil || webhook.Relation != "UNKNOWN" {
-			return p.ErrInvalid
-		}
-	}
-	if checks[1].Code != "BOT_IDENTITY_MATCH" && checks[3].Code != "NOT_EXECUTED" {
-		return p.ErrInvalid
-	}
-	var pending struct {
-		Count *int64 `json:"pending_update_count"`
-	}
-	if preflightDecode(checks[4].Details, &pending) != nil {
-		return p.ErrInvalid
-	}
-	if pending.Count == nil {
-		if !preflightCheckIs(checks[4], "NOT_EXECUTED", "SKIPPED") {
-			return p.ErrInvalid
-		}
-	} else {
-		code, status := "PENDING_UPDATES_ZERO", "PASS"
-		if *pending.Count < 0 {
-			return p.ErrInvalid
-		}
-		if *pending.Count > 0 {
-			code, status = "PENDING_UPDATES_PRESENT", "WARN"
-		}
-		if !preflightCheckIs(checks[4], code, status) {
-			return p.ErrInvalid
-		}
-	}
-	var delivery struct {
-		HasError  *bool      `json:"has_last_error"`
-		LastError *time.Time `json:"last_error_at"`
-	}
-	if preflightDecode(checks[5].Details, &delivery) != nil {
-		return p.ErrInvalid
-	}
-	if delivery.HasError == nil {
-		if delivery.LastError != nil || !preflightCheckIs(checks[5], "NOT_EXECUTED", "SKIPPED") {
-			return p.ErrInvalid
-		}
-	} else if *delivery.HasError {
-		if !preflightCheckIs(checks[5], "DELIVERY_ERROR_REPORTED", "WARN") {
-			return p.ErrInvalid
-		}
-	} else if delivery.LastError != nil || !preflightCheckIs(checks[5], "DELIVERY_ERROR_NOT_REPORTED", "PASS") {
-		return p.ErrInvalid
-	}
-	if webhook.Presence == nil {
-		if pending.Count != nil || delivery.HasError != nil {
-			return p.ErrInvalid
-		}
-	} else if pending.Count == nil || delivery.HasError == nil {
-		return p.ErrInvalid
-	}
-	var recovery struct {
-		Readable bool `json:"secret_token_readable"`
-		Restore  bool `json:"restore_available"`
-	}
-	if preflightDecode(checks[6].Details, &recovery) != nil || recovery.Readable || recovery.Restore || !preflightCheckIs(checks[6], "RECOVERY_MATERIALS_UNAVAILABLE", "UNKNOWN") {
-		return p.ErrInvalid
-	}
-	var verification struct {
-		Verification string `json:"verification"`
-	}
-	if preflightDecode(checks[7].Details, &verification) != nil || verification.Verification != "NOT_TESTED" || !preflightCheckIs(checks[7], "DELIVERY_NOT_TESTED", "UNKNOWN") {
+	if json.Unmarshal(checks[0].Details, &credentials) != nil || credentials.Bot != g.Credential.Configured || credentials.Webhook != g.WebhookSecretConfigured || checks[2].Code != r.Config.OriginStatus {
 		return p.ErrInvalid
 	}
 	return nil
 }
 func sameOrigin(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
-func preflightCheckIs(c p.Check, code, status string) bool {
-	return c.Code == code && c.Status == status
-}
-func preflightProviderFailure(code string) bool {
-	switch code {
-	case "PROVIDER_NETWORK", "PROVIDER_TIMEOUT", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "PROVIDER_RESPONSE_INVALID":
-		return true
-	}
-	return false
-}
