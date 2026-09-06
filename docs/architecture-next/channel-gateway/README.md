@@ -16,6 +16,13 @@ Gateway，不启动 Node 子进程，也不创建独立 Connector 镜像。完�
 CGR-35/36 已补源码、本轮最终验收已通过；CGR-37 与有效发送截止策略仍开放。精确规则见
 [Final V1](delivery-final-v1.md)与[Runtime V1](delivery-runtime-v1.md)，不把维护接线扩张为生产发送。
 
+## Telegram 接入预检增量
+
+[Telegram预检设计与Gateway实现](telegram-preflight-v1.md)已在本工作树落盘：
+独立诊断授权、只读SDK Adapter、claim/resolve/complete Client、四槽Runner和Bootstrap；
+仍是同一个Go进程，Compose增加可关闭开关。当前本地HTTP/mTLS及Gateway回归与
+真实Control Schema/Handler、Web、真实Bot联合验收分开记账，后者与main合并尚待协调。
+
 ## 1. 一句话结论
 
 **目标：Gateway 使用 Go；Telegram 直接 import 第三方 Go SDK；企业微信自研

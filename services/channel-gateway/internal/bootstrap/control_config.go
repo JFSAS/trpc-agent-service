@@ -26,17 +26,24 @@ func (c1 ControlConfig) validate(instance string) error {
 	return nil
 }
 func (c1 ControlConfig) client(instance string) (*httpadapter.Client, error) {
+	options, err := c1.clientOptions(instance)
+	if err != nil {
+		return nil, err
+	}
+	return httpadapter.New(options)
+}
+func (c1 ControlConfig) clientOptions(instance string) (httpadapter.Options, error) {
 	ca, e := os.ReadFile(c1.CAFile)
 	if e != nil {
-		return nil, errors.New("read Control CA failed")
+		return httpadapter.Options{}, errors.New("read Control CA failed")
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(ca) {
-		return nil, errors.New("invalid Control CA")
+		return httpadapter.Options{}, errors.New("invalid Control CA")
 	}
 	cert, e := tls.LoadX509KeyPair(c1.CertificateFile, c1.KeyFile)
 	if e != nil {
-		return nil, errors.New("read Control client identity failed")
+		return httpadapter.Options{}, errors.New("read Control client identity failed")
 	}
-	return httpadapter.New(httpadapter.Options{BaseURL: strings.TrimSuffix(c1.URL, "/"), ScopeID: c1.ScopeID, SourceEpoch: c1.SourceEpoch, InstanceID: instance, RootCAs: pool, Certificate: cert})
+	return httpadapter.Options{BaseURL: strings.TrimSuffix(c1.URL, "/"), ScopeID: c1.ScopeID, SourceEpoch: c1.SourceEpoch, InstanceID: instance, RootCAs: pool, Certificate: cert}, nil
 }
