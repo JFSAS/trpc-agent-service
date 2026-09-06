@@ -201,3 +201,33 @@ func TestPreflightReadPassesTenantAccountAndTaskToAuthorizedQuery(t *testing.T) 
 		t.Fatalf("GET body status=%d", got.Code)
 	}
 }
+
+func TestPreflightHiddenAccountReturnsNotFoundBeforeInputChecks(t *testing.T) {
+	for _, tc := range []struct{ name, method, path, body string }{
+		{"create-valid", "POST", preflightPublicBase, preflightCreateBody},
+		{"create-malformed", "POST", preflightPublicBase, "{malformed"},
+		{"create-query", "POST", preflightPublicBase + "?extra=true", preflightCreateBody},
+		{"get-valid", "GET", preflightPublicBase + "/cpf_test", ""},
+		{"get-invalid-id", "GET", preflightPublicBase + "/_invalid", ""},
+		{"get-body", "GET", preflightPublicBase + "/cpf_test", "{malformed"},
+		{"get-query", "GET", preflightPublicBase + "/cpf_test?extra=true", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := &preflightServiceFake{}
+			reader := &preflightAccountReaderFake{err: application.ErrPermissionDenied}
+			response := preflightRequest(preflightRouter(service, &identityapp.IdentityContext{UserID: "usr_outsider"}, reader), tc.method, tc.path, tc.body)
+			if response.Code != 404 || !strings.Contains(response.Body.String(), "CHANNEL_ACCOUNT_NOT_FOUND") || service.creates != 0 || service.gets != 0 {
+				t.Fatalf("status=%d creates=%d gets=%d body=%s", response.Code, service.creates, service.gets, response.Body)
+			}
+		})
+	}
+}
+
+func TestPreflightVisibleAccountPermissionFailureRemainsForbidden(t *testing.T) {
+	service := &preflightServiceFake{err: application.ErrPermissionDenied}
+	reader := &preflightAccountReaderFake{}
+	response := preflightRequest(preflightRouter(service, &identityapp.IdentityContext{UserID: "usr_member"}, reader), "POST", preflightPublicBase, preflightCreateBody)
+	if response.Code != 403 || service.creates != 1 || reader.calls != 1 {
+		t.Fatalf("status=%d calls=%d visibility=%d", response.Code, service.creates, reader.calls)
+	}
+}

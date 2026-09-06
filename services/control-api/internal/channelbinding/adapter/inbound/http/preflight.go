@@ -45,11 +45,8 @@ func (h *PreflightHandler) create(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.accounts != nil {
-		if _, err := h.accounts.GetAccount(c.Request.Context(), a, c.Param("account_id")); err != nil {
-			preflightError(c, err)
-			return
-		}
+	if !h.accountVisible(c, a) {
+		return
 	}
 	k, ok := key(c)
 	if !ok {
@@ -74,7 +71,7 @@ func (h *PreflightHandler) create(c *gin.Context) {
 }
 func (h *PreflightHandler) get(c *gin.Context) {
 	a, ok := actor(c)
-	if !ok || !getOnly(c) {
+	if !ok || !h.accountVisible(c, a) || !getOnly(c) {
 		return
 	}
 	if !domain.ValidID(c.Param("preflight_id")) {
@@ -96,6 +93,25 @@ func (h *PreflightHandler) get(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, result)
 }
+
+// accountVisible applies the preflight-only concealment contract before
+// decoding caller input. Do not map service write errors here: OWNER denial and
+// commit-time Session revocation intentionally remain forbidden responses.
+func (h *PreflightHandler) accountVisible(c *gin.Context, a application.Actor) bool {
+	if h.accounts == nil {
+		return true
+	}
+	_, err := h.accounts.GetAccount(c.Request.Context(), a, c.Param("account_id"))
+	if errors.Is(err, application.ErrPermissionDenied) {
+		err = application.ErrAccountNotFound
+	}
+	if err != nil {
+		preflightError(c, err)
+		return false
+	}
+	return true
+}
+
 func preflightError(c *gin.Context, err error) {
 	var d *domain.Error
 	if errors.As(err, &d) {

@@ -54,7 +54,9 @@ func testTelegramPreflightHTTP(t *testing.T, ctx context.Context, router http.Ha
 	deploymentRequest(t, router, "POST", "/v1/tenants/"+otherTenant.ID+"/channel-accounts/"+accountID+"/preflights", owner, "foreign-account", "{malformed", 404, nil)
 	deploymentRequest(t, router, "POST", base, nil, "anonymous", body, 401, nil)
 	deploymentRequest(t, router, "POST", base, member, "member", body, 403, nil)
-	deploymentRequest(t, router, "POST", base, outsider, "outsider", body, 403, nil)
+	t.Run("OutsiderValidCreateHidden", func(t *testing.T) {
+		deploymentRequest(t, router, "POST", base, outsider, "outsider", body, 404, nil)
+	})
 	before := preflightUnchangedState(t, ctx, pool)
 	var created channelv1.PreflightCreated
 	first := deploymentRequest(t, router, "POST", base, owner, "preflight-first", body, 202, &created)
@@ -74,7 +76,10 @@ func testTelegramPreflightHTTP(t *testing.T, ctx context.Context, router http.Ha
 	if view.State != "QUEUED" || view.Freshness != "NOT_CHECKED" || view.GatewayConfigDigest != nil || view.GatewayConfigFreshness != nil || len(view.Checks) != 0 {
 		t.Fatalf("queued view=%+v", view)
 	}
-	request(t, router, "GET", created.StatusURL, outsider, "", 403, nil)
+	t.Run("OutsiderValidReadHidden", func(t *testing.T) {
+		request(t, router, "GET", created.StatusURL, outsider, "", 404, nil)
+	})
+	testPreflightInvisibleMalformedRequests(t, ctx, router, pool, base, created.StatusURL, outsider)
 	request(t, router, "GET", base+"/cpf_not_found", member, "", 404, nil)
 	serverTLS, clientTLS, _ := channelTLS(t)
 	server := httptest.NewUnstartedServer(module.InternalHandler)
@@ -493,4 +498,49 @@ func preflightTaskBytes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) m
 		out[table] = document
 	}
 	return out
+}
+
+// Visibility precedes parsing for authenticated users outside the tenant. Every
+// case targets a real account and task, so a router-level missing path cannot
+// accidentally satisfy the 404 invariant.
+func testPreflightInvisibleMalformedRequests(t *testing.T, ctx context.Context, router http.Handler, pool *pgxpool.Pool, base, statusURL string, outsider *http.Cookie) {
+	before := preflightTaskBytes(t, ctx, pool)
+	const validBody = `{"expected_account_revision":1,"expected_connection_revision":1,"expected_bot_token_version":1}`
+	for _, tc := range []struct {
+		name, method, path, body, contentType string
+		keys                                  []string
+	}{
+		{name: "OutsiderMalformedCreateBodyHidden", method: "POST", path: base, body: "{malformed", contentType: "application/json", keys: []string{"hidden-malformed"}},
+		{name: "OutsiderWrongCreateContentTypeHidden", method: "POST", path: base, body: validBody, contentType: "text/plain", keys: []string{"hidden-content-type"}},
+		{name: "OutsiderMissingCreateKeyHidden", method: "POST", path: base, body: validBody, contentType: "application/json"},
+		{name: "OutsiderMalformedCreateKeyHidden", method: "POST", path: base, body: validBody, contentType: "application/json", keys: []string{"key contains spaces"}},
+		{name: "OutsiderDuplicateCreateKeyHidden", method: "POST", path: base, body: validBody, contentType: "application/json", keys: []string{"first", "second"}},
+		{name: "OutsiderCreateQueryHidden", method: "POST", path: base + "?unexpected=1", body: validBody, contentType: "application/json", keys: []string{"hidden-query"}},
+		{name: "OutsiderMalformedTaskIDHidden", method: "GET", path: base + "/_invalid"},
+		{name: "OutsiderReadBodyHidden", method: "GET", path: statusURL, body: "{malformed", contentType: "application/json"},
+		{name: "OutsiderReadQueryHidden", method: "GET", path: statusURL + "?unexpected=1"},
+		{name: "OutsiderMalformedReadCombinedHidden", method: "GET", path: base + "/_invalid?unexpected=1", body: "{malformed", contentType: "text/plain"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(outsider)
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
+			}
+			for _, key := range tc.keys {
+				req.Header.Add("Idempotency-Key", key)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("invisible %s request returned status=%d want=404 body=%s", tc.method, w.Code, w.Body.String())
+			}
+			if w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("invisible account response is cacheable")
+			}
+		})
+	}
+	if !reflect.DeepEqual(before, preflightTaskBytes(t, ctx, pool)) {
+		t.Fatal("invisible request changed a diagnostic task or request receipt")
+	}
 }

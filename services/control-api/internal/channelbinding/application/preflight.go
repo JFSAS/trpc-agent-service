@@ -67,7 +67,9 @@ func (s *PreflightService) publicAccount(ctx context.Context, actor Actor, accou
 		return ErrDependencyUnavailable
 	}
 	if !ok {
-		return ErrPermissionDenied
+		// Preflight hides accounts from nonmembers. A visible member who
+		// lacks OWNER, or loses their Session at commit, still receives 403.
+		return ErrAccountNotFound
 	}
 	if !domain.ValidID(account) {
 		return invalid("/account_id")
