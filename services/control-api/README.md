@@ -4,10 +4,11 @@ Control API is the management backend for the Agent platform. It owns global
 identity, platform administration, Tenant membership, and Agent authoring.
 Runtime Profile V1 implements reusable resource authoring, deterministic validation,
 immutable Profile Revision publication, and Profile-owned encrypted credentials.
-Deployment and Channel Binding remain
-later management capabilities. Control API is not part of the message execution hot
-path. A future Worker credential-initialization call will depend on the Profile
-owner; the current default bootstrap does not enable that internal route.
+Deployment and Channel Binding remain later management capabilities. Runtime routing
+and configuration use immutable projections, not synchronous Control API configuration
+reads. Profile CheckUsable, ResolveForAttempt, and an optional internal HTTP adapter
+already exist; production Run/Attempt authorization and Worker wiring remain pending.
+The default process bootstrap does not enable that internal route.
 
 ## Implemented V1
 
@@ -91,6 +92,61 @@ The internal route is registered only when trusted workload authentication and
 an ExecutionAuthorizationVerifier are injected together; neither has a permissive
 default, and current process bootstrap leaves the route disabled.
 
+## Planned next slice: Deployment V1
+
+The [Deployment V1 design](../../docs/architecture-next/control-api/deployment.md)
+accepts a fixed AgentVersion and ProfileRevision, resolves requirements by exact
+category and name, and compiles an immutable DeploymentRevision and minimal
+RuntimeManifest. V1 has no Environment business object, hidden default Environment,
+Overlay, or user-provided binding tables. Storage uses separate session/memory
+runtime roles rather than AgentSpec Slots.
+
+A fixed platform execution contract supplies supported Adapter versions and limits.
+The implemented current V1 Profile write DTO accepts credentials directly; Profile owns their
+encrypted PostgreSQL storage, internal identity, and authorization. Public Profile
+reads combine non-secret config and current credential states without values, ciphertext,
+or internal credential IDs. Deployment configuration reads will return a fixed redacted
+View. Dynamic status is not part of immutable Revision content, RuntimeManifests, or
+fixed publication Receipt responses.
+The existing /v1 and schema_version=v1 contract has been directly updated without a
+ref-only compatibility branch. Development data may be rebuilt explicitly; published
+snapshots in the target runtime model remain immutable. Control Profile source, Schema,
+fixtures, and encrypted storage are now aligned with origin/main at bf107766.
+No separate user-managed Secret object is introduced.
+
+Deployment uses ProfileCredentialChecker.CheckUsable for metadata-only checks. The
+pure Compiler consumes fixed configuration and produces the credential uses closure;
+dynamic checker results gate publication and populate Application Reports only,
+never Compiler inputs, Canonical Content, or digests.
+The planned Worker adapter will use RuntimeCredentialResolver.ResolveForAttempt and
+the Profile Owner's authenticated internal batch endpoint for the fixed Manifest. It
+does not query Profile SQL or load Draft/latest configuration. New Attempts needing
+credentials depend on this endpoint's availability; already-resolved Attempts reuse
+their validated set in process memory without further Resolve calls. An uncertain
+batch response, process loss, or lost lease ends the Attempt; recovery uses a new
+AttemptID, not a historical credential pin. Credential values never enter Manifest,
+Outbox, or events; internal references are projected out of public
+reads. Per-node tool assignment remains enforced.
+
+Draft keep retains an ID, replace allocates a new ID, and clear detaches only the
+Draft. The existing explicit OWNER-only Profile action replaces/clears an already-used
+credential with independent Credential CAS, addressed by ProfileRevision and resource
+field rather than a caller-selected internal ID. It affects new Attempts of existing
+Manifests, not their immutable digests. Live clear revokes an ID permanently; replace
+does not revive it, and re-entry requires a new Draft ID and publication. Changing a
+fixed destination or audience
+requires a new credential ID and configuration revision.
+
+Runtime Profile currently supports only the MCP `web.search` Tool configuration
+protocol; built-in and command Tool protocols are later extensions.
+
+Profile credential protocol/Owner interfaces are implemented. Remaining Deployment
+implementation order: protocol and fixtures → pure Compiler → Application →
+PostgreSQL atomic publication/Outbox and HTTP → optional Relay. Channel Binding
+activation and Gateway/Worker execution follow as separate slices. Deployment has
+no implemented routes yet; planned routes are intentionally excluded from
+**Implemented V1** above.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
@@ -130,7 +186,7 @@ services/control-api/
 │   ├── tenant/             # Tenant and Membership rules
 │   ├── agent/              # Agent, Draft, validation, immutable Version
 │   ├── runtimeprofile/     # Profile, Draft, immutable Revision, private credentials
-│   ├── deployment/         # later vertical slice
+│   ├── deployment/         # design only: match, compile, publish fixed Manifest
 │   ├── channelbinding/     # later vertical slice
 │   ├── infra/              # shared process connections and mechanics
 │   └── bootstrap/          # the single process composition root

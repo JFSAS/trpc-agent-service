@@ -1,0 +1,335 @@
+package bootstrap
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	catalogpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/catalogpostgres"
+	controlhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
+	registrationpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/registrationpostgres"
+	registrationremote "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/telegramregistration"
+	accountuse "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
+	catalogrefresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
+	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
+	wecomdelivery "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/wecomadapter"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	telegram "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/inbound/telegramadapter"
+	admissionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/outbound/postgres"
+	admissionapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/application"
+	admissiondomain "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	connectionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/postgres"
+	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application"
+	deliverypg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/postgres"
+	deliveryapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/application"
+	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
+	routeconsumer "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/inbound/nats"
+	routepg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/outbound/postgres"
+	routeapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/application"
+	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/migrations"
+	"golang.org/x/sync/errgroup"
+)
+
+type App struct {
+	deliveryRunner            *deliveryapp.Runner
+	catalog                   *catalogrefresh.Service
+	control                   *controlhttp.Client
+	telegram                  *telegramruntime.Runtime
+	use                       *accountuse.Service
+	controlConfig             ControlConfig
+	instanceID, instanceEpoch string
+	delivery                  *deliverypg.Store
+	pool                      *pgxpool.Pool
+	transport                 *transport.Transport
+	server, admin             *http.Server
+	relay                     *admissionapp.Relay
+	consumer                  *routeconsumer.Consumer
+	admission                 *admissionapp.Service
+	ledger                    *admissionpg.Store
+	routes                    *routeapp.Service
+	stopping                  atomic.Bool
+	closeOnce                 sync.Once
+	connections               *connection.Supervisor
+	maintenance               *deliveryapp.Maintainer
+}
+
+func New(ctx context.Context, c Config) (*App, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.New(ctx, c.DatabaseURL)
+	if err != nil {
+		return nil, errors.New("invalid Gateway database configuration")
+	}
+	cleanup := func() { pool.Close() }
+	if err = pool.Ping(ctx); err != nil {
+		cleanup()
+		return nil, errors.New("Gateway database unavailable")
+	}
+	if err = migrations.Apply(ctx, pool); err != nil {
+		cleanup()
+		return nil, err
+	}
+	n, err := transport.Connect(c.NATSURL, c.Topology, c.NATSAuth)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	var controlClient *controlhttp.Client
+	fail := func(err error) (*App, error) {
+		if controlClient != nil {
+			controlClient.Close()
+		}
+		n.Close()
+		cleanup()
+		return nil, err
+	}
+	if err = n.Verify(ctx); err != nil {
+		return fail(err)
+	}
+	routes := routepg.NewStore(pool)
+	routing, err := routeapp.NewService(routes)
+	if err != nil {
+		return fail(err)
+	}
+	leases := connectionpg.NewStore(pool)
+	var catalog *catalogrefresh.Service
+	var use *accountuse.Service
+	var catalogStore *catalogpg.Store
+	var boot string
+	if c.AccountSource == "control" {
+		var id [16]byte
+		if _, err = rand.Read(id[:]); err != nil {
+			return fail(errors.New("instance epoch unavailable"))
+		}
+		id[6] = (id[6] & 0x0f) | 0x40
+		id[8] = (id[8] & 0x3f) | 0x80
+		boot = fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16])
+		controlClient, err = c.Control.client(c.InstanceID)
+		if err != nil {
+			return fail(err)
+		}
+		catalogStore, err = catalogpg.New(pool, c.Control.ScopeID, c.Control.SourceEpoch, c.InstanceID, boot)
+		if err != nil {
+			return fail(err)
+		}
+		catalog, err = catalogrefresh.New(controlClient, catalogStore)
+		if err != nil {
+			return fail(err)
+		}
+		use = &accountuse.Service{Directory: catalog, Issuer: catalogStore, Credentials: credentialTransport{controlClient}, Owner: leases}
+	}
+
+	// Maintenance owns no ingress authorization or Provider capability. It must
+	// also run on replicas with zero accounts and no locally held connections.
+	deliveryLedger, err := deliverypg.NewStore(pool, leases, deliverypg.Options{})
+	if err != nil {
+		return fail(err)
+	}
+	if catalogStore != nil {
+		deliveryLedger = deliveryLedger.WithAccountUseGuard(accountGuardBridge{store: catalogStore})
+	}
+	maintenance, err := deliveryapp.NewMaintainer(deliveryLedger, deliveryapp.MaintenanceOptions{})
+	if err != nil {
+		return fail(err)
+	}
+	ledger := admissionpg.NewStore(pool, routes).WithConnectionGuard(leases)
+	if catalogStore != nil {
+		ledger = ledger.WithAccountUseGuard(accountGuardBridge{store: catalogStore, ingress: true})
+	}
+	acceptor := admissionapp.New(ledger, routeBridge{routing})
+	stream, err := n.JS.Stream(ctx, transport.RouteStream)
+	if err != nil {
+		return fail(err)
+	}
+	consumer, err := stream.Consumer(ctx, transport.RouteConsumer)
+	if err != nil {
+		return fail(err)
+	}
+	app := &App{catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+	if err := app.consumer.Initialize(ctx); err != nil {
+		return fail(err)
+	}
+	if catalog != nil {
+		options := c.ConnectionOptions
+		options.InstanceID = c.InstanceID
+		options.MaxAccounts = 1000
+		app.connections, err = connection.NewSupervisor(leases, catalog, controlWeComCredentials{use}, &controlWeComFactory{base: wecomClientFactory{acceptor: acceptor, url: c.WeComURL}, use: use}, options)
+		if err != nil {
+			return fail(err)
+		}
+	} else if len(c.WeComAccounts) > 0 || c.WeComAccountsFile != "" {
+		options := c.ConnectionOptions
+		options.InstanceID = c.InstanceID
+		if options.InstanceID == "" {
+			var id [16]byte
+			if _, err = rand.Read(id[:]); err != nil {
+				return fail(errors.New("Gateway instance identity unavailable"))
+			}
+			options.InstanceID = hex.EncodeToString(id[:])
+		}
+		app.connections, err = connection.NewSupervisor(leases, accountFileSource{path: c.WeComAccountsFile, initial: c.WeComAccounts}, envWeComCredentials{}, wecomClientFactory{acceptor: acceptor, url: c.WeComURL}, options)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	if catalog != nil {
+		provider, e := wecomdelivery.NewProvider(connectionDeliverySource{app.connections})
+		if e != nil {
+			return fail(e)
+		}
+		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider}, deliveryapp.DispatchOptions{})
+		if e != nil {
+			return fail(e)
+		}
+		bridge := &controlDelivery{use: use, owner: app.connections, instance: c.InstanceID, dispatcher: dispatcher}
+		app.deliveryRunner, e = deliveryapp.NewRunner(deliveryLedger, bridge, bridge, maintenance, deliveryapp.RunnerOptions{InstanceID: c.InstanceID})
+		if e != nil {
+			return fail(e)
+		}
+	}
+	mux := http.NewServeMux()
+	admin := http.NewServeMux()
+	admin.HandleFunc("GET /livez", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	admin.HandleFunc("GET /readyz", app.ready)
+	if catalog != nil {
+		registry := &dynamicTelegram{handlers: map[string]http.Handler{}, use: use, acceptor: acceptor}
+		factory := c.telegramFactory
+		if factory == nil {
+			factory = registrationremote.Factory{}
+		}
+		app.telegram, err = telegramruntime.New(catalog, use, registry, registrationpg.New(pool, catalogStore), factory, strings.TrimSuffix(c.Control.PublicOrigin, "/"))
+		if err != nil {
+			return fail(err)
+		}
+		mux.Handle("/v1/telegram/", registry)
+	}
+	for _, account := range c.Accounts {
+		handler, err := telegram.NewHandler(account.ID, account.Secret, acceptor)
+		if err != nil {
+			return fail(err)
+		}
+		mux.Handle("/v1/telegram/"+account.ID, handler)
+	}
+	app.server = newServer(c.HTTPAddress, mux)
+	app.admin = newServer(c.AdminAddress, admin)
+	return app, nil
+}
+func newServer(address string, h http.Handler) *http.Server {
+	return &http.Server{Addr: address, Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+}
+func (a *App) Handler() http.Handler      { return a.server.Handler }
+func (a *App) AdminHandler() http.Handler { return a.admin.Handler }
+func (a *App) Close() {
+	a.closeOnce.Do(func() {
+		if a.catalog != nil {
+			a.catalog.Close()
+		}
+		if a.control != nil {
+			a.control.Close()
+		}
+		a.transport.Close()
+		a.pool.Close()
+	})
+}
+func (a *App) ready(w http.ResponseWriter, r *http.Request) {
+	if a.stopping.Load() || (a.catalog != nil && !a.catalog.Ready()) || (a.telegram != nil && !a.telegram.Ready()) || (a.connections != nil && !a.connections.Ready()) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	health, err := a.routes.QueryProjectionHealth(ctx)
+	if err != nil || !health.Initialized || health.Stale || health.BlockedReason != "" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	budget, err := a.ledger.Health(ctx)
+	if err != nil || budget.Saturated {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	if !a.transport.Conn.IsConnected() {
+		w.Header().Set("X-Gateway-State", "degraded")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *App) Run(ctx context.Context) error {
+	// Bind both before starting background work, so a bad listen address cannot
+	// leave a partially started workload or goroutines waiting forever.
+	public, err := net.Listen("tcp", a.server.Addr)
+	if err != nil {
+		return errors.New("listen public HTTP failed")
+	}
+	admin, err := net.Listen("tcp", a.admin.Addr)
+	if err != nil {
+		public.Close()
+		return errors.New("listen administrative HTTP failed")
+	}
+	g, runCtx := errgroup.WithContext(ctx)
+	serve := func(server *http.Server, l net.Listener) func() error {
+		return func() error {
+			err := server.Serve(l)
+			if errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
+			return err
+		}
+	}
+	g.Go(serve(a.server, public))
+	g.Go(serve(a.admin, admin))
+	g.Go(func() error { return a.relay.Run(runCtx) })
+	g.Go(func() error { return a.consumer.Run(runCtx) })
+	if a.deliveryRunner != nil {
+		g.Go(func() error { return a.deliveryRunner.Run(runCtx) })
+	} else {
+		g.Go(func() error { return a.maintenance.Run(runCtx) })
+	}
+	if a.catalog != nil {
+		g.Go(func() error { return a.catalog.Run(runCtx) })
+		g.Go(func() error { return a.telegram.Run(runCtx) })
+		g.Go(func() error { return a.reportAccounts(runCtx) })
+	}
+	if a.connections != nil {
+		g.Go(func() error { return a.connections.Run(runCtx) })
+	}
+	g.Go(func() error {
+		<-runCtx.Done()
+		a.stopping.Store(true)
+		a.admission.Stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		shutdownGroup, _ := errgroup.WithContext(shutdownCtx)
+		for _, server := range []*http.Server{a.server, a.admin} {
+			server := server
+			shutdownGroup.Go(func() error {
+				if err := server.Shutdown(shutdownCtx); err != nil {
+					_ = server.Close()
+					return err
+				}
+				return nil
+			})
+		}
+		return shutdownGroup.Wait()
+	})
+	err = g.Wait()
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+type routeBridge struct{ service *routeapp.Service }
+
+func (b routeBridge) Resolve(ctx context.Context, provider, account string) (admissiondomain.RouteSnapshot, error) {
+	r, err := b.service.Resolve(ctx, provider, account)
+	return admissiondomain.RouteSnapshot{Provider: r.Provider, AccountID: r.AccountID, TenantID: r.TenantID, BindingID: r.BindingID, Generation: r.Generation, DeploymentRevisionID: r.DeploymentRevisionID, ManifestRef: r.ManifestRef, ManifestDigest: r.ManifestDigest}, err
+}

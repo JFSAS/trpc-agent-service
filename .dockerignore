@@ -8,3 +8,9 @@ verification
 coverage.out
 coverage.html
 *.log
+
+# Runtime environment files must never enter a build layer.
+**/.env
+**/.env.*
+!**/.env.example
+.codex-worktrees

@@ -1,0 +1,20 @@
+version: 1
+roles:
+  - user: reconciler
+    password_env: NATS_RECONCILER_PASSWORD
+    publish: ["$JS.API.>"]
+    subscribe: ["_INBOX.reconciler.>"]
+  - user: control
+    password_env: NATS_CONTROL_PASSWORD
+    publish: ["control.channel-route.v1"]
+    subscribe: ["_INBOX.control.>"]
+  - user: gateway
+    password_env: NATS_GATEWAY_PASSWORD
+    publish:
+      - execution.run-requested.v1
+      - $JS.API.STREAM.INFO.CHANNEL_ROUTES_V1
+      - $JS.API.STREAM.INFO.RUN_REQUESTS_V1
+      - $JS.API.CONSUMER.INFO.CHANNEL_ROUTES_V1.channel-gateway-routes-v1
+      - $JS.API.CONSUMER.MSG.NEXT.CHANNEL_ROUTES_V1.channel-gateway-routes-v1
+      - $JS.ACK.CHANNEL_ROUTES_V1.channel-gateway-routes-v1.>
+    subscribe: ["_INBOX.gateway.>"]
