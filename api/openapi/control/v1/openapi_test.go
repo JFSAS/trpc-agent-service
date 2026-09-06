@@ -14,7 +14,7 @@ import (
 
 func TestControlOpenAPIIsValid(t *testing.T) {
 	document := loadControlOpenAPI(t)
-	if err := document.Validate(context.Background(), openapi3.AllowExtraSiblingFields("const", "$schema", "$id", "$defs", "propertyNames", "if", "then", "else")); err != nil {
+	if err := document.Validate(context.Background(), openapi3.AllowExtraSiblingFields("const", "$schema", "$id", "$defs", "propertyNames", "if", "then", "else", "prefixItems")); err != nil {
 		t.Fatalf("validate OpenAPI: %v", err)
 	}
 }
@@ -596,12 +596,14 @@ func TestControlOpenAPIContainsImplementedChannelRoutes(t *testing.T) {
 	assertRoutes(t, document, "/v1/tenants/{tenant_id}/channel-", []string{
 		"GET /v1/tenants/{tenant_id}/channel-accounts",
 		"GET /v1/tenants/{tenant_id}/channel-accounts/{account_id}",
+		"GET /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}",
 		"GET /v1/tenants/{tenant_id}/channel-bindings",
 		"GET /v1/tenants/{tenant_id}/channel-bindings/{binding_id}",
 		"PATCH /v1/tenants/{tenant_id}/channel-accounts/{account_id}",
 		"POST /v1/tenants/{tenant_id}/channel-accounts",
 		"POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials/{purpose}/update",
 		"POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/enabled",
+		"POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights",
 		"POST /v1/tenants/{tenant_id}/channel-bindings",
 		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled",
 		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target",

@@ -48,7 +48,8 @@ func (a *App) Run(ctx context.Context) error {
 		if a.channelBinding == nil {
 			return
 		}
-		ticker := time.NewTicker(time.Minute)
+		ticker := time.NewTicker(time.Second)
+		ticks := 0
 		defer ticker.Stop()
 		for {
 			select {
@@ -56,7 +57,13 @@ func (a *App) Run(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				work, cancel := context.WithTimeout(runCtx, 5*time.Second)
-				_ = a.channelBinding.Runtime.PruneObservations(work)
+				if a.channelBinding.Preflights != nil {
+					_ = a.channelBinding.Preflights.Maintain(work)
+				}
+				ticks++
+				if ticks%60 == 0 {
+					_ = a.channelBinding.Runtime.PruneObservations(work)
+				}
 				cancel()
 			}
 		}

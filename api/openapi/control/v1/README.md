@@ -176,3 +176,30 @@ account/binding/status projections. Lists use stable-ID cursor/page_size (1–10
 default 50), not offset pagination. Internal mTLS endpoints are deliberately absent
 from this public Session API; their exact contracts live in Channel shared schemas
 and the Control Channel runtime guide. Profile-owned schemas and APIs are unchanged.
+
+## Telegram preflight: two public and three private operations
+
+`preflight-public.yaml`, referenced by `openapi.yaml`, adds OWNER
+`POST .../channel-accounts/{account_id}/preflights` (202, fixed idempotent
+creation receipt) and ACTIVE MEMBER `GET .../preflights/{preflight_id}` (200,
+redacted task/result). Existing 11 Channel management operations are unchanged.
+A saved disabled Telegram account needs no Binding/Deployment or READY state.
+All three expected account/connection/BotToken versions are required. State,
+diagnostic outcome, account freshness and unconfirmed Gateway config freshness
+are separate; a completed PASS is not real Telegram delivery verification.
+
+`preflight-internal.yaml` is a separate OpenAPI 3.1 **mTLS** document for
+claim/diagnostic-BotToken-resolve/complete. None of these paths is exposed in the
+public Session document. URI SAN principal mapping and explicit diagnostic kind
+`telegram_preflight` govern access; normal enabled-only credential consumers
+retain their original semantics. All success responses are `Cache-Control:
+no-store`; 200 responses are JSON, 204 responses have no body. The only plaintext
+value field is the private, lease-bound resolved response.
+
+Both documents reference the eight canonical closed Channel preflight schemas.
+The pinned kin-openapi parser handles their OpenAPI structure but not all 3.1
+keywords: tests allow `const`, conditionals and `prefixItems` while the canonical
+JSON Schema validator independently enforces them. It also lacks `mutualTLS`
+validation, so the private-document test explicitly verifies that exact security
+shape and validates paths, parameters, responses and schemas without replacing
+certificate authentication with a fabricated API-key scheme.
