@@ -660,3 +660,92 @@ Admission/Worker 同库授权 fence 仍待完成，全部 F01–F12 目标保持
   source recovery and the remaining optimization gates stay open. No real IM or
   deployment acceptance is asserted by this merge. Test evidence and exact source
   rollback are in `artifacts/channel-snapshot-main-review-20260908-0537/VERIFICATION.txt`.
+
+### 2026-09-08 — Admission local current-authorization transaction fence
+
+- Added a same-PG AuthorizationGuard to Admission Store, with current snapshot
+  head FOR SHARE versus installer FOR UPDATE, exact immutable policy validation,
+  principal/operation/group checks and final DB-time freshness recheck.
+- Preserved Receipt-first replay. Determinate denial stores `denied` without a
+  Run; unknown/expired/blocked state rolls back and remains retryable. Both local
+  ALLOW/DENIED decisions persist actor, route/policy/principal versions plus audit
+  intent atomically with the original Receipt/Admission/Outbox transaction.
+- Added 0016 and real PG tests for allow/deny/revoke/replay, unknown/expired/tenant
+  mismatch, allowed/disallowed groups, PUBLIC_LIMITED dependency hold, concurrent
+  deduplication, SQL head lock, final-time expiry and audit-failure rollback.
+- Not production-enabled: full policy dependencies and quotas, versioned execution
+  fact transfer, Worker current checks, audit relay/retention remain required.
+  `postgres/AUTHORIZATION.md` records these explicit next integration boundaries.
+- Evidence: `artifacts/channel-admission-authorization-20260908-0545/VERIFICATION.txt`.
+  F01 and the full F01–F12 goal remain unfinished; no commit/push/deploy this turn.
+
+### 2026-09-08 — Authorization fact in RunRequested and Worker retention
+
+- Added optional closed authorization wire object and generated DTO. The codec
+  checks actor/tenant/account/provider/route/conversation relations and recorded
+  observation interval; only ALLOW facts can accompany a Run. Old events remain
+  valid, but old strict consumers require upgrade before new emission is enabled.
+- Gateway's transaction now writes the actual authorization fact into RunRequested
+  Outbox; Worker wire/domain/JSON persistence retains it and includes it in both
+  event and logical Run digests. Mutation or stripping changes the identity.
+- Worker Claim currently holds such requests as AUTHORIZATION_NOT_READY, preserving
+  Receipt replay and allocating zero Attempts. New migration 0005 also prevents
+  old/direct SQL INSERT from bypassing the hold. This is a transitional guard,
+  not completion of the independent Worker authorization projection/checks.
+- Added closed-shape/identity/digest/round-trip tests, real Gateway PG Outbox fact
+  assertion, and real Worker migrator/runtime-role PG intake/replay/zero-attempt
+  tests including direct SQL bypass rejection. Evidence directory:
+  `artifacts/channel-authorization-wire-20260908-0600/VERIFICATION.txt`.
+- Next: full policy dependencies/quotas, independent Worker current-state fence,
+  tools/approvals, audit relay and mixed-consumer rollout. Production Gate remains
+  unassembled; F01 and all remaining F01–F12 requirements remain open.
+
+### 2026-09-08 — Worker-owned current projection and local Claim checks
+
+- Extracted the existing complete-snapshot installer and source port into public
+  `platform/channel/authorization` packages. Only compiled Gateway/Worker table
+  families are allowed; each owner retains its own pool/schema and migrations.
+  Gateway API/errors and integrity/supersession/expiry behavior remain unchanged.
+- Added Worker migration 0006 and NewAuthorizationProjection. Claim reads and
+  locks Worker-local current policy/principal state, checking epoch/identity,
+  revision floors, group/operation scope and DB time. Historical Admission ALLOW
+  no longer substitutes for a newer local REVOKED principal.
+- Wait reasons now distinguish unknown state, known denial and pending policy
+  dependencies. Even a passing local subject/policy check allocates zero Attempts
+  until SessionPolicy/TenantQuota and execution gates are complete. Migration0005
+  remains intact; production source lifecycle is not assembled by this increment.
+- Real Worker migrator/runtime PG tests install a complete independent set, check
+  local ALLOW, tenant/epoch/generation/group negatives, update to REVOKED without
+  changing Admission, and verify replay, wait reasons, zero Attempts/staging.
+  Gateway regression rechecks the shared install implementation.
+- Evidence: `artifacts/worker-authorization-projection-20260908-0610/VERIFICATION.txt`.
+  Next: independently authenticated Worker source lifecycle, exact referenced
+  policy dependencies/quotas, completed execution fence/tools/approvals, audit and
+  rollout gates. Full F01–F12 remains open; no commit/push/deployment this turn.
+
+### 2026-09-08 — Worker independent source and main integration review
+
+- Extracted the existing strict mTLS reader and bounded scheduler to public
+  `platform/channel/authorization/controlhttp` and `refresh`; Gateway retains
+  compatibility adapters. Worker opt-in bootstrap uses its own database, source
+  URL, scope/epoch and verified Control identity. Omission disables acquisition.
+- Control adds exclusive `worker_channel_authorization`: only the three current
+  snapshot/page/exact-policy read routes are allowed. Mixed capabilities are
+  rejected; account catalogue, credentials and observations remain denied at both
+  HTTP and service boundaries. No IM credential is delivered to Worker.
+- Migration 0007 indexes Worker nonterminal authorization target discovery.
+  Real Worker migrations + Ledger.Accept tests validate stored JSON keys, scope,
+  target deduplication, terminal filtering and lifecycle cancellation/Close.
+  A separate real Control RuntimeService/PostgreSQL mTLS test observes ACTIVE then
+  REVOKED with the public Worker reader and checks forbidden credential access.
+- Standards review requested direct Worker bootstrap tests and current docs;
+  these are added. Spec review found no blocking deviation for this deliberately
+  default-disabled increment and requested capability/documentation alignment.
+  Component integration evidence is not a deployed App/real IM acceptance claim.
+- Admission production emission remains disabled. Worker Claim and migration 0005
+  retain the zero-Attempt hold, including when local principal/policy checks pass.
+  SessionPolicy/TenantQuota, full execution/tool/approval fences and the remaining
+  F01–F12 rollout/acceptance gates are not completed by this main integration.
+- Review, exact commands, baseline/modified regression and marked-copy rollback:
+  `artifacts/main-review-20260908/VERIFICATION.txt`. Source submission is authorized;
+  this review does not deploy or change the live Bot configuration.

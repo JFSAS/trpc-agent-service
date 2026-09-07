@@ -121,3 +121,29 @@ func TestAuthorizationSnapshotRealMTLSAndClosedRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerAuthorizationCapabilityIsExclusiveReadOnly(t *testing.T) {
+	p := preflightPrincipal()
+	p.Consumers = []string{application.WorkerAuthorizationConsumer}
+	fake := &authorizationRuntimeFake{}
+	h, err := NewHandler(fake, []application.WorkloadPrincipal{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range authorizationRequests {
+		w := preflightInternalRequest(h, in.path, in.body, true)
+		if w.Code != in.status {
+			t.Fatal("Worker snapshot denied", w.Code)
+		}
+	}
+	for _, path := range []string{"/internal/v1/channel-accounts/snapshot", "/internal/v1/tenants/tenant/channel-accounts/account/credentials:resolve", "/internal/v1/channel-account-observations", "/internal/v1/channel-preflights:claim", "/internal/v1/channel-wecom-preflights:claim"} {
+		w := preflightInternalRequest(h, path, "not-json", true)
+		if w.Code != 403 {
+			t.Fatal("Worker escaped read-only routes", path, w.Code)
+		}
+	}
+	p.Consumers = append(p.Consumers, "telegram_receiver")
+	if _, err := NewHandler(fake, []application.WorkloadPrincipal{p}); err == nil {
+		t.Fatal("mixed Worker and Gateway capabilities")
+	}
+}

@@ -37,22 +37,23 @@ func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(time.Durat
 func (d Duration) Value() time.Duration { return time.Duration(d) }
 
 type Config struct {
-	WorkerID               string           `json:"worker_id"`
-	PlatformContractDigest string           `json:"platform_contract_digest"`
-	HealthAddress          string           `json:"health_address"`
-	InternalAddress        string           `json:"internal_address"`
-	ControlURL             string           `json:"control_url"`
-	ControlTLS             ClientTLS        `json:"control_tls"`
-	ProofTLS               ServerTLS        `json:"proof_tls"`
-	ControlPrincipals      []string         `json:"control_principals"`
-	GatewayPrincipals      []string         `json:"gateway_principals"`
-	NATSFile               string           `json:"nats_file"`
-	Policy                 PolicyConfig     `json:"policy"`
-	Limits                 Limits           `json:"limits"`
-	Timing                 Timing           `json:"timing"`
-	Telemetry              *TelemetryConfig `json:"telemetry,omitempty"`
-	DatabaseURL            string           `json:"-"`
-	MigrationDatabaseURL   string           `json:"-"`
+	Authorization          *AuthorizationConfig `json:"authorization,omitempty"`
+	WorkerID               string               `json:"worker_id"`
+	PlatformContractDigest string               `json:"platform_contract_digest"`
+	HealthAddress          string               `json:"health_address"`
+	InternalAddress        string               `json:"internal_address"`
+	ControlURL             string               `json:"control_url"`
+	ControlTLS             ClientTLS            `json:"control_tls"`
+	ProofTLS               ServerTLS            `json:"proof_tls"`
+	ControlPrincipals      []string             `json:"control_principals"`
+	GatewayPrincipals      []string             `json:"gateway_principals"`
+	NATSFile               string               `json:"nats_file"`
+	Policy                 PolicyConfig         `json:"policy"`
+	Limits                 Limits               `json:"limits"`
+	Timing                 Timing               `json:"timing"`
+	Telemetry              *TelemetryConfig     `json:"telemetry,omitempty"`
+	DatabaseURL            string               `json:"-"`
+	MigrationDatabaseURL   string               `json:"-"`
 }
 type ClientTLS struct {
 	CertFile string `json:"cert_file"`
@@ -115,6 +116,11 @@ func LoadConfig() (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.Authorization != nil {
+		if err := c.Authorization.validate(); err != nil {
+			return err
+		}
+	}
 	if c.Telemetry != nil {
 		if c.Telemetry.MetricsEndpoint == "" {
 			return errors.New("explicit telemetry metrics endpoint is required")

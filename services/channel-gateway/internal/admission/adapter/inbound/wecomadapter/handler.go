@@ -153,7 +153,11 @@ func (h *Handler) Handle(ctx context.Context, event wecom.Event) error {
 		}
 	}
 	localFence := h.fence // An acceptor cannot mutate the Handler's authorization.
-	in := domain.Inbound{Key: domain.EventKey{Provider: "wecom", AccountID: h.accountID, EventID: event.MessageID}, Kind: kind, ConversationID: conversation, SenderID: event.SenderID, Text: text, ReplyContext: reply, SourceDigest: hex.EncodeToString(sum[:]), ReceivedAt: now, ConnectionFence: &localFence, ReplyOrigin: &domain.ReplyOrigin{InstanceID: localFence.InstanceID, Epoch: localFence.Epoch, Revision: localFence.Revision, SocketGeneration: event.Generation}}
+	conversationKind := event.ChatType
+	if conversationKind == "single" {
+		conversationKind = "private"
+	}
+	in := domain.Inbound{ConversationKind: conversationKind, Key: domain.EventKey{Provider: "wecom", AccountID: h.accountID, EventID: event.MessageID}, Kind: kind, ConversationID: conversation, SenderID: event.SenderID, Text: text, ReplyContext: reply, SourceDigest: hex.EncodeToString(sum[:]), ReceivedAt: now, ConnectionFence: &localFence, ReplyOrigin: &domain.ReplyOrigin{InstanceID: localFence.InstanceID, Epoch: localFence.Epoch, Revision: localFence.Revision, SocketGeneration: event.Generation}}
 	if err = in.Validate(); err != nil {
 		return err
 	}

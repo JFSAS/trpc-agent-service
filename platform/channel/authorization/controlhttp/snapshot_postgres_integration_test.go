@@ -1,4 +1,4 @@
-package controlpolicy
+package controlhttp
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/outbound/authorizationpostgres"
+	authorizationpostgres "github.com/liuzengh/trpc-agent-service/platform/channel/authorization/postgres"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/migrations"
 )
 
@@ -55,7 +55,7 @@ func TestAuthorizationReaderMTLSIntoAtomicPostgresSnapshot(t *testing.T) {
 	if e = migrations.Apply(ctx, pool); e != nil {
 		t.Fatal(e)
 	}
-	store, e := authorizationpostgres.New(pool, "pool", testEpoch)
+	store, e := authorizationpostgres.New(pool, "pool", testEpoch, authorizationpostgres.Gateway)
 	if e != nil {
 		t.Fatal(e)
 	}

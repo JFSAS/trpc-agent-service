@@ -237,7 +237,8 @@ WeCom `subscribe` 可能替换同 Bot 的其他客户端，不称为只读检查
 
 `POST /internal/v1/channel-access-policies:resolve` is registered only on the
 existing mTLS runtime listener. The verified SPIFFE workload mapping must carry
-`channel_policy_projection` in `consumers`; existing receiver/preflight grants do
+`channel_policy_projection` or the exclusive `worker_channel_authorization`
+capability in `consumers`; existing receiver/preflight grants do
 not imply this capability. No deployment mapping is automatically granted it.
 
 The closed request contains `schema_version: 1`, `account_id`, and an exact
@@ -266,3 +267,18 @@ remain separate implementation work.
 检查，响应 no-store，generation 变化要求整份重取。详见
 [当前快照协议与边界](internal/channelbinding/adapter/outbound/postgres/AUTHORIZATION_SNAPSHOT.md)。
 这与已有精确历史策略 resolver 分开；Gateway 暂存/原子安装和授权新鲜度仍待接线。
+
+### Worker current authorization reader
+
+A mapping with `consumers: ["worker_channel_authorization"]` is exclusive: mixing
+it with another consumer is rejected at construction. Its verified mTLS identity
+can POST only `channel-access-policies:resolve`, `channel-authorizations:snapshot`
+and `channel-authorizations:page` under `/internal/v1/`. All other paths are denied
+before parsing; the application service also denies account catalogue, credential
+resolution and observations. Worker never receives IM credentials. Scope and source
+epoch remain pinned by configuration and trusted mapping, not inbound Run claims.
+
+The real PostgreSQL/mTLS integration test
+`TestWorkerAuthorizationReaderActualRuntimeMTLSPostgres` exercises the public Go
+reader against the actual RuntimeService, observes ACTIVE then REVOKED, and checks
+the denied routes. This is not live IM or a completed Worker execution fence.

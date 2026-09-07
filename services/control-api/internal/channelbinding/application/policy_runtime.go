@@ -9,6 +9,14 @@ import (
 )
 
 const PolicyProjectionConsumer = "channel_policy_projection"
+const WorkerAuthorizationConsumer = "worker_channel_authorization"
+
+func CanReadAuthorization(p WorkloadPrincipal) bool {
+	return slices.Contains(p.Consumers, PolicyProjectionConsumer) || slices.Contains(p.Consumers, WorkerAuthorizationConsumer)
+}
+func WorkerAuthorizationOnly(p WorkloadPrincipal) bool {
+	return slices.Contains(p.Consumers, WorkerAuthorizationConsumer)
+}
 
 var ErrPolicyNotFound = errors.New("CHANNEL_POLICY_NOT_FOUND")
 
@@ -31,7 +39,7 @@ func (s *RuntimeService) ResolveAccessPolicy(ctx context.Context, p WorkloadPrin
 	if err := s.authorize(p); err != nil {
 		return PolicyResolveResponse{}, err
 	}
-	if !slices.Contains(p.Consumers, PolicyProjectionConsumer) {
+	if !CanReadAuthorization(p) {
 		return PolicyResolveResponse{}, ErrWorkloadDenied
 	}
 	if in.SchemaVersion != 1 || !domain.ValidID(in.AccountID) || !domain.ValidID(in.Reference.ID) || !domain.ValidVersion(in.Reference.Revision) || !domain.ValidDigest(in.Reference.Digest) {

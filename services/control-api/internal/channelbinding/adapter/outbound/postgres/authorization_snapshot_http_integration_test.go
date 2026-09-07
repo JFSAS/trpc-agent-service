@@ -8,11 +8,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	controlreader "github.com/liuzengh/trpc-agent-service/platform/channel/authorization/controlhttp"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -24,7 +26,12 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/migrations"
 )
 
+func TestWorkerAuthorizationReaderActualRuntimeMTLSPostgres(t *testing.T) {
+	t.Setenv("CONTROL_TEST_WORKER_AUTH_READER", "1")
+	TestAuthorizationSnapshotActualRuntimeMTLSPostgres(t)
+}
 func TestAuthorizationSnapshotActualRuntimeMTLSPostgres(t *testing.T) {
+	workerReader := os.Getenv("CONTROL_TEST_WORKER_AUTH_READER") == "1"
 	store, service, pool, a := policyPG(t)
 	ctx := context.Background()
 	sql, e := migrations.Files.ReadFile("0008_channel_authorization_generation.sql")
@@ -50,6 +57,11 @@ func TestAuthorizationSnapshotActualRuntimeMTLSPostgres(t *testing.T) {
 		t.Fatal(e)
 	}
 	workload := application.WorkloadPrincipal{PrincipalID: "spiffe://test/snapshot-reader", ScopeID: testScope, InstanceID: "gateway", Audience: application.WorkloadAudience, Consumers: []string{application.PolicyProjectionConsumer}}
+	if workerReader {
+		workload.PrincipalID = "spiffe://test/worker-authorization-reader"
+		workload.InstanceID = "worker"
+		workload.Consumers = []string{application.WorkerAuthorizationConsumer}
+	}
 	handler, e := internalhttp.NewHandler(runtime, []application.WorkloadPrincipal{workload})
 	if e != nil {
 		t.Fatal(e)
@@ -105,6 +117,36 @@ func TestAuthorizationSnapshotActualRuntimeMTLSPostgres(t *testing.T) {
 		}
 		return b
 	}
+	var independent *controlreader.Client
+	var observedGeneration int64
+	if workerReader {
+		roots := x509.NewCertPool()
+		roots.AddCert(server.Certificate())
+		independent, e = controlreader.New(controlreader.Options{BaseURL: server.URL, ScopeID: testScope, SourceEpoch: testEpoch, RootCAs: roots, Certificate: tls.Certificate{Certificate: [][]byte{der}, PrivateKey: private}})
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer independent.Close()
+		var observed []wire.AuthorizationPrincipal
+		current, e := independent.ReadAuthorization(ctx, controlreader.AuthorizationTarget{TenantID: a.TenantID, AccountID: a.ID, Provider: string(a.Provider)}, func(_ context.Context, page wire.AuthorizationSnapshotPage) error {
+			observed = append(observed, page.Principals...)
+			return nil
+		})
+		if e != nil || len(observed) != 1 || observed[0].State != "ACTIVE" {
+			t.Fatal("real Worker mTLS reader", current, e)
+		}
+		observedGeneration = current.Manifest.Generation
+		if _, e = runtime.ReadSnapshot(ctx, workload); e != application.ErrWorkloadDenied {
+			t.Fatal("Worker catalog privilege", e)
+		}
+		if _, e = runtime.ResolveCredentials(ctx, workload, a.TenantID, a.ID, application.ResolveRequest{}); e != application.ErrWorkloadDenied {
+			t.Fatal("Worker credential privilege", e)
+		}
+		if e = runtime.ReportObservations(ctx, workload, application.ObservationsRequest{}); e != application.ErrWorkloadDenied {
+			t.Fatal("Worker observation privilege", e)
+		}
+		post("/internal/v1/tenants/"+a.TenantID+"/channel-accounts/"+a.ID+"/credentials:resolve", map[string]any{}, 403)
+	}
 	manifestRaw := post("/internal/v1/channel-authorizations:snapshot", application.AuthorizationManifestRequest{SchemaVersion: 1, AccountID: a.ID}, 200)
 	m, e := wire.DecodeAuthorizationSnapshotManifest(manifestRaw)
 	if e != nil || m.PrincipalCount != 1 {
@@ -129,6 +171,17 @@ func TestAuthorizationSnapshotActualRuntimeMTLSPostgres(t *testing.T) {
 	body := post("/internal/v1/channel-authorizations:page", request, 409)
 	if bytes.Contains(body, []byte("456")) || bytes.Contains(body, []byte("principals")) {
 		t.Fatal("stale response leaked partial set")
+	}
+	if workerReader {
+		var observed []wire.AuthorizationPrincipal
+		current, e := independent.ReadAuthorization(ctx, controlreader.AuthorizationTarget{TenantID: a.TenantID, AccountID: a.ID, Provider: string(a.Provider)}, func(_ context.Context, page wire.AuthorizationSnapshotPage) error {
+			observed = append(observed, page.Principals...)
+			return nil
+		})
+		if e != nil || len(observed) != 1 || observed[0].State != "REVOKED" || current.Manifest.Generation <= observedGeneration {
+			t.Fatal("Worker reader missed Control revoke", current, e)
+		}
+		t.Log("WORKER_AUTHORIZATION_READER=PASS real mapped Worker mTLS -> actual Control service/PG -> verified ACTIVE then REVOKED; credentials/catalog/observations denied")
 	}
 	t.Log("AUTHORIZATION_HTTP_PG=PASS verified mTLS -> real RuntimeService -> PG current snapshot -> shared complete proof; owner revoke -> stale page HTTP 409")
 }

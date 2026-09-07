@@ -34,5 +34,8 @@ Control 当前接口为每个请求打开新的数据库快照；不能把它替
 返回的本机时间不作为跨进程/PG 的授权凭据。PG installer 在调用 reader 前另取 DB
 clock anchor，使用自己的时钟域；分布式时钟运维条件仍需 F10/F12 验证。
 
-历史读取已接 Bootstrap；当前快照 reader/installer 尚未接周期刷新和 Admission/Worker
-授权热路径。每条消息同步读取 Control 不是目标实现。完整 F01–F12 验收保持未完成。
+实现和协议测试已移动到公开包 `platform/channel/authorization/controlhttp`；此包保留
+Gateway 的兼容别名。周期刷新调度器位于公开包 `platform/channel/authorization/refresh`。
+Gateway 当前刷新已有显式 opt-in 装配；Worker 使用独立身份、数据库及 opt-in 装配。
+生产 Admission 授权 guard/emission 尚未启用，Worker 授权请求继续零 Attempt 等待。
+每条消息同步读取 Control 不是目标实现。完整 F01–F12 验收保持未完成。

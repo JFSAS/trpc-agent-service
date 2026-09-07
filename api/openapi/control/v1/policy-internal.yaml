@@ -13,7 +13,7 @@
             "workloadMTLS": []
           }
         ],
-        "description": "Separate internal listener. Verified URI SAN mapping and explicit channel_policy_projection consumer capability required before body parsing. Scope, epoch and account tenant are server-derived; no client tenant, role or scope override. Exact ID/revision/digest, no latest. No query or compression. All responses no-store.",
+        "description": "Separate internal listener. Verified URI SAN mapping and explicit channel_policy_projection or exclusive worker_channel_authorization consumer capability required before body parsing. Scope, epoch and account tenant are server-derived; no client tenant, role or scope override. Exact ID/revision/digest, no latest. No query or compression. All responses no-store.",
         "requestBody": {
           "required": true,
           "content": {
@@ -494,7 +494,7 @@
             "workloadMTLS": []
           }
         ],
-        "description": "Internal mTLS and explicit channel_policy_projection capability. Current account-local snapshot, not an admission grant. All responses no-store. Pages share a SQL generation; any mutation requires restarting all pages. Manifest captured_at is never renewed by pagination. Request 8KiB; page max 128 records and 1MiB. No query or compression.",
+        "description": "Internal mTLS and explicit channel_policy_projection or exclusive worker_channel_authorization capability. Current account-local snapshot, not an admission grant. All responses no-store. Pages share a SQL generation; any mutation requires restarting all pages. Manifest captured_at is never renewed by pagination. Request 8KiB; page max 128 records and 1MiB. No query or compression.",
         "requestBody": {
           "required": true,
           "content": {
@@ -693,7 +693,7 @@
             "workloadMTLS": []
           }
         ],
-        "description": "Internal mTLS and explicit channel_policy_projection capability. Current account-local snapshot, not an admission grant. All responses no-store. Pages share a SQL generation; any mutation requires restarting all pages. Manifest captured_at is never renewed by pagination. Request 8KiB; page max 128 records and 1MiB. No query or compression.",
+        "description": "Internal mTLS and explicit channel_policy_projection or exclusive worker_channel_authorization capability. Current account-local snapshot, not an admission grant. All responses no-store. Pages share a SQL generation; any mutation requires restarting all pages. Manifest captured_at is never renewed by pagination. Request 8KiB; page max 128 records and 1MiB. No query or compression.",
         "requestBody": {
           "required": true,
           "content": {

@@ -1,4 +1,4 @@
-package controlpolicy
+package controlhttp
 
 import (
 	"bytes"

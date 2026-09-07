@@ -37,6 +37,7 @@ type readyLedger interface {
 	Ready(context.Context, int) ([]domain.Run, error)
 }
 type App struct {
+	authorization                                                                    *authorizationRuntime
 	config                                                                           Config
 	pool                                                                             *pgxpool.Pool
 	nc                                                                               *nats.Conn
@@ -91,6 +92,10 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	a.controlTransport = tr
 	a.pool, err = openDatabase(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	a.authorization, err = newAuthorizationRuntime(c, a.pool)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +216,9 @@ func (a *App) Ready() bool {
 }
 func (a *App) closeOwned() {
 	a.closed.Do(func() {
+		if a.authorization != nil {
+			a.authorization.Close()
+		}
 		defer func() {
 			if a.observation != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), a.config.Timing.HTTPShutdownTimeout.Value())
@@ -288,6 +296,16 @@ func (a *App) Run(ctx context.Context) error {
 	a.launch(func() { a.consume(workCtx, a.runs, &a.runHealthy, failures) })
 	a.launch(func() { a.consume(workCtx, a.manifests, &a.manifestHealthy, failures) })
 	a.launch(func() { a.monitor(workCtx, failures) })
+	if a.authorization != nil {
+		a.launch(func() {
+			if err := a.authorization.Run(workCtx); err != nil && workCtx.Err() == nil {
+				select {
+				case failures <- errors.New("Worker authorization refresh stopped"):
+				default:
+				}
+			}
+		})
+	}
 	a.launch(func() { a.observeStorage(workCtx) })
 	a.launch(func() { a.schedule(workCtx, activeCtx, a.ledger) })
 	relayDone := make(chan struct{})

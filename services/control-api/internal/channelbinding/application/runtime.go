@@ -106,6 +106,9 @@ func (s *RuntimeService) authorize(p WorkloadPrincipal) error {
 	return nil
 }
 func (s *RuntimeService) ReadSnapshot(ctx context.Context, p WorkloadPrincipal) (domain.Snapshot, error) {
+	if WorkerAuthorizationOnly(p) {
+		return domain.Snapshot{}, ErrWorkloadDenied
+	}
 	if err := s.authorize(p); err != nil {
 		return domain.Snapshot{}, err
 	}
@@ -119,6 +122,9 @@ func (s *RuntimeService) ReadSnapshot(ctx context.Context, p WorkloadPrincipal) 
 	return value, nil
 }
 func (s *RuntimeService) ResolveCredentials(ctx context.Context, p WorkloadPrincipal, tenant, account string, input ResolveRequest) (ResolveResponse, error) {
+	if WorkerAuthorizationOnly(p) {
+		return ResolveResponse{}, ErrWorkloadDenied
+	}
 	if err := s.authorize(p); err != nil {
 		return ResolveResponse{}, err
 	}
@@ -178,6 +184,9 @@ func (s *RuntimeService) ResolveCredentials(ctx context.Context, p WorkloadPrinc
 	return response, nil
 }
 func (s *RuntimeService) ReportObservations(ctx context.Context, p WorkloadPrincipal, input ObservationsRequest) error {
+	if WorkerAuthorizationOnly(p) {
+		return ErrWorkloadDenied
+	}
 	if err := s.authorize(p); err != nil {
 		return err
 	}

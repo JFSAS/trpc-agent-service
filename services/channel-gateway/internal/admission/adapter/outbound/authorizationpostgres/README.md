@@ -49,3 +49,7 @@ Gateway runtime 的数据库级权限只有 CONNECT，本实现不执行 CREATE 
 同一个 policy ID/revision 的内容不可变，独立于快照 generation：即使主体或账户
 变化推进了 generation，相同策略 revision 的 digest 变化仍持久阻断为
 `SNAPSHOT_CONFLICT`。数据库 guard 同时约束 digest 和完整 policy JSONB。
+
+原子安装实现现复用公开的 `platform/channel/authorization/postgres`。Gateway adapter
+保持原来的 New/Refresh/错误契约与所属表；Worker 使用另一固定表族和自有数据库。
+共享算法不会共享运行状态、数据库权限或来源资格。

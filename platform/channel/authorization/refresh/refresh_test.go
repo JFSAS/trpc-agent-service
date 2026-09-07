@@ -1,10 +1,10 @@
-package authorizationrefresh
+package refresh
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	domain "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 	"sync"
 	"testing"
 	"time"

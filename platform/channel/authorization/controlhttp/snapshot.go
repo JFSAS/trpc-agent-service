@@ -1,4 +1,4 @@
-package controlpolicy
+package controlhttp
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
-	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	domain "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 )
 
 var ErrSnapshotChanged = errors.New("AUTHORIZATION_SNAPSHOT_CHANGED")

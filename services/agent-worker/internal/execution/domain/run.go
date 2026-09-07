@@ -57,12 +57,18 @@ type Input struct {
 	ReceivedAt                                             time.Time
 }
 type Requested struct {
+	Authorization                                       *AdmissionAuthorization `json:",omitempty"`
 	EventID, EventDigest, RunDigest, RunID, AdmissionID string
 	Route                                               Route
 	Input                                               Input
 }
 
 func (r Requested) Validate() error {
+	if r.Authorization != nil {
+		if err := r.Authorization.ValidateFor(r); err != nil {
+			return err
+		}
+	}
 	for _, s := range []string{r.EventID, r.RunID, r.AdmissionID, r.Route.TenantID, r.Route.AccountID,
 		r.Route.BindingID, r.Route.DeploymentRevisionID, r.Route.ManifestRef, r.Input.ConversationID} {
 		if strings.TrimSpace(s) == "" {

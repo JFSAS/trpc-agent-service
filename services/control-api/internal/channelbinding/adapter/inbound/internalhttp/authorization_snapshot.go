@@ -4,12 +4,11 @@ import (
 	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
 	"net/http"
-	"slices"
 )
 
 func (h *Handler) authorizationManifest(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	if !slices.Contains(p.Consumers, application.PolicyProjectionConsumer) {
+	if !application.CanReadAuthorization(p) {
 		handleError(w, application.ErrWorkloadDenied)
 		return
 	}
@@ -26,7 +25,7 @@ func (h *Handler) authorizationManifest(w http.ResponseWriter, r *http.Request) 
 }
 func (h *Handler) authorizationPage(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	if !slices.Contains(p.Consumers, application.PolicyProjectionConsumer) {
+	if !application.CanReadAuthorization(p) {
 		handleError(w, application.ErrWorkloadDenied)
 		return
 	}

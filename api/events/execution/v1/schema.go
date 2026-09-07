@@ -114,6 +114,18 @@ func decode(raw []byte) ([]byte, dto.RunRequested, error) {
 
 func validateRelations(event dto.RunRequested) error {
 	in := event.Input
+	if a := event.Authorization; a != nil {
+		if a.TenantID != event.Route.TenantID || a.AccountID != event.Route.AccountID || a.Provider != event.Route.Provider || a.BindingID != event.Route.BindingID || a.RouteGeneration != event.Route.Generation || a.ExternalUserID != in.SenderID || a.ConversationID != in.ConversationID {
+			return invalid("authorization identity mismatch")
+		}
+		start, e1 := time.Parse(time.RFC3339Nano, a.ReadStartedAt)
+		at, e2 := time.Parse(time.RFC3339Nano, a.EvaluatedAt)
+		until, e3 := time.Parse(time.RFC3339Nano, a.FreshUntil)
+		if e1 != nil || e2 != nil || e3 != nil || start.IsZero() || at.Before(start) || !at.Before(until) || until.Sub(start) > 30*time.Second {
+			return invalid("authorization observation interval")
+		}
+	}
+
 	if event.Route.Provider != in.Key.Provider || event.Route.AccountID != in.Key.AccountID {
 		return invalid("route/input identity mismatch")
 	}

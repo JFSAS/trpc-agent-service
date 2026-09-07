@@ -49,9 +49,12 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		if err != nil || u.Scheme != "spiffe" || u.Host == "" || u.Path == "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || p.Audience != application.WorkloadAudience || !domain.ValidID(p.InstanceID) || !domain.ValidID(p.ScopeID) || h.principals[p.PrincipalID].PrincipalID != "" || instances[p.InstanceID] {
 			return nil, application.ErrWorkloadDenied
 		}
+		if application.WorkerAuthorizationOnly(p) && len(p.Consumers) != 1 {
+			return nil, application.ErrWorkloadDenied
+		}
 		kinds := map[string]bool{}
 		for _, kind := range p.Consumers {
-			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight", application.PolicyProjectionConsumer}, kind) {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight", application.PolicyProjectionConsumer, application.WorkerAuthorizationConsumer}, kind) {
 				return nil, application.ErrWorkloadDenied
 			}
 			kinds[kind] = true
@@ -87,6 +90,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok := h.principals[cert.URIs[0].String()]
 	if !ok {
+		failure(w, 403, "CHANNEL_WORKLOAD_DENIED")
+		return
+	}
+	if application.WorkerAuthorizationOnly(p) && (r.Method != "POST" || !slices.Contains([]string{"/internal/v1/channel-authorizations:snapshot", "/internal/v1/channel-authorizations:page", "/internal/v1/channel-access-policies:resolve"}, r.URL.Path)) {
 		failure(w, 403, "CHANNEL_WORKLOAD_DENIED")
 		return
 	}
@@ -222,7 +229,7 @@ func handleError(w http.ResponseWriter, err error) {
 
 func (h *Handler) resolvePolicy(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	if !slices.Contains(p.Consumers, application.PolicyProjectionConsumer) {
+	if !application.CanReadAuthorization(p) {
 		handleError(w, application.ErrWorkloadDenied)
 		return
 	}

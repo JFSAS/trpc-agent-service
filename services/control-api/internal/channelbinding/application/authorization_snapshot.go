@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 
 	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/domain"
@@ -28,7 +27,7 @@ func (s *RuntimeService) authorizationReader(p WorkloadPrincipal) error {
 	if err := s.authorize(p); err != nil {
 		return err
 	}
-	if !slices.Contains(p.Consumers, PolicyProjectionConsumer) {
+	if !CanReadAuthorization(p) {
 		return ErrWorkloadDenied
 	}
 	return nil
