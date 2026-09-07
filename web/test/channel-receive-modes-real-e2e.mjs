@@ -1,5 +1,13 @@
-import assert from "node:assert/strict";
+import strictAssert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+
+let assertions = 0;
+const assert = Object.fromEntries(
+  ["ok", "equal", "deepEqual"].map((name) => [name, (...args) => {
+    assertions += 1;
+    return strictAssert[name](...args);
+  }]),
+);
 
 // Run only against an explicitly selected, isolated Control/Next test environment.
 // This script never enables an account, invokes preflight, or contacts Telegram.
@@ -90,4 +98,4 @@ assert.equal(repeated.value.account.account_id, restored.value.account.account_i
 await request(root, { method: "POST", body: { ...legacy, config: { receive_mode: "long_polling" } }, key: legacyKey, expected: 409 });
 assert.equal((await request(`${root}/${encodeURIComponent(restored.value.account.account_id)}`)).value.account.enabled, false);
 assert.equal((await request(detail)).value.account.enabled, false);
-console.log(JSON.stringify({ result: "PASS", requests, account_id: accountID, legacy_account_id: restored.value.account.account_id, web_account_url: `${base}/tenants/${encodeURIComponent(tenant)}/channels/${encodeURIComponent(accountID)}`, accounts_enabled: false, telegram_requests: 0 }));
+console.log(JSON.stringify({ result: "PASS", assertions, requests, account_id: accountID, legacy_account_id: restored.value.account.account_id, web_account_url: `${base}/tenants/${encodeURIComponent(tenant)}/channels/${encodeURIComponent(accountID)}`, accounts_enabled: false, telegram_requests: 0 }));
