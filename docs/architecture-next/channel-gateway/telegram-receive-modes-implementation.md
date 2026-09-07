@@ -5,7 +5,8 @@
 - 工作树：`/Users/jfs/Projects/trpc-agent-service-channel-gateway`。
 - 集成分支：`codex/channel-gateway-receive-modes`。
 - 开发基线：`f61d49b09b8ae534f39f8065ddec699aa35ee10e`。
-- 本轮交付：本地代码、迁移、测试、Compose 配置及说明；不包含远端 main 合并或现有部署更新。
+- 代码交付：接收模式、迁移、测试、Compose 配置及说明；后续真实部署和 Bot 验收见第 8 节。
+- 远端 main 合并作为独立协调步骤，不以本分支推送或本机部署代替。
 - 同一个 Go Gateway workload；没有新增 Node 镜像、Connector/Poller 服务。Helm 仍等最终 workload 集成。
 
 ## 1. 最终采用的账户协议
@@ -175,4 +176,61 @@ tsc/build 通过。Web 专用真实后端/BFF 70 断言/21 请求，浏览器 31
 
 最终整仓命令、退出状态、源码 hash 和回滚副本测试写入工作树 ignored artifacts 目录的
 `telegram-receive-modes-20260907/VERIFICATION.txt`，以该实测报告为最终完成依据。
-本轮没有真实 Bot 切换、Worker 执行或回复闭环验收；此前真实 Webhook 记录保持原日期。
+以上代码集成阶段尚未切换真实 Bot；后续长轮询实测见第 8 节。Worker 执行或回复闭环仍未验收，
+此前真实 Webhook 记录保持原日期。
+
+
+## 8. 后续真实部署与长轮询验收（2026-09-07）
+
+本机 `trpc-agent-latest` 的 Control、Gateway、Web 已从 `f61d49b` 统一更新到代码提交
+`b9388ef2e9ecc2814aac0150341d89c7825c533f`。本节是部署后的实测补充，不改变该代码版本；
+提交本节说明后，运行镜像仍对应 `b9388ef`，不是新的文档提交。
+
+### 部署与迁移
+
+- 已停止旧应用版本及本项目旧测试夹具；PostgreSQL、NATS、入口保留原容器、原数据卷。
+- Control 的私有配置副本为 Gateway 增加 `telegram_receiver` 用途；Control 0003 与 Gateway
+  0011 迁移成功。旧 Telegram 账户先成为显式 `webhook`，再通过 Owner API 和当前 CAS
+  切换为 `long_polling`，随后显式启用账户与现有固定目标 Binding。
+- `GATEWAY_PUBLIC_ORIGIN` 留空，实际收信只需 Telegram 出站连接；没有新建 Connector、
+  Poller 或额外部署单元。运行期契约仍使用原有固定 digest 和允许的 endpoint 配置。
+- 测试 Bot 存在旧远端 Webhook，Gateway 正确记录 `WEBHOOK_CONFLICT`。按本次切换授权
+  完成独立运维清除，`drop_pending_updates=false`；清除前后均保留 1 条待处理消息。
+  此操作不代表自动运行时允许接管未知 Webhook，原冲突规则保持不变。
+
+### 真实消息、重启与去重
+
+通过本机 Telegram 客户端向专用测试 Bot 发送两条新消息，并补收一条切换前的积压测试消息。
+
+| 测试消息 | Telegram update ID | NATS sequence | 结果 |
+| --- | --- | --- | --- |
+| 积压消息 `gateway live desktop verification alpha` | `309271230` | `1` | 保留并成功补收 |
+| 新消息 `gateway long polling acceptance bravo` | `309271231` | `2` | 长轮询完整入站 |
+| 重启后 `gateway long polling restart acceptance charlie` | `309271232` | `3` | 恢复后成功续收 |
+
+三条消息各有一条 Receipt、Admission、Outbox 与对应 NATS 文件存储消息；严格执行事件
+Schema、规范化 Outbox 内容、`Nats-Msg-Id` 和固定 DeploymentRevision 均一致。链路为：
+
+```text
+Telegram getUpdates → Receipt → Admission → Outbox → NATS RunRequested
+```
+
+同镜像重启前游标为 `309271232`，重启后续收推进到 `309271233`，前三条消息保持各一条。
+NATS 核验仅使用 StreamInfo/GetMsg，没有新增消费者、ACK、purge 或 Stream 配置变更。
+该结果验证本次观测到的无重复入账，不替代所有故障窗口的 exactly-once 保证。
+
+### 验收结束状态与证据
+
+- 最新应用继续运行，Control `/healthz`、Gateway `/readyz` 和 Web 页面检查分别为
+  `204/204/200`；启用期间恢复稳定后，Gateway 连续 15 次 readiness 均为 204。
+- 按临时验收约定，账户和 Binding 恢复停用，观测状态为 `DISABLED`；保留
+  `receive_mode=long_polling` 和游标 `309271233`。停用后 `last_poll_at` 连续 12 秒不变。
+- 原始镜像、配置及停写后的数据库备份保留。迁移与恢复测试使用独立 PostgreSQL 副本；
+  副本回滚后的表数据与列结构指纹与基线一致，测试副本最终停止，运行部署未被降级。
+- 原固定目标仍是联调目标，本次验收到持久化 `RunRequested`；真实 Worker、模型执行与
+  Bot 新回复不计入本次完成项。
+
+完整命令、退出码、镜像 ID、数据及消息证据保存在工作树本地 ignored 目录
+`artifacts/telegram-live-deploy-20260907/` 下的 `VERIFICATION.txt`、`DEPLOYMENT.json`、
+`LIVE_AFTER_RESTART.json`、`FINAL_STATE.json`。可提交部分为本节说明；凭据、私有部署
+配置、数据库备份和本地 artifacts 不进入 Git。
