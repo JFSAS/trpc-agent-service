@@ -1,19 +1,33 @@
 import { isTelegramReceiveMode, type TelegramReceiveMode } from "./channel-api";
 /** Separate public preflight protocol: never reuse Channel route-state DTO guards. */
-export type ChannelPreflightInput = { expected_account_revision: number; expected_connection_revision: number; expected_bot_token_version: number };
+type PreflightVersions = { expected_account_revision: number; expected_connection_revision: number };
+export type ChannelPreflightInput = PreflightVersions & (
+  | { expected_bot_token_version: number; expected_bot_secret_version?: never; allow_connection_probe?: never }
+  | { expected_bot_secret_version: number; allow_connection_probe: true; expected_bot_token_version?: never }
+);
 export type ChannelPreflightReceipt = { preflight_id: string; tenant_id: string; account_id: string; requested_at: string; job_deadline_at: string; status_url: string };
 export const PREFLIGHT_CHECK_IDS = ["credential_configuration", "bot_identity", "public_origin", "webhook_registration", "pending_updates", "delivery_errors", "recovery_materials", "delivery_verification"] as const;
-export type PreflightCheckId = typeof PREFLIGHT_CHECK_IDS[number];
+export const WECOM_PREFLIGHT_CHECK_IDS = ["credential_configuration", "connection_authentication", "delivery_verification"] as const;
+type TelegramPreflightCheckId = typeof PREFLIGHT_CHECK_IDS[number];
+export type PreflightCheckId = TelegramPreflightCheckId | typeof WECOM_PREFLIGHT_CHECK_IDS[number];
 export type PreflightCheckStatus = "PASS" | "WARN" | "FAIL" | "UNKNOWN" | "SKIPPED" | "NOT_APPLICABLE";
 export type PreflightCheck = { id: PreflightCheckId; status: PreflightCheckStatus; code: string; details: Record<string, string | boolean | number | null> };
-export type ChannelPreflightResult = Omit<ChannelPreflightReceipt, "status_url"> & {
-  receive_mode?: TelegramReceiveMode; diagnostic_policy?: "telegram-receive-modes-v1"; effective_config_digest?: string;
-  provider: "telegram"; provider_account_id: string; requested_by: string; account_revision: number; connection_revision: number; bot_token_version: number;
+type PreflightResultBase = Omit<ChannelPreflightReceipt, "status_url"> & {
+  effective_config_digest?: string;
+  provider_account_id: string; requested_by: string; account_revision: number; connection_revision: number;
   state: "QUEUED" | "RUNNING" | "COMPLETED" | "TIMED_OUT" | "STALE"; outcome: "PASS" | "WARN" | "FAIL" | "UNKNOWN";
   reason_code: string; freshness: "NOT_CHECKED" | "CURRENT" | "STALE" | "EXPIRED"; metadata_changed: boolean;
   started_at: string | null; checked_at: string | null; expires_at: string | null; gateway_config_digest: string | null;
   gateway_config_freshness: "UNCONFIRMED" | null; expected_public_origin: string | null; checks: PreflightCheck[];
 };
+export type TelegramPreflightResult = PreflightResultBase & {
+  provider: "telegram"; receive_mode?: TelegramReceiveMode; diagnostic_policy?: "telegram-receive-modes-v1"; bot_token_version: number;
+};
+export type WeComPreflightResult = PreflightResultBase & {
+  provider: "wecom"; receive_mode: "long_connection"; diagnostic_policy: "wecom_long_connection_v1";
+  bot_secret_version: number; allow_connection_probe: true; expected_public_origin: null;
+};
+export type ChannelPreflightResult = TelegramPreflightResult | WeComPreflightResult;
 export class ChannelPreflightApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, public readonly retryAfterSeconds?: number) { super(code); this.name = "ChannelPreflightApiError"; }
 }
@@ -30,7 +44,9 @@ const list = (v: unknown, choices: readonly string[]) => typeof v === "string" &
 const collection = (t: string, a: string) => `/v1/tenants/${encodeURIComponent(t)}/channel-accounts/${encodeURIComponent(a)}/preflights`;
 export const preflightResultHref = (t: string, a: string, id: string) => `/tenants/${encodeURIComponent(t)}/channels/${encodeURIComponent(a)}?${new URLSearchParams({ preflight: id })}`;
 export function validPreflightInput(v: unknown): v is ChannelPreflightInput {
-  return object(v) && fields(v, ["expected_account_revision", "expected_connection_revision", "expected_bot_token_version"]) && version(v.expected_account_revision) && version(v.expected_connection_revision) && version(v.expected_bot_token_version);
+  if (!object(v) || !version(v.expected_account_revision) || !version(v.expected_connection_revision)) return false;
+  return fields(v, ["expected_account_revision", "expected_connection_revision", "expected_bot_token_version"]) && version(v.expected_bot_token_version)
+    || fields(v, ["expected_account_revision", "expected_connection_revision", "expected_bot_secret_version", "allow_connection_probe"]) && version(v.expected_bot_secret_version) && v.allow_connection_probe === true;
 }
 const receiptKeys = ["preflight_id", "tenant_id", "account_id", "requested_at", "job_deadline_at", "status_url"];
 function receipt(v: unknown, t: string, a: string): v is ChannelPreflightReceipt {
@@ -38,7 +54,7 @@ function receipt(v: unknown, t: string, a: string): v is ChannelPreflightReceipt
     && Date.parse(v.job_deadline_at) > Date.parse(v.requested_at) && v.status_url === `${collection(t, a)}/${encodeURIComponent(v.preflight_id)}`;
 }
 const providerCodes = { PROVIDER_NETWORK: "UNKNOWN", PROVIDER_TIMEOUT: "UNKNOWN", PROVIDER_RATE_LIMITED: "UNKNOWN", PROVIDER_UNAVAILABLE: "UNKNOWN", PROVIDER_RESPONSE_INVALID: "UNKNOWN" };
-const checkCodes: Record<PreflightCheckId, Record<string, string>> = {
+const checkCodes: Record<TelegramPreflightCheckId, Record<string, string>> = {
   credential_configuration: { CREDENTIALS_CONFIGURED: "PASS", BOT_TOKEN_MISSING: "FAIL", WEBHOOK_SECRET_MISSING: "FAIL" },
   bot_identity: { BOT_IDENTITY_MATCH: "PASS", BOT_IDENTITY_MISMATCH: "FAIL", TOKEN_REJECTED: "FAIL", ...providerCodes, NOT_EXECUTED: "SKIPPED" },
   public_origin: { PUBLIC_ORIGIN_STATIC_VALID: "PASS", PUBLIC_ORIGIN_INVALID: "FAIL", PUBLIC_ORIGIN_NOT_PUBLIC: "FAIL" },
@@ -48,8 +64,8 @@ const checkCodes: Record<PreflightCheckId, Record<string, string>> = {
   recovery_materials: { RECOVERY_MATERIALS_UNAVAILABLE: "UNKNOWN" },
   delivery_verification: { DELIVERY_NOT_TESTED: "UNKNOWN" },
 };
-const notApplicableCodes: Partial<Record<PreflightCheckId, string>> = { public_origin: "PUBLIC_ORIGIN_NOT_APPLICABLE", delivery_errors: "DELIVERY_ERRORS_NOT_APPLICABLE", recovery_materials: "RECOVERY_MATERIALS_NOT_APPLICABLE" };
-function check(v: unknown, id: PreflightCheckId, mode: TelegramReceiveMode): v is PreflightCheck {
+const notApplicableCodes: Partial<Record<TelegramPreflightCheckId, string>> = { public_origin: "PUBLIC_ORIGIN_NOT_APPLICABLE", delivery_errors: "DELIVERY_ERRORS_NOT_APPLICABLE", recovery_materials: "RECOVERY_MATERIALS_NOT_APPLICABLE" };
+function check(v: unknown, id: TelegramPreflightCheckId, mode: TelegramReceiveMode): v is PreflightCheck {
   if (mode === "long_polling" && notApplicableCodes[id]) return object(v) && fields(v, ["id", "status", "code", "details"]) && v.id === id && v.status === "NOT_APPLICABLE" && v.code === notApplicableCodes[id] && object(v.details) && fields(v.details, ["applicability"]) && v.details.applicability === "NOT_APPLICABLE";
   const codes = mode === "long_polling" && id === "webhook_registration" ? { WEBHOOK_NONE: "PASS", WEBHOOK_BLOCKS_LONG_POLLING: "FAIL", TOKEN_REJECTED: "FAIL", ...providerCodes, NOT_EXECUTED: "SKIPPED" } : mode === "long_polling" && id === "credential_configuration" ? { CREDENTIALS_CONFIGURED: "PASS", BOT_TOKEN_MISSING: "FAIL" } : checkCodes[id];
   if (!object(v) || !fields(v, ["id", "status", "code", "details"]) || v.id !== id || typeof v.code !== "string" || (codes as Record<string, string>)[v.code] !== v.status || !object(v.details)) return false;
@@ -71,8 +87,34 @@ function publicOrigin(v: unknown): boolean {
   if (typeof v !== "string" || v.length > 2048) return false;
   try { const u = new URL(v); return u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash && u.pathname === "/" && u.origin === v; } catch { return false; }
 }
+function wecomResult(v: Record<string, unknown>, t: string, a: string, id: string): v is Record<string, unknown> & WeComPreflightResult {
+  const digest = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+  const keys = [...resultKeys.filter((k) => k !== "bot_token_version"), "bot_secret_version", "allow_connection_probe", "receive_mode", "diagnostic_policy", ...(Object.hasOwn(v, "effective_config_digest") ? ["effective_config_digest"] : [])];
+  if (!fields(v, keys) || v.preflight_id !== id || v.tenant_id !== t || v.account_id !== a || v.provider !== "wecom" || typeof v.provider_account_id !== "string" || !v.provider_account_id.length || v.provider_account_id.length > 1024 || /\s/.test(v.provider_account_id) || !validPreflightId(v.requested_by)) return false;
+  if (v.receive_mode !== "long_connection" || v.diagnostic_policy !== "wecom_long_connection_v1" || v.allow_connection_probe !== true || v.expected_public_origin !== null) return false;
+  if (![v.account_revision, v.connection_revision, v.bot_secret_version].every(version) || !list(v.state, ["QUEUED", "RUNNING", "COMPLETED", "TIMED_OUT", "STALE"]) || !list(v.outcome, ["PASS", "WARN", "FAIL", "UNKNOWN"]) || !list(v.freshness, ["NOT_CHECKED", "CURRENT", "STALE", "EXPIRED"]) || typeof v.metadata_changed !== "boolean" || typeof v.reason_code !== "string" || !/^CHANNEL_[A-Z_]{1,100}$/.test(v.reason_code)) return false;
+  if (!date(v.requested_at) || !date(v.job_deadline_at) || Date.parse(v.job_deadline_at) <= Date.parse(v.requested_at) || ![v.started_at, v.checked_at, v.expires_at].every(nullableDate) || !Array.isArray(v.checks)) return false;
+  if (v.gateway_config_digest === null ? v.gateway_config_freshness !== null || Object.hasOwn(v, "effective_config_digest") : !digest(v.gateway_config_digest) || v.gateway_config_freshness !== "UNCONFIRMED" || !digest(v.effective_config_digest)) return false;
+  if (v.state !== "COMPLETED") {
+    if (v.checks.length || v.outcome !== "UNKNOWN" || v.checked_at !== null || v.expires_at !== null) return false;
+    if (v.state === "QUEUED") return v.started_at === null && v.gateway_config_digest === null;
+    if (v.state === "RUNNING") return date(v.started_at) && v.gateway_config_digest !== null;
+    return (v.started_at === null) === (v.gateway_config_digest === null);
+  }
+  if (!date(v.started_at) || !date(v.checked_at) || !date(v.expires_at) || v.gateway_config_digest === null || v.checks.length !== 3) return false;
+  if (!v.checks.every((c, i) => object(c) && fields(c, ["id", "status", "code", "details"]) && c.id === WECOM_PREFLIGHT_CHECK_IDS[i] && object(c.details))) return false;
+  const [credential, authentication, delivery] = v.checks;
+  if (!fields(credential.details, ["bot_secret_configured"]) || !(credential.code === "CREDENTIALS_CONFIGURED" && credential.status === "PASS" && credential.details.bot_secret_configured === true || credential.code === "BOT_SECRET_MISSING" && credential.status === "FAIL" && credential.details.bot_secret_configured === false)) return false;
+  const authCodes: Record<string, string> = { WECOM_AUTHENTICATED: "PASS", WECOM_AUTH_REJECTED: "FAIL", NOT_EXECUTED: "SKIPPED", PROVIDER_NETWORK: "UNKNOWN", PROVIDER_TIMEOUT: "UNKNOWN", PROVIDER_RESPONSE_INVALID: "UNKNOWN", PROVIDER_UNAVAILABLE: "UNKNOWN", WECOM_CONNECTION_REPLACED: "UNKNOWN" };
+  if (!fields(authentication.details, ["authenticated"]) || authCodes[authentication.code] !== authentication.status || authentication.details.authenticated !== (authentication.code === "WECOM_AUTHENTICATED" ? true : authentication.code === "WECOM_AUTH_REJECTED" ? false : null)) return false;
+  if ((credential.code === "BOT_SECRET_MISSING") !== (authentication.code === "NOT_EXECUTED")) return false;
+  if (!fields(delivery.details, ["verification"]) || delivery.code !== "DELIVERY_NOT_TESTED" || delivery.status !== "UNKNOWN" || delivery.details.verification !== "NOT_TESTED") return false;
+  const statuses = [credential.status, authentication.status];
+  return v.outcome === (statuses.includes("FAIL") ? "FAIL" : statuses.includes("UNKNOWN") || statuses.includes("SKIPPED") ? "UNKNOWN" : "PASS");
+}
 function result(v: unknown, t: string, a: string, id: string): v is ChannelPreflightResult {
   if (!object(v)) return false;
+  if (v.provider === "wecom") return wecomResult(v, t, a, id);
   const modern = Object.hasOwn(v, "diagnostic_policy");
   const mode = modern ? v.receive_mode : "webhook";
   const digest = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
@@ -144,7 +186,10 @@ async function request<T>(path: string, init: RequestInit, expected: number, val
 }
 export const channelPreflightApi = {
   create(tenant: string, account: string, input: ChannelPreflightInput, key: string, signal?: AbortSignal) {
-    const body = { expected_account_revision: input.expected_account_revision, expected_connection_revision: input.expected_connection_revision, expected_bot_token_version: input.expected_bot_token_version };
+    const wecom = Object.hasOwn(input, "expected_bot_secret_version");
+    if (wecom && Object.hasOwn(input, "expected_bot_token_version") || !wecom && Object.hasOwn(input, "allow_connection_probe")) return Promise.reject(new ChannelPreflightApiError(400, "CHANNEL_INPUT_INVALID"));
+    const versions = { expected_account_revision: input.expected_account_revision, expected_connection_revision: input.expected_connection_revision };
+    const body = wecom ? { ...versions, expected_bot_secret_version: input.expected_bot_secret_version, allow_connection_probe: input.allow_connection_probe } : { ...versions, expected_bot_token_version: input.expected_bot_token_version };
     if (!validPreflightId(tenant) || !validPreflightId(account) || !validPreflightInput(body) || !/^[\x21-\x7e]{1,128}$/.test(key)) return Promise.reject(new ChannelPreflightApiError(400, "CHANNEL_INPUT_INVALID"));
     return request(collection(tenant, account), { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(body) }, 202, (v): v is ChannelPreflightReceipt => receipt(v, tenant, account), signal);
   },
@@ -166,7 +211,8 @@ export function preflightError(error: unknown): string {
     CHANNEL_REVISION_CONFLICT: "保存的账户版本已变化，请重新读取账户后再准备检查。",
     CHANNEL_CREDENTIAL_VERSION_CONFLICT: "凭据版本已变化，请重新读取账户后再准备检查。",
     CHANNEL_IDEMPOTENCY_CONFLICT: "原请求标识与内容发生冲突，请核实已有任务后再开始新检查。",
-    CHANNEL_PREFLIGHT_PROVIDER_UNSUPPORTED: "首版预检仅支持 Telegram 账户。",
+    CHANNEL_PREFLIGHT_PROVIDER_UNSUPPORTED: "当前后端尚未支持此渠道的接入诊断，请更新后端后重试。",
+    CHANNEL_PREFLIGHT_CONNECTION_PROBE_CONFIRMATION_REQUIRED: "企微连接诊断需要明确确认连接替换影响，请重新打开确认窗口。",
     INVALID_RESPONSE: "服务端预检响应格式异常，写入结果待确认；请保留原请求。",
     REQUEST_TIMEOUT: "请求超过 10 秒，结果待确认；请保留原请求重试。",
   };
