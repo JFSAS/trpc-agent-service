@@ -41,6 +41,18 @@
                   "$ref": "#/components/schemas/ChannelCommandResult"
                 }
               }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
+                }
+              }
             }
           },
           "400": {
@@ -135,6 +147,15 @@
               "maxLength": 128,
               "pattern": "^[!-~]+$"
             }
+          },
+          {
+            "name": "X-Channel-Create-Contract",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "const": "webhook-v1"
+            },
+            "description": "Explicit legacy Telegram create recovery only: config omitted, original two credentials and Idempotency-Key. Without a receipt this still creates webhook; existing receipt replays original response. No authorization bypass."
           }
         ],
         "requestBody": {
@@ -427,6 +448,18 @@
                   "$ref": "#/components/schemas/ChannelCommandResult"
                 }
               }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
+                }
+              }
             }
           },
           "400": {
@@ -594,6 +627,18 @@
                   "$ref": "#/components/schemas/ChannelCommandResult"
                 }
               }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
+                }
+              }
             }
           },
           "400": {
@@ -748,6 +793,18 @@
                   "$ref": "#/components/schemas/ChannelCommandResult"
                 }
               }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
+                }
+              }
             }
           },
           "400": {
@@ -889,6 +946,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelCommandResult"
+                }
+              }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
                 }
               }
             }
@@ -1303,6 +1372,18 @@
                   "$ref": "#/components/schemas/ChannelCommandResult"
                 }
               }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
+                }
+              }
             }
           },
           "400": {
@@ -1455,6 +1536,18 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelCommandResult"
+                }
+              }
+            },
+            "headers": {
+              "X-Channel-Result-Contract": {
+                "description": "Historical webhook-only account receipts retain their original shape. Current mutations use receive-modes-v1.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "webhook-v1",
+                    "receive-modes-v1"
+                  ]
                 }
               }
             }
@@ -1654,6 +1747,12 @@
               },
               "bot_id": {
                 "type": "string"
+              },
+              "receive_mode": {
+                "enum": [
+                  "long_polling",
+                  "webhook"
+                ]
               }
             },
             "required": []
@@ -1885,6 +1984,13 @@
           },
           "effective_state": {
             "type": "string"
+          },
+          "receive_mode": {
+            "type": "string",
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
           }
         },
         "required": [

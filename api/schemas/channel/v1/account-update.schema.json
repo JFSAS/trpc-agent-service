@@ -18,6 +18,21 @@
       "type": "string",
       "minLength": 0,
       "maxLength": 4096
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receive_mode": {
+          "enum": [
+            "long_polling",
+            "webhook"
+          ]
+        }
+      },
+      "required": [
+        "receive_mode"
+      ]
     }
   },
   "required": [
@@ -32,6 +47,11 @@
     {
       "required": [
         "description"
+      ]
+    },
+    {
+      "required": [
+        "config"
       ]
     }
   ]

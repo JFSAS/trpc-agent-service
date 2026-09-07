@@ -98,7 +98,11 @@
               "OWNERSHIP_LOST",
               "REGISTRATION_PENDING",
               "REGISTRATION_UNKNOWN",
-              "SHUTDOWN"
+              "SHUTDOWN",
+              "WAITING_FOR_OWNER",
+              "RECEIVER_DRAINING",
+              "WEBHOOK_CONFLICT",
+              "POLLING_CONFLICT"
             ]
           },
           "observed_at": {
@@ -109,6 +113,12 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
+          },
+          "receive_mode": {
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
           }
         },
         "required": [
@@ -130,16 +140,52 @@
             "if": {
               "properties": {
                 "provider": {
-                  "const": "telegram"
+                  "const": "wecom"
                 }
               }
             },
             "then": {
               "not": {
                 "required": [
-                  "owner_epoch"
+                  "receive_mode"
                 ]
               }
+            },
+            "else": {
+              "if": {
+                "not": {
+                  "required": [
+                    "receive_mode"
+                  ]
+                }
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "owner_epoch"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "receive_mode": {
+                  "const": "long_polling"
+                },
+                "state": {
+                  "const": "READY"
+                }
+              },
+              "required": [
+                "receive_mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "owner_epoch"
+              ]
             }
           }
         ]
