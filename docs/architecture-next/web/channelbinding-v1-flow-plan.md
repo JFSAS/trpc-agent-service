@@ -1,5 +1,6 @@
 # ChannelBinding V1 前端设计与实现记录
 
+> 2026-09-07 增量：双接收方式已在 Web 实施。下文的首版 config 全只读、Telegram 两项凭据必需等是历史基线；当前仅开放停用态的结构化 config.receive_mode 修改，生成字段仍只读。新建默认 LP、模式化凭据/预检、旧 pending 兼容与独立启用确认见 [双模式实现记录](./telegram-receive-modes-v1-plan.md#15-实施记录2026-09-07)。运行验收另记。
 - 日期：2026-09-06。
 - 状态：2026-09-06 已实现渠道列表、新建账户和账户工作台三个页面及协议/组件测试；首版 config 只读与双开关影响确认已落实到源码。容器、HTTP 与真实 Provider 验收分别记录，不由“页面已实现”推定。
 - 实现基线：`codex/tenant-rbac-workspace` / `661e4a826ce8f539d8f610b3f1ef99cdbe4a4fdd`；最终提交与运行构建状态以对应交付记录为准。

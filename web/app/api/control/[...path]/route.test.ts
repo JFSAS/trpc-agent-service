@@ -115,3 +115,16 @@ describe("Control API same-origin proxy", () => {
   });
 
 });
+
+it("forwards the legacy create interpreter only on the Account POST and exposes the result contract", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ account: {} }, { status: 201, headers: { "X-Channel-Result-Contract": "webhook-v1" } }));
+  const path = ["v1", "tenants", "t", "channel-accounts"];
+  const response = await POST(new NextRequest(`http://console.test/api/control/${path.join("/")}`, { method: "POST", body: "{}", headers: { "X-Channel-Create-Contract": "webhook-v1", "X-Other-Override": "ignored", "Idempotency-Key": "original" } }), { params: Promise.resolve({ path }) });
+  const headers = new Headers(fetch.mock.calls[0][1]?.headers);
+  expect(headers.get("X-Channel-Create-Contract")).toBe("webhook-v1");
+  expect(headers.get("X-Other-Override")).toBeNull();
+  expect(response.headers.get("X-Channel-Result-Contract")).toBe("webhook-v1");
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  await PATCH(new NextRequest(`http://console.test/api/control/${path.join("/")}/a`, { method: "PATCH", body: "{}", headers: { "X-Channel-Create-Contract": "webhook-v1" } }), { params: Promise.resolve({ path: [...path, "a"] }) });
+  expect(new Headers(fetch.mock.calls[1][1]?.headers).get("X-Channel-Create-Contract")).toBeNull();
+});

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { channelApi, channelError, type ChannelAccount } from "../../lib/channel-api";
+import { channelApi, channelError, receiveModeLabel, requiredCredentialPurposes, type ChannelAccount } from "../../lib/channel-api";
 import { channelHref, readChannelTarget, channelTargetQuery } from "../../lib/channel-editor-state";
 import { Button, EmptyState, PageHeader, StatusBadge } from "../ui";
 import { useChannelAccess } from "./use-channel-access";
@@ -63,8 +63,8 @@ export function AccountList({ tenantId, query = "" }: { tenantId: string; query?
         <tbody>{accounts.map((account) => <tr key={account.account_id}>
           <td><Link className={styles.link} href={channelHref(tenantId, account.account_id) + suffix}>{account.name}</Link><p className={styles.small}>{account.description || "暂无说明"}</p></td>
           <td>{account.provider === "telegram" ? "Telegram" : "企业微信"}<p><code>{account.provider_account_id}</code></p></td>
-          <td><StatusBadge tone={account.enabled ? "blue" : "gray"}>{account.enabled ? "配置已启用" : "配置已停用"}</StatusBadge></td>
-          <td>{account.credentials.filter((credential) => credential.configured).length} / {account.credentials.length} 项已配置</td>
+          <td><StatusBadge tone={account.enabled ? "blue" : "gray"}>{account.enabled ? "配置已启用" : "配置已停用"}</StatusBadge>{account.provider === "telegram" && <p className={styles.small}>{receiveModeLabel(account.config.receive_mode)}</p>}</td>
+          <td>必需 {requiredCredentialPurposes(account.provider, account.config.receive_mode).filter((purpose) => account.credentials.find((credential) => credential.purpose === purpose)?.configured).length} / {requiredCredentialPurposes(account.provider, account.config.receive_mode).length} 项已配置</td>
           <td>{new Date(account.updated_at).toLocaleString("zh-CN")}</td>
           <td><Link className={styles.link} href={channelHref(tenantId, account.account_id) + suffix}>{target ? "选择此账户 →" : "打开工作台 →"}</Link></td>
         </tr>)}</tbody>

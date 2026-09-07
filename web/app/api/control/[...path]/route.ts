@@ -12,6 +12,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  // Only the owner-defined legacy create interpreter is forwarded; it changes no authorization.
+  if (request.method === "POST" && path.length === 4 && path[0] === "v1" && path[1] === "tenants" && path[3] === "channel-accounts") {
+    const contract = request.headers.get("x-channel-create-contract");
+    if (contract) headers.set("x-channel-create-contract", contract);
+  }
   const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
   try {
     const response = await fetch(target, { method: request.method, headers, body, cache: "no-store", redirect: "manual" });
@@ -22,6 +27,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const cookies = responseHeaders.getSetCookie?.() ?? [];
     if (cookies.length) cookies.forEach((cookie) => outgoing.append("set-cookie", cookie));
     else if (response.headers.get("set-cookie")) outgoing.append("set-cookie", response.headers.get("set-cookie")!);
+    const resultContract = response.headers.get("x-channel-result-contract");
+    if (resultContract) outgoing.set("x-channel-result-contract", resultContract);
     const retryAfter = response.headers.get("retry-after");
     if (retryAfter) outgoing.set("retry-after", retryAfter);
     // An accepted diagnostic job exposes its stable Control resource, not a browser redirect.

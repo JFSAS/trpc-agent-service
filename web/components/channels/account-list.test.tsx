@@ -87,3 +87,11 @@ describe("Channel account list", () => {
     expect(mocks.list).not.toHaveBeenCalled();
   });
 });
+
+
+it("shows LP mode and complete required credentials despite an unconfigured optional Secret", async () => {
+  mocks.list.mockResolvedValue({ accounts: [{ ...sampleChannelAccount, config: { ...sampleChannelAccount.config, receive_mode: "long_polling" }, credentials: sampleChannelAccount.credentials.map((c) => ({ ...c, configured: c.purpose === "telegram.bot_token" })) }] });
+  render(<AccountList tenantId="t" />); await screen.findByText("研究机器人");
+  expect(screen.getByText("长轮询")).toBeInTheDocument(); expect(screen.getByText("必需 1 / 1 项已配置")).toBeInTheDocument();
+  expect(mocks.get).not.toHaveBeenCalled();
+});

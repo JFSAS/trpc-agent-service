@@ -1,11 +1,13 @@
+import { isTelegramReceiveMode, type TelegramReceiveMode } from "./channel-api";
 /** Separate public preflight protocol: never reuse Channel route-state DTO guards. */
 export type ChannelPreflightInput = { expected_account_revision: number; expected_connection_revision: number; expected_bot_token_version: number };
 export type ChannelPreflightReceipt = { preflight_id: string; tenant_id: string; account_id: string; requested_at: string; job_deadline_at: string; status_url: string };
 export const PREFLIGHT_CHECK_IDS = ["credential_configuration", "bot_identity", "public_origin", "webhook_registration", "pending_updates", "delivery_errors", "recovery_materials", "delivery_verification"] as const;
 export type PreflightCheckId = typeof PREFLIGHT_CHECK_IDS[number];
-export type PreflightCheckStatus = "PASS" | "WARN" | "FAIL" | "UNKNOWN" | "SKIPPED";
+export type PreflightCheckStatus = "PASS" | "WARN" | "FAIL" | "UNKNOWN" | "SKIPPED" | "NOT_APPLICABLE";
 export type PreflightCheck = { id: PreflightCheckId; status: PreflightCheckStatus; code: string; details: Record<string, string | boolean | number | null> };
 export type ChannelPreflightResult = Omit<ChannelPreflightReceipt, "status_url"> & {
+  receive_mode?: TelegramReceiveMode; diagnostic_policy?: "telegram-receive-modes-v1"; effective_config_digest?: string;
   provider: "telegram"; provider_account_id: string; requested_by: string; account_revision: number; connection_revision: number; bot_token_version: number;
   state: "QUEUED" | "RUNNING" | "COMPLETED" | "TIMED_OUT" | "STALE"; outcome: "PASS" | "WARN" | "FAIL" | "UNKNOWN";
   reason_code: string; freshness: "NOT_CHECKED" | "CURRENT" | "STALE" | "EXPIRED"; metadata_changed: boolean;
@@ -46,14 +48,17 @@ const checkCodes: Record<PreflightCheckId, Record<string, string>> = {
   recovery_materials: { RECOVERY_MATERIALS_UNAVAILABLE: "UNKNOWN" },
   delivery_verification: { DELIVERY_NOT_TESTED: "UNKNOWN" },
 };
-function check(v: unknown, id: PreflightCheckId): v is PreflightCheck {
-  if (!object(v) || !fields(v, ["id", "status", "code", "details"]) || v.id !== id || typeof v.code !== "string" || checkCodes[id][v.code] !== v.status || !object(v.details)) return false;
+const notApplicableCodes: Partial<Record<PreflightCheckId, string>> = { public_origin: "PUBLIC_ORIGIN_NOT_APPLICABLE", delivery_errors: "DELIVERY_ERRORS_NOT_APPLICABLE", recovery_materials: "RECOVERY_MATERIALS_NOT_APPLICABLE" };
+function check(v: unknown, id: PreflightCheckId, mode: TelegramReceiveMode): v is PreflightCheck {
+  if (mode === "long_polling" && notApplicableCodes[id]) return object(v) && fields(v, ["id", "status", "code", "details"]) && v.id === id && v.status === "NOT_APPLICABLE" && v.code === notApplicableCodes[id] && object(v.details) && fields(v.details, ["applicability"]) && v.details.applicability === "NOT_APPLICABLE";
+  const codes = mode === "long_polling" && id === "webhook_registration" ? { WEBHOOK_NONE: "PASS", WEBHOOK_BLOCKS_LONG_POLLING: "FAIL", TOKEN_REJECTED: "FAIL", ...providerCodes, NOT_EXECUTED: "SKIPPED" } : mode === "long_polling" && id === "credential_configuration" ? { CREDENTIALS_CONFIGURED: "PASS", BOT_TOKEN_MISSING: "FAIL" } : checkCodes[id];
+  if (!object(v) || !fields(v, ["id", "status", "code", "details"]) || v.id !== id || typeof v.code !== "string" || (codes as Record<string, string>)[v.code] !== v.status || !object(v.details)) return false;
   const d = v.details; const code = v.code;
   switch (id) {
-    case "credential_configuration": return fields(d, ["bot_token_configured", "webhook_secret_configured"]) && typeof d.bot_token_configured === "boolean" && typeof d.webhook_secret_configured === "boolean" && (code === "CREDENTIALS_CONFIGURED" ? d.bot_token_configured && d.webhook_secret_configured : code === "BOT_TOKEN_MISSING" ? !d.bot_token_configured : !d.webhook_secret_configured);
+    case "credential_configuration": return fields(d, ["bot_token_configured", "webhook_secret_configured"]) && typeof d.bot_token_configured === "boolean" && typeof d.webhook_secret_configured === "boolean" && (code === "CREDENTIALS_CONFIGURED" ? d.bot_token_configured && (mode === "long_polling" || d.webhook_secret_configured) : code === "BOT_TOKEN_MISSING" ? !d.bot_token_configured : !d.webhook_secret_configured);
     case "bot_identity": return fields(d, ["identity_match"]) && nullableBool(d.identity_match) && (code === "BOT_IDENTITY_MATCH" ? d.identity_match === true : code === "BOT_IDENTITY_MISMATCH" ? d.identity_match === false : d.identity_match === null);
     case "public_origin": return fields(d, ["validation"]) && d.validation === "STATIC_ONLY";
-    case "webhook_registration": return fields(d, ["presence", "relation"]) && nullableBool(d.presence) && list(d.relation, ["MATCH", "DIFFERENT", "NONE", "UNKNOWN"]) && (code === "WEBHOOK_MATCH" ? d.presence === true && d.relation === "MATCH" : code === "WEBHOOK_DIFFERENT" ? d.presence === true && d.relation === "DIFFERENT" : code === "WEBHOOK_NONE" ? d.presence === false && d.relation === "NONE" : code === "WEBHOOK_COMPARISON_UNAVAILABLE" ? d.presence === true && d.relation === "UNKNOWN" : d.presence === null && d.relation === "UNKNOWN");
+    case "webhook_registration": return fields(d, ["presence", "relation"]) && nullableBool(d.presence) && list(d.relation, ["MATCH", "DIFFERENT", "NONE", "UNKNOWN"]) && (code === "WEBHOOK_MATCH" ? d.presence === true && d.relation === "MATCH" : (code === "WEBHOOK_DIFFERENT" || code === "WEBHOOK_BLOCKS_LONG_POLLING") ? d.presence === true && d.relation === "DIFFERENT" : code === "WEBHOOK_NONE" ? d.presence === false && d.relation === "NONE" : code === "WEBHOOK_COMPARISON_UNAVAILABLE" ? d.presence === true && d.relation === "UNKNOWN" : d.presence === null && d.relation === "UNKNOWN");
     case "pending_updates": return fields(d, ["pending_update_count"]) && nullableCount(d.pending_update_count) && (code === "PENDING_UPDATES_ZERO" ? d.pending_update_count === 0 : code === "PENDING_UPDATES_PRESENT" ? typeof d.pending_update_count === "number" && d.pending_update_count > 0 : d.pending_update_count === null);
     case "delivery_errors": return fields(d, ["has_last_error", "last_error_at"]) && nullableBool(d.has_last_error) && nullableDate(d.last_error_at) && (code === "DELIVERY_ERROR_NOT_REPORTED" ? d.has_last_error === false && d.last_error_at === null : code === "DELIVERY_ERROR_REPORTED" ? d.has_last_error === true : d.has_last_error === null && d.last_error_at === null);
     case "recovery_materials": return fields(d, ["secret_token_readable", "restore_available"]) && d.secret_token_readable === false && d.restore_available === false;
@@ -67,7 +72,13 @@ function publicOrigin(v: unknown): boolean {
   try { const u = new URL(v); return u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash && u.pathname === "/" && u.origin === v; } catch { return false; }
 }
 function result(v: unknown, t: string, a: string, id: string): v is ChannelPreflightResult {
-  if (!object(v) || !fields(v, resultKeys) || v.preflight_id !== id || v.tenant_id !== t || v.account_id !== a || v.provider !== "telegram" || typeof v.provider_account_id !== "string" || !/^[0-9]{1,1024}$/.test(v.provider_account_id) || !validPreflightId(v.requested_by)) return false;
+  if (!object(v)) return false;
+  const modern = Object.hasOwn(v, "diagnostic_policy");
+  const mode = modern ? v.receive_mode : "webhook";
+  const digest = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+  const extraKeys = modern ? ["receive_mode", "diagnostic_policy", ...(Object.hasOwn(v, "effective_config_digest") ? ["effective_config_digest"] : [])] : [];
+  if (!isTelegramReceiveMode(mode) || modern && (v.diagnostic_policy !== "telegram-receive-modes-v1" || (v.gateway_config_digest === null ? Object.hasOwn(v, "effective_config_digest") : !digest(v.effective_config_digest)))) return false;
+  if (!fields(v, [...resultKeys, ...extraKeys]) || v.preflight_id !== id || v.tenant_id !== t || v.account_id !== a || v.provider !== "telegram" || typeof v.provider_account_id !== "string" || !/^[0-9]{1,1024}$/.test(v.provider_account_id) || !validPreflightId(v.requested_by)) return false;
   if (![v.account_revision, v.connection_revision, v.bot_token_version].every(version) || !list(v.state, ["QUEUED", "RUNNING", "COMPLETED", "TIMED_OUT", "STALE"]) || !list(v.outcome, ["PASS", "WARN", "FAIL", "UNKNOWN"]) || !list(v.freshness, ["NOT_CHECKED", "CURRENT", "STALE", "EXPIRED"]) || typeof v.metadata_changed !== "boolean" || typeof v.reason_code !== "string" || !/^CHANNEL_[A-Z_]{1,100}$/.test(v.reason_code)) return false;
   if (!date(v.requested_at) || !date(v.job_deadline_at) || Date.parse(v.job_deadline_at) <= Date.parse(v.requested_at) || ![v.started_at, v.checked_at, v.expires_at].every(nullableDate) || !publicOrigin(v.expected_public_origin) || !Array.isArray(v.checks)) return false;
   if (!(v.gateway_config_digest === null || typeof v.gateway_config_digest === "string" && /^sha256:[a-f0-9]{64}$/.test(v.gateway_config_digest)) || !(v.gateway_config_freshness === null || v.gateway_config_freshness === "UNCONFIRMED")) return false;
@@ -78,7 +89,15 @@ function result(v: unknown, t: string, a: string, id: string): v is ChannelPrefl
     if (v.state === "RUNNING") return date(v.started_at) && v.gateway_config_digest !== null;
     return (v.started_at === null) === (v.gateway_config_digest === null);
   }
-  if (!date(v.started_at) || !date(v.checked_at) || !date(v.expires_at) || v.gateway_config_digest === null || v.checks.length !== 8 || !v.checks.every((c, i) => check(c, PREFLIGHT_CHECK_IDS[i]))) return false;
+  if (!date(v.started_at) || !date(v.checked_at) || !date(v.expires_at) || v.gateway_config_digest === null || v.checks.length !== 8 || !v.checks.every((c, i) => check(c, PREFLIGHT_CHECK_IDS[i], mode))) return false;
+  if (modern) {
+    const codes = v.checks.map((c: PreflightCheck) => c.code);
+    // Same execution dependencies as Control's shared validator: no fabricated remote facts.
+    if ((codes[0] === "BOT_TOKEN_MISSING") !== (codes[1] === "NOT_EXECUTED") || (codes[1] === "BOT_IDENTITY_MATCH") === (codes[3] === "NOT_EXECUTED")) return false;
+    const read = (mode === "long_polling" ? ["WEBHOOK_NONE", "WEBHOOK_BLOCKS_LONG_POLLING"] : ["WEBHOOK_MATCH", "WEBHOOK_DIFFERENT", "WEBHOOK_NONE", "WEBHOOK_COMPARISON_UNAVAILABLE"]).includes(codes[3]);
+    if (read === (codes[4] === "NOT_EXECUTED")) return false;
+    if (mode === "webhook" && (read === (codes[5] === "NOT_EXECUTED") || (codes[2] === "PUBLIC_ORIGIN_STATIC_VALID" ? codes[3] === "WEBHOOK_COMPARISON_UNAVAILABLE" : ["WEBHOOK_MATCH", "WEBHOOK_DIFFERENT"].includes(codes[3])))) return false;
+  }
   const statuses = v.checks.slice(0, 6).map((c: PreflightCheck) => c.status);
   const outcome = statuses.includes("FAIL") ? "FAIL" : statuses.some((s: string) => s === "UNKNOWN" || s === "SKIPPED") ? "UNKNOWN" : statuses.includes("WARN") ? "WARN" : "PASS";
   return v.outcome === outcome;

@@ -99,7 +99,8 @@ describe("Channel workspace command semantics", () => {
     current.binding!.target.revision_number = 2;
     fireEvent.focus(window); expect(await screen.findByText("研究助手部署 · r2")).toBeInTheDocument();
     expect(mocks.getDeployment).toHaveBeenCalledOnce();
-    expect(mocks.getRevision).toHaveBeenCalledWith("t", "d", 2);
+    // The new label commits before the dependent revision-read effect runs.
+    await waitFor(() => expect(mocks.getRevision).toHaveBeenCalledWith("t", "d", 2));
   });
   it("does not read deployment details for an unbound account", async () => {
     current.binding = undefined; await open();
@@ -386,4 +387,75 @@ describe("Channel workspace command semantics", () => {
     fireEvent.click(screen.getByRole("button", { name: "以原请求重试确认" }));
     expect(mocks.updateCredential).toHaveBeenCalledOnce();
   });
+});
+
+
+describe("Receive mode workspace", () => {
+  function lp() { current.account.enabled = false; current.account.config.receive_mode = "long_polling"; current.account.credentials[1].configured = false; }
+  it("only offers a separate disable action when running", async () => {
+    await open(); settings();
+    expect(screen.queryByRole("button", { name: "更改接收方式" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "先停用接入" })).toBeInTheDocument();
+    expect(mocks.updateAccount).not.toHaveBeenCalled();
+  });
+  it("saves incomplete Webhook config independently while retaining the route intent", async () => {
+    lp(); current.binding!.enabled = true;
+    mocks.updateAccount.mockImplementation(async () => { current.account.config.receive_mode = "webhook"; current.account.account_revision += 1; current.account.connection_revision += 1; return { account: current.account, distribution: "PUBLISHED", route_generation: 1 }; });
+    await open(); settings(); fireEvent.click(screen.getByRole("button", { name: "更改接收方式" }));
+    expect(screen.getByRole("button", { name: "检查并保存接收方式" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /^Webhook/ })); await prepare("检查并保存接收方式");
+    expect(screen.getByRole("dialog")).toHaveTextContent("账户仍停用"); expect(screen.getByRole("dialog")).toHaveTextContent("补齐 Webhook Secret");
+    confirm(); await screen.findByText(/接收方式已保存，账户仍保持停用/);
+    expect(mocks.updateAccount.mock.calls[0][2]).toEqual({ expected_account_revision: 3, config: { receive_mode: "webhook" } });
+    expect(mocks.setAccountEnabled).not.toHaveBeenCalled(); expect(mocks.setBindingEnabled).not.toHaveBeenCalled(); expect(mocks.updateCredential).not.toHaveBeenCalled();
+    expect(current.binding!.enabled).toBe(true); expect(current.account.credentials[1].credential_version).toBe(1);
+  });
+  it("permits LP enable without optional Secret, but requires it for Webhook enable", async () => {
+    lp(); await open(); await prepare("启用本平台接入");
+    expect(screen.getByRole("dialog")).toHaveTextContent("启用长轮询");
+    expect(screen.getByRole("dialog")).toHaveTextContent("未知外部 Webhook 保持冲突");
+    expect(screen.getByRole("dialog")).toHaveTextContent("不主动丢弃积压");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "取消" }));
+    current.account.config.receive_mode = "webhook";
+    fireEvent.click(screen.getByRole("button", { name: "启用本平台接入" }));
+    await screen.findByText(/当前接收方式缺少必需凭据/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(mocks.setAccountEnabled).not.toHaveBeenCalled();
+  });
+  it("retries uncertain mode PATCH using the exact original mode, CAS and key", async () => {
+    lp(); mocks.updateAccount.mockRejectedValueOnce(new ChannelApiError(0, "REQUEST_TIMEOUT", "timeout"));
+    await open(); settings(); fireEvent.click(screen.getByRole("button", { name: "更改接收方式" }));
+    fireEvent.click(screen.getByRole("radio", { name: /^Webhook/ })); await prepare("检查并保存接收方式"); confirm();
+    await waitFor(() => expect(mocks.updateAccount).toHaveBeenCalledOnce());
+    const stored = loadChannelPending(sessionStorage, markerKey);
+    expect(stored?.input).toEqual({ expected_account_revision: 3, config: { receive_mode: "webhook" } });
+    expect(stored?.key).toBe(mocks.updateAccount.mock.calls[0][3]);
+    fireEvent.click(screen.getByRole("button", { name: "以原请求重试确认" }));
+    await waitFor(() => expect(mocks.updateAccount).toHaveBeenCalledTimes(2));
+    expect(mocks.updateAccount.mock.calls[1]).toEqual(mocks.updateAccount.mock.calls[0]);
+  });
+  it("keeps MEMBER read-only and does not invent the initial credential version", async () => {
+    lp(); mocks.access.canWrite = false; await open(); settings();
+    expect(screen.queryByRole("button", { name: "更改接收方式" })).not.toBeInTheDocument();
+    expect(screen.getByText(/可选；已保存的值保留/)).toBeInTheDocument();
+    expect(screen.getByText("telegram.webhook_secret · v1")).toBeInTheDocument();
+  });
+});
+
+it("displays receiver mode/reason without making an old owner's READY current", async () => {
+  current.account.config.receive_mode = "long_polling";
+  current.observations = [{ connection_revision: 1, instance_id: "old", instance_epoch: "epoch", report_sequence: 1, state: "READY", reason_code: "RECEIVER_DRAINING", effective_state: "STALE", observed_at: "2026-09-07T00:00:00Z", received_at: "2026-09-07T00:00:01Z", receive_mode: "webhook", owner_epoch: 1 }];
+  await open(); fireEvent.click(screen.getByRole("tab", { name: "连接诊断" }));
+  expect(screen.getByText("观测已过期")).toBeInTheDocument();
+  expect(screen.getByText(/历史连接观测（非当前配置）/)).toBeInTheDocument();
+  expect(screen.getByText(/正在等待旧接收退出/)).toHaveTextContent("报告接收方式：Webhook");
+});
+
+it("revalidates mode-save eligibility after the page has become stale", async () => {
+  current.account.enabled = false; await open(); settings();
+  fireEvent.click(screen.getByRole("button", { name: "更改接收方式" }));
+  fireEvent.click(screen.getByRole("radio", { name: /^长轮询/ }));
+  current.account.enabled = true; current.account.account_revision += 1;
+  fireEvent.click(screen.getByRole("button", { name: "检查并保存接收方式" }));
+  await screen.findByText(/请先停用接入并读取明确的接收方式/);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(mocks.updateAccount).not.toHaveBeenCalled();
 });
