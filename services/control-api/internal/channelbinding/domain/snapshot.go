@@ -45,7 +45,7 @@ func ProjectSnapshotAccount(a Account, credentials []CredentialMeta) (SnapshotAc
 	if err := a.Validate(); err != nil {
 		return SnapshotAccount{}, err
 	}
-	if err := ValidateCredentialSet(a.Provider, credentials, a.Enabled); err != nil {
+	if err := ValidateCredentialSet(a.Provider, credentials, a.Enabled, a.Config.ReceiveMode); err != nil {
 		return SnapshotAccount{}, err
 	}
 	return SnapshotAccount{a.TenantID, a.ID, a.Provider, a.ProviderAccountID, a.Revision, a.ConnectionRevision, a.Enabled, a.MinRouteGeneration, a.Config, slices.Clone(credentials)}, nil
@@ -124,13 +124,13 @@ func (s Snapshot) validateContent() error {
 		}
 		physical[key] = true
 		if a.Provider == Telegram {
-			if a.Config.WebhookPath != "/v1/telegram/"+a.AccountID || a.Config.BotID != "" {
+			if a.Config.WebhookPath != "/v1/telegram/"+a.AccountID || a.Config.BotID != "" || (a.Config.ReceiveMode != "" && !ValidReceiveMode(a.Config.ReceiveMode)) {
 				return failure(SourceIntegrity, "/accounts/config")
 			}
-		} else if a.Config.BotID != value || a.Config.WebhookPath != "" {
+		} else if a.Config.BotID != value || a.Config.WebhookPath != "" || a.Config.ReceiveMode != "" {
 			return failure(SourceIntegrity, "/accounts/config")
 		}
-		if err := ValidateCredentialSet(a.Provider, a.Credentials, a.Enabled); err != nil {
+		if err := ValidateCredentialSet(a.Provider, a.Credentials, a.Enabled, a.Config.ReceiveMode); err != nil {
 			return failure(SourceIntegrity, "/accounts/credentials")
 		}
 		for j, c := range a.Credentials {

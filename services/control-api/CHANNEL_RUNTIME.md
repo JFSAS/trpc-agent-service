@@ -152,7 +152,9 @@ Gateway Provider 调用和跨端真实验收由各自任务交付；本节不以
 创建只要求已保存、停用的Telegram账户，不依赖Binding、Deployment或目录READY。
 任务120秒、每租约30秒、最多2次领取；数据库时间控制所有期限。每账户1活跃/3次每分钟，
 每租户20活跃/30次每分钟，Control按principal/instance每秒2次claim，在数据库事务中执行。
-Gateway配置摘要第一次领取后固定；重新领取或首次完成遇另一合法配置持久STALE。
+Webhook任务的有效配置摘要第一次领取后固定；重新领取或首次完成遇另一有效配置持久STALE。
+双模式任务另存global/effective摘要：long_polling忽略无关入站origin；仅新租约可刷新
+global证据，同一租约的不同global证据返回RESULT_CONFLICT，不悄悄覆盖原领取配置。
 当前Gateway配置新鲜度保持UNCONFIRMED，不将静态origin合法当作公网可达或真实投递。
 
 创建事务先稳定排序锁当前及旧任务请求者Identity，再锁Tenant/Account/Task；当前Session
@@ -168,3 +170,41 @@ Bootstrap在已有关闭可等待的维护goroutine中每秒处理最多64个任
 真实PG+Session+mTLS回归覆盖完整链路、配置变更STALE、请求者撤权、创建幂等与Session
 提交前撤销零写入；八张运行表完整内容哈希保持不变。Provider真实响应、Gateway账本和
 用户看到的Web结果属于协调联合验收，不由Control写入或模拟。
+
+## 6. Telegram 双接收模式（Control 代码切片）
+
+本切片沿用现有账户与预检端点，不新增切换/接管 API；Gateway 的 Receiver、Cursor、
+Telegram 协议调用与 Web 交互分别由对应任务实现。
+
+- 新 Telegram create 的 `config.receive_mode` 默认 `long_polling`；显式 `webhook`
+  要求 BotToken 和 WebhookSecret。两种模式都保留生成的 webhook_path 和两条稳定凭据
+  元数据；LP 未配置 Secret 时 version=1、configured=false、无 key/ciphertext。
+- PATCH 使用 expected_account_revision；只有 disabled 账户能实际换 mode。一次换模
+  account/connection/catalog revision 各推进一次，同 mode 为 NOOP；元数据与 mode 同改
+  不重复推进。保存不调用 Telegram，不改 Binding 目标；enable 仍按所存 mode 检查凭据。
+- `0003_telegram_receive_modes.sql` 在升级事务内把历史 Telegram 明确回填 webhook，
+  同步 account/connection/catalog 水位。Telegram 物理 Bot ID 跨 scope/tenant 唯一，
+  disabled 也不例外。发现重复时整个迁移失败，不选择胜者。凭据密文、命令回执、路由、
+  Binding、Outbox 保持原样；旧 Observation 的 mode 回填但原摘要不改。
+- 升级后旧二进制的 config decoder 不认识新字段，不能只换回旧镜像继续使用双模式数据库；
+  发布/回退由协调任务联合安排。本地源代码回滚仅在副本验证，不在活跃数据库做降级。
+- 新 `telegram_receiver` workload consumer 对两种 mode 只解析 BotToken，要求
+  owner_epoch，禁止 registration_epoch。Control 检查身份、用途和版本；Gateway 再检查
+  owner 的实际有效性。registration/webhook consumer 仅用于 webhook；delivery 两种皆可。
+- 新 Telegram Observation 显式携带 mode；LP READY 要求 owner_epoch。旧格式缺 mode
+  只按 legacy webhook 解释，不根据当前默认值推断；错误 mode/version 报告不覆盖现有状态。
+- 旧页面 pending create 明确使用 `X-Channel-Create-Contract: webhook-v1` 和原 body/key，
+  body 不含 config；已落库则重放原回执，未落库则仍创建 webhook。无此 header 的新请求
+  缺省 mode 为 LP。成功 mutation 的 `X-Channel-Result-Contract` 指示历史 webhook-v1
+  或当前 receive-modes-v1 响应形状，历史结果不按当前账户 mode 改写。
+
+新预检固定 mode 与 diagnostic_policy=telegram-receive-modes-v1；只有声明同 policy 的
+claim 能领取。grants/claimed views/completions 携带 effective_config_digest；QUEUED
+不携带。LP 第3/6/7项 NOT_APPLICABLE，第4项无 Webhook 为 PASS，有 Webhook 为 FAIL；
+第8项仍 DELIVERY_NOT_TESTED。公开 LP view 的 expected_public_origin=null，私有记录
+仅为验证 global 摘要保留去秘密 origin 证据。旧任务/旧结果保持原 webhook-only 解码。
+
+测试入口：application 的 receive_modes/preflight_receive_modes 测试、PostgreSQL 的
+receive_modes_integration_test.go，以及真实 Session/mTLS 的 integration 测试。
+测试覆盖迁移回填、重复 Bot 原子失败、旧回执恢复、缺可选 Secret、mode CAS、consumer
+精确取值、owner Observation、policy 隔离、LP 重领与同租约冲突、终态幂等及运行表零写入。

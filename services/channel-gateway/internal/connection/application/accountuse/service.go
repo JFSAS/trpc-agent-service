@@ -4,10 +4,11 @@ package accountuse
 
 import (
 	"context"
+	"time"
+
 	refresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
 	d "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
-	"time"
 )
 
 type Directory interface {
@@ -59,7 +60,7 @@ func (s *Service) Resolve(ctx context.Context, p *c.Permit, a c.Account, owner *
 		return nil, c.ErrUnauthorized
 	}
 	r := c.ResolveRequest{SchemaVersion: 1, ScopeID: b.ScopeID, SourceEpoch: b.SourceEpoch, ConnectionRevision: b.ConnectionRevision, Consumer: c.Consumer{Kind: b.Kind, InstanceID: b.InstanceID, RegistrationEpoch: registrationEpoch}}
-	purposes := map[string][]string{"wecom_connection": {"wecom.bot_secret"}, "telegram_webhook": {"telegram.webhook_secret"}, "telegram_delivery": {"telegram.bot_token"}, "telegram_registration": {"telegram.bot_token", "telegram.webhook_secret"}}[b.Kind]
+	purposes := map[string][]string{"telegram_receiver": {"telegram.bot_token"}, "wecom_connection": {"wecom.bot_secret"}, "telegram_webhook": {"telegram.webhook_secret"}, "telegram_delivery": {"telegram.bot_token"}, "telegram_registration": {"telegram.bot_token", "telegram.webhook_secret"}}[b.Kind]
 	if owner != nil {
 		e := owner.Epoch
 		r.Consumer.OwnerEpoch = &e

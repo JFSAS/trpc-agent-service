@@ -6,14 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	catalogpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/catalogpostgres"
-	controlhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
-	registrationpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/registrationpostgres"
-	registrationremote "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/telegramregistration"
-	accountuse "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
-	catalogrefresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
-	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
-	wecomdelivery "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/wecomadapter"
 	"net"
 	"net/http"
 	"strings"
@@ -26,9 +18,17 @@ import (
 	admissionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/outbound/postgres"
 	admissionapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/application"
 	admissiondomain "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	catalogpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/catalogpostgres"
+	controlhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
 	connectionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/postgres"
+	receptionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/telegramreceptionpostgres"
+	registrationremote "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/telegramregistration"
 	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application"
+	accountuse "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
+	catalogrefresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
+	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
 	deliverypg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/postgres"
+	wecomdelivery "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/wecomadapter"
 	deliveryapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/application"
 	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
 	routeconsumer "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/inbound/nats"
@@ -144,7 +144,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	ledger := admissionpg.NewStore(pool, routes).WithConnectionGuard(leases)
 	if catalogStore != nil {
-		ledger = ledger.WithAccountUseGuard(accountGuardBridge{store: catalogStore, ingress: true})
+		ledger = ledger.WithAccountUseGuard(accountGuardBridge{store: catalogStore, ingress: true}).WithTelegramGuard(telegramGuardBridge{receptionpg.New(pool, catalogStore)})
 	}
 	acceptor := admissionapp.New(ledger, routeBridge{routing})
 	stream, err := n.JS.Stream(ctx, transport.RouteStream)
@@ -207,7 +207,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 		if factory == nil {
 			factory = registrationremote.Factory{}
 		}
-		app.telegram, err = telegramruntime.New(catalog, use, registry, registrationpg.New(pool, catalogStore), factory, strings.TrimSuffix(c.Control.PublicOrigin, "/"))
+		app.telegram, err = telegramruntime.New(catalog, use, registry, receptionpg.New(pool, catalogStore), factory, telegramPollingIntake{acceptor}, strings.TrimSuffix(c.Control.PublicOrigin, "/"))
 		if err != nil {
 			return fail(err)
 		}

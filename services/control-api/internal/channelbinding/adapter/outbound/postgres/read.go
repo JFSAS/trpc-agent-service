@@ -111,7 +111,7 @@ func loadAggregate(ctx context.Context, tx pgx.Tx, tenant, id, scope string, loc
 	if err = rows.Err(); err != nil {
 		return result, dbError(err)
 	}
-	if err = domain.ValidateCredentialSet(a.Provider, result.CredentialMetadata(), a.Enabled); err != nil {
+	if err = domain.ValidateCredentialSet(a.Provider, result.CredentialMetadata(), a.Enabled, a.Config.ReceiveMode); err != nil {
 		return result, integrity()
 	}
 	if result.Binding == nil && result.Route.Generation != 0 || result.Binding != nil && result.Route.Generation == 0 {

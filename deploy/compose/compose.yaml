@@ -112,7 +112,12 @@ services:
       GATEWAY_CONTROL_URL: ${GATEWAY_CONTROL_URL:-}
       GATEWAY_CONTROL_SCOPE_ID: ${GATEWAY_CONTROL_SCOPE_ID:-}
       GATEWAY_CONTROL_SOURCE_EPOCH: ${GATEWAY_CONTROL_SOURCE_EPOCH:-}
+      # Optional for pure long_polling; required by each enabled webhook account.
       GATEWAY_PUBLIC_ORIGIN: ${GATEWAY_PUBLIC_ORIGIN:-}
+      # Outbound access applies to both receive modes. Keep Control on NO_PROXY.
+      HTTPS_PROXY: ${GATEWAY_HTTPS_PROXY:-}
+      HTTP_PROXY: ${GATEWAY_HTTP_PROXY:-}
+      NO_PROXY: ${GATEWAY_NO_PROXY:-localhost,127.0.0.1,control-api,postgres,nats}
       GATEWAY_TELEGRAM_PREFLIGHT_ENABLED: ${GATEWAY_TELEGRAM_PREFLIGHT_ENABLED:-true}
       GATEWAY_CONTROL_CA_FILE: /run/gateway-control/ca.pem
       GATEWAY_CONTROL_CERT_FILE: /run/gateway-control/client.pem

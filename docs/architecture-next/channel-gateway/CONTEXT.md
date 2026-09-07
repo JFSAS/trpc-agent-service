@@ -26,7 +26,9 @@ Admission、Connection、Delivery 是同一个 Gateway Workload 内的四个业�
 | ReplyIntent | 执行侧产生的回复意图，不等同于外部渠道已收到消息 |
 | Delivery | 将回复意图投递到外部渠道的受跟踪过程与结果 |
 | Connector / Protocol Client | 将渠道协议交互封装为可调用能力的库角色，不等同于独立服务或部署单元 |
-| Connection Owner | 当前有权维持某个有状态渠道账户连接并执行其协议操作的 Gateway 实例；V1 仅企微需要，Telegram webhook/HTTP 绕过该租约 |
+| Connection Owner | 当前有权维持某个有状态渠道账户连接并执行其协议操作的 Gateway 实例；企微维持原连接租约；Telegram 双模式由物理 Bot receiver owner 协调 polling 与远端注册，分布式 Webhook HTTP 收件不要求独占 owner |
+| ReceiveMode | ChannelAccount 的接收配置 `long_polling / webhook`，不改变 Binding 目标或外部事件键 |
+| Telegram Cursor | 已持久接纳的实际 Update 前缀对应的下次 offset；不是仅已读入内存的最大 ID |
 | Owner Epoch / Fence | 用于拒绝过期 owner 的本地 claim/commit 与后续新调用，并触发旧 Client 取消；无法撤销已经写到 Provider 的请求，也不代表外部平台提供幂等保证 |
 | Connection Generation | 单个企微 Client 内隔离 socket、pending `req_id` 与迟到 ACK 的协议代次；不等于 Owner Epoch |
 | Delivery Certainty | Provider 调用事实：`NOT_SENT / ACCEPTED / REJECTED / UNKNOWN`；是否重试由独立 RetryPolicy 决定 |

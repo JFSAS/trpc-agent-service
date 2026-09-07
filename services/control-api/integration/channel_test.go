@@ -95,7 +95,7 @@ func composeChannel(t *testing.T, ctx context.Context, pool *pgxpool.Pool, route
 }
 func testChannelHTTP(t *testing.T, ctx context.Context, router http.Handler, pool *pgxpool.Pool, module *channelbinding.Module, tenant string, owner, member, outsider *http.Cookie) {
 	base := "/v1/tenants/" + tenant + "/channel-accounts"
-	body := `{"provider":"telegram","provider_account_id":"00987654","name":"HTTP test","credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_WEBHOOK_SECRET"}}}`
+	body := `{"provider":"telegram","config":{"receive_mode":"webhook"},"provider_account_id":"00987654","name":"HTTP test","credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_WEBHOOK_SECRET"}}}`
 	// Real session middleware and owner use case precede body parsing.
 	deploymentRequest(t, router, "POST", base, nil, "missing-session", body, 401, nil)
 	deploymentRequest(t, router, "POST", base, member, "member-denied", "{invalid", 403, nil)

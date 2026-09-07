@@ -33,7 +33,7 @@ import (
 func testTelegramPreflightHTTP(t *testing.T, ctx context.Context, router http.Handler, pool *pgxpool.Pool, module *channelbinding.Module, authenticate gin.HandlerFunc, tenant, ownerID, memberID string, owner, member, outsider *http.Cookie) {
 	accountBase := "/v1/tenants/" + tenant + "/channel-accounts"
 	var account channelapp.CommandResult
-	deploymentRequest(t, router, "POST", accountBase, owner, "preflight-fixture-account", `{"provider":"telegram","provider_account_id":"123456789","name":"Preflight disabled fixture","credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_WEBHOOK_SECRET"}}}`, 201, &account)
+	deploymentRequest(t, router, "POST", accountBase, owner, "preflight-fixture-account", `{"provider":"telegram","config":{"receive_mode":"webhook"},"provider_account_id":"123456789","name":"Preflight disabled fixture","credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_WEBHOOK_SECRET"}}}`, 201, &account)
 	if account.Account == nil || account.Account.Enabled {
 		t.Fatal("fixture must be a saved disabled account")
 	}
@@ -108,7 +108,7 @@ func testTelegramPreflightHTTP(t *testing.T, ctx context.Context, router http.Ha
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := channelv1.PreflightClaimRequest{SchemaVersion: 1, ScopeID: "gateway_pool", SourceEpoch: channelEpoch, InstanceEpoch: "22222222-2222-4222-8222-222222222222", ClaimRequestID: "33333333-3333-4333-8333-333333333333", ClaimToken: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)), GatewayConfigDigest: digest, ExpectedPublicOrigin: &origin, OriginStatus: "PUBLIC_ORIGIN_STATIC_VALID", Limit: 1}
+	claim := channelv1.PreflightClaimRequest{DiagnosticPolicy: channelv1.PreflightReceiveModesPolicy, SchemaVersion: 1, ScopeID: "gateway_pool", SourceEpoch: channelEpoch, InstanceEpoch: "22222222-2222-4222-8222-222222222222", ClaimRequestID: "33333333-3333-4333-8333-333333333333", ClaimToken: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)), GatewayConfigDigest: digest, ExpectedPublicOrigin: &origin, OriginStatus: "PUBLIC_ORIGIN_STATIC_VALID", Limit: 1}
 	var grant channelv1.PreflightGrant
 	raw := call("/internal/v1/channel-preflights:claim", claim, 200)
 	if err := channelv1.Decode("preflight-grant.schema.json", raw, &grant); err != nil {
@@ -315,6 +315,8 @@ func preflightCompleteFixture(t *testing.T, claim channelv1.PreflightClaimReques
 	complete.GatewayConfigDigest = claim.GatewayConfigDigest
 	complete.ExpectedPublicOrigin = claim.ExpectedPublicOrigin
 	complete.ObservedAt = time.Now().UTC()
+	complete.DiagnosticPolicy, complete.ReceiveMode, complete.ConnectionRevision, complete.OriginStatus = grant.DiagnosticPolicy, grant.ReceiveMode, grant.ConnectionRevision, claim.OriginStatus
+	complete.EffectiveConfigDigest = grant.EffectiveConfigDigest
 	return complete
 }
 func preflightUnchangedState(t *testing.T, ctx context.Context, pool *pgxpool.Pool) map[string]string {
@@ -359,7 +361,7 @@ func testPreflightConfigurationAndOwnerReplacement(t *testing.T, ctx context.Con
 	createAccount := func(t *testing.T, suffix, providerID string) string {
 		t.Helper()
 		var result channelapp.CommandResult
-		input := fmt.Sprintf(`{"provider":"telegram","provider_account_id":%q,"name":%q,"credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_WEBHOOK_SECRET"}}}`, providerID, suffix)
+		input := fmt.Sprintf(`{"provider":"telegram","config":{"receive_mode":"webhook"},"provider_account_id":%q,"name":%q,"credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_WEBHOOK_SECRET"}}}`, providerID, suffix)
 		deploymentRequest(t, router, "POST", accountBase, owner, "preflight-account-"+suffix, input, 201, &result)
 		if result.Account == nil || result.Account.Enabled {
 			t.Fatal("fixture account is not disabled")
@@ -394,6 +396,7 @@ func testPreflightConfigurationAndOwnerReplacement(t *testing.T, ctx context.Con
 			t.Fatal(err)
 		}
 		completeB.GatewayConfigDigest = digestB
+		completeB.EffectiveConfigDigest, _ = channelv1.PreflightEffectiveConfigDigest(claim.ScopeID, claim.SourceEpoch, completeB.ReceiveMode, completeB.ConnectionRevision, &originB, claim.OriginStatus)
 		payload, err := json.Marshal(completeB)
 		if err != nil || channelv1.Validate("preflight-complete.schema.json", payload) != nil {
 			t.Fatal("replacement configuration must be independently valid wire")
@@ -452,7 +455,7 @@ func testPreflightConfigurationAndOwnerReplacement(t *testing.T, ctx context.Con
 func testPreflightRevokedSessionBeforeCommit(t *testing.T, ctx context.Context, router http.Handler, pool *pgxpool.Pool, module *channelbinding.Module, authenticate gin.HandlerFunc, accountBase, tenant, ownerID string, owner *http.Cookie) {
 	t.Run("SessionRevokedAfterAuthenticationDoesNotMutateActiveTask", func(t *testing.T) {
 		var account channelapp.CommandResult
-		deploymentRequest(t, router, "POST", accountBase, owner, "preflight-session-fixture", `{"provider":"telegram","provider_account_id":"423456789","name":"Submit Session fixture","credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_WEBHOOK_SECRET"}}}`, 201, &account)
+		deploymentRequest(t, router, "POST", accountBase, owner, "preflight-session-fixture", `{"provider":"telegram","config":{"receive_mode":"webhook"},"provider_account_id":"423456789","name":"Submit Session fixture","credentials":{"telegram.bot_token":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_BOT_TOKEN"},"telegram.webhook_secret":{"action":"replace","value":"TEST_ONLY_PREFLIGHT_WEBHOOK_SECRET"}}}`, 201, &account)
 		if account.Account == nil {
 			t.Fatal("missing session fixture account")
 		}

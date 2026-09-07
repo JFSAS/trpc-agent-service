@@ -9,12 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
-	control "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
-	runtime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
-	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
-	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
-	"github.com/nats-io/nats.go/jetstream"
 	"io"
 	"math/big"
 	"net"
@@ -28,6 +22,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
+	control "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
+	runtime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
+	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
+	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func controlTLSFiles(t *testing.T, h http.Handler) ControlConfig {
@@ -88,8 +89,9 @@ func controlTLSFiles(t *testing.T, h http.Handler) ControlConfig {
 }
 
 type remoteRuntimeFixture struct {
-	calls atomic.Int32
-	t     *testing.T
+	calls     atomic.Int32
+	t         *testing.T
+	remoteURL string
 }
 
 func (f *remoteRuntimeFixture) New(token string) (runtime.Remote, error) {
@@ -104,9 +106,15 @@ func (f *remoteRuntimeFixture) Register(ctx context.Context, url, secret string)
 		f.t.Error("registration config mismatch")
 	}
 	f.calls.Add(1)
+	f.remoteURL = url
 	return true, nil
 }
-func (*remoteRuntimeFixture) Close() {}
+func (*remoteRuntimeFixture) Close()                                    {}
+func (f *remoteRuntimeFixture) Webhook(context.Context) (string, error) { return f.remoteURL, nil }
+func (f *remoteRuntimeFixture) DeleteWebhook(context.Context) error     { f.remoteURL = ""; return nil }
+func (f *remoteRuntimeFixture) Poll(context.Context, int64, int) ([]json.RawMessage, error) {
+	return []json.RawMessage{}, nil
+}
 func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	natsURL := os.Getenv("GATEWAY_TEST_NATS_URL")
 	if natsURL == "" {

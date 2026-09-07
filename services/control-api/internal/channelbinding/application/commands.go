@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/gowebpki/jcs"
@@ -174,7 +175,13 @@ func (s *Service) readTarget(ctx context.Context, actor Actor, selector domain.T
 
 // CreateAccountInput never accepts a tenant, endpoint, credential reference or
 // enabled flag. Physical identity normalization precedes MAC canonicalization.
+type AccountConfigInput struct {
+	ReceiveMode string `json:"receive_mode"`
+}
+
 type CreateAccountInput struct {
+	Config            *AccountConfigInput              `json:"config,omitempty"`
+	LegacyWebhook     bool                             `json:"-"`
 	Provider          domain.Provider                  `json:"provider"`
 	ProviderAccountID string                           `json:"provider_account_id"`
 	Name              string                           `json:"name"`
@@ -192,13 +199,35 @@ func (s *Service) CreateAccount(ctx context.Context, actor Actor, key string, in
 	}
 	input.ProviderAccountID = physical
 	input.Name = strings.TrimSpace(input.Name)
-	required := domain.RequiredPurposes(input.Provider)
-	if len(input.Credentials) != len(required) {
+	mode := domain.LongPolling
+	if input.LegacyWebhook {
+		if input.Provider != domain.Telegram || input.Config != nil {
+			return CommandResult{}, invalid("/X-Channel-Create-Contract")
+		}
+		mode = domain.Webhook
+	} else if input.Provider == domain.Telegram {
+		if input.Config != nil && input.Config.ReceiveMode != "" {
+			mode = input.Config.ReceiveMode
+		}
+		if !domain.ValidReceiveMode(mode) {
+			return CommandResult{}, invalid("/config/receive_mode")
+		}
+		input.Config = &AccountConfigInput{ReceiveMode: mode}
+	} else if input.Config != nil {
+		return CommandResult{}, invalid("/config")
+	}
+	required := domain.RequiredPurposes(input.Provider, mode)
+	allowed := domain.AllowedPurposes(input.Provider)
+	if len(input.Credentials) < len(required) || len(input.Credentials) > len(allowed) {
 		return CommandResult{}, invalid("/credentials")
 	}
 	for _, purpose := range required {
-		edit, ok := input.Credentials[purpose]
-		if !ok || edit.Action != "replace" {
+		if _, ok := input.Credentials[purpose]; !ok {
+			return CommandResult{}, invalid("/credentials")
+		}
+	}
+	for purpose, edit := range input.Credentials {
+		if !slices.Contains(allowed, purpose) || edit.Action != "replace" {
 			return CommandResult{}, invalid("/credentials")
 		}
 		if err = edit.Validate(input.Provider, purpose); err != nil {
@@ -210,20 +239,23 @@ func (s *Service) CreateAccount(ctx context.Context, actor Actor, key string, in
 		if err != nil {
 			return nil, ErrDependencyUnavailable
 		}
-		a, err := domain.NewAccount(actor.TenantID, id, s.deps.ScopeID, actor.UserID, input.Provider, physical, input.Name, input.Description, s.deps.Now())
+		a, err := domain.NewAccount(actor.TenantID, id, s.deps.ScopeID, actor.UserID, input.Provider, physical, input.Name, input.Description, s.deps.Now(), mode)
 		if err != nil {
 			return nil, err
 		}
-		records := make([]domain.CredentialRecord, 0, len(required))
-		for _, purpose := range required {
+		records := make([]domain.CredentialRecord, 0, len(allowed))
+		for _, purpose := range allowed {
 			id, err := s.deps.NewID("ccr")
 			if err != nil {
 				return nil, ErrDependencyUnavailable
 			}
-			records = append(records, domain.CredentialRecord{TenantID: a.TenantID, AccountID: a.ID, Provider: a.Provider, Meta: domain.CredentialMeta{Purpose: purpose, ID: id, Version: 1, Configured: true}})
+			records = append(records, domain.CredentialRecord{TenantID: a.TenantID, AccountID: a.ID, Provider: a.Provider, Meta: domain.CredentialMeta{Purpose: purpose, ID: id, Version: 1, Configured: input.Credentials[purpose].Action == "replace"}})
 		}
 		return func(ctx context.Context, tx Transaction) (CommandResult, error) {
 			for i := range records {
+				if !records[i].Meta.Configured {
+					continue
+				}
 				aad, err := records[i].AAD()
 				if err != nil {
 					return CommandResult{}, err
@@ -247,9 +279,10 @@ func (s *Service) CreateAccount(ctx context.Context, actor Actor, key string, in
 }
 
 type UpdateAccountInput struct {
-	ExpectedAccountRevision int64   `json:"expected_account_revision"`
-	Name                    *string `json:"name,omitempty"`
-	Description             *string `json:"description,omitempty"`
+	Config                  *AccountConfigInput `json:"config,omitempty"`
+	ExpectedAccountRevision int64               `json:"expected_account_revision"`
+	Name                    *string             `json:"name,omitempty"`
+	Description             *string             `json:"description,omitempty"`
 }
 
 func (s *Service) UpdateAccount(ctx context.Context, actor Actor, id, key string, input UpdateAccountInput) (CommandResult, error) {
@@ -266,7 +299,11 @@ func (s *Service) UpdateAccount(ctx context.Context, actor Actor, id, key string
 			if err != nil {
 				return CommandResult{}, err
 			}
-			updated, changed, err := a.Account.ChangeMetadata(input.ExpectedAccountRevision, input.Name, input.Description, s.deps.Now())
+			var mode *string
+			if input.Config != nil {
+				mode = &input.Config.ReceiveMode
+			}
+			updated, changed, err := a.Account.ChangeConfiguration(input.ExpectedAccountRevision, input.Name, input.Description, mode, s.deps.Now())
 			if err != nil {
 				return CommandResult{}, err
 			}

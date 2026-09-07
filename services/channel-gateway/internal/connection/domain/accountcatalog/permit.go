@@ -32,7 +32,7 @@ func ValidUseKind(provider, kind string) bool {
 	if provider == "wecom" {
 		return kind == "wecom_connection" || kind == "wecom_ingress" || kind == "wecom_delivery"
 	}
-	return provider == "telegram" && (kind == "telegram_webhook" || kind == "telegram_delivery" || kind == "telegram_registration")
+	return provider == "telegram" && (kind == "telegram_receiver" || kind == "telegram_webhook" || kind == "telegram_delivery" || kind == "telegram_registration")
 }
 func (p *Permit) Check() error {
 	if p == nil || p.ctx == nil || p.ctx.Err() != nil || !time.Now().Before(p.until) {

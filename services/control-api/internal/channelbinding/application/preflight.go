@@ -130,6 +130,8 @@ func preflightMismatch(r PreflightRecord, a PreflightAccount, epoch string, chec
 		return "CHANNEL_PREFLIGHT_TENANT_INACTIVE"
 	case checkRequester && !a.RequesterOwner:
 		return "CHANNEL_PREFLIGHT_REQUESTER_REVOKED"
+	case r.View.DiagnosticPolicy != "" && r.View.ReceiveMode != a.Account.Config.ReceiveMode:
+		return "CHANNEL_PREFLIGHT_ACCOUNT_CHANGED"
 	case a.Account.Enabled || string(a.Account.Provider) != r.View.Provider || a.Account.ProviderAccountID != r.View.ProviderAccountID || a.Account.ConnectionRevision != r.View.ConnectionRevision:
 		return "CHANNEL_PREFLIGHT_ACCOUNT_CHANGED"
 	}
@@ -306,7 +308,7 @@ func (s *PreflightService) createOnce(ctx context.Context, actor Actor, account,
 		if err != nil {
 			return ErrDependencyUnavailable
 		}
-		r := PreflightRecord{ScopeID: s.deps.ScopeID, SourceEpoch: tx.SourceEpoch(), CredentialID: token.Meta.ID, BotTokenConfigured: token.Meta.Configured, WebhookSecretConfigured: preflightWebhookConfigured(a), WebhookPath: a.Account.Config.WebhookPath, LastCheckedAt: now, View: channelv1.PreflightView{PreflightID: id, TenantID: actor.TenantID, AccountID: account, Provider: string(a.Account.Provider), ProviderAccountID: a.Account.ProviderAccountID, RequestedBy: actor.UserID, AccountRevision: a.Account.Revision, ConnectionRevision: a.Account.ConnectionRevision, BotTokenVersion: token.Meta.Version, State: "QUEUED", Outcome: "UNKNOWN", ReasonCode: "CHANNEL_PREFLIGHT_QUEUED", Freshness: "NOT_CHECKED", RequestedAt: now, JobDeadlineAt: now.Add(preflightLifetime), Checks: []channelv1.PreflightCheck{}}}
+		r := PreflightRecord{ScopeID: s.deps.ScopeID, SourceEpoch: tx.SourceEpoch(), CredentialID: token.Meta.ID, BotTokenConfigured: token.Meta.Configured, WebhookSecretConfigured: preflightWebhookConfigured(a), WebhookPath: a.Account.Config.WebhookPath, LastCheckedAt: now, View: channelv1.PreflightView{ReceiveMode: a.Account.Config.ReceiveMode, DiagnosticPolicy: channelv1.PreflightReceiveModesPolicy, PreflightID: id, TenantID: actor.TenantID, AccountID: account, Provider: string(a.Account.Provider), ProviderAccountID: a.Account.ProviderAccountID, RequestedBy: actor.UserID, AccountRevision: a.Account.Revision, ConnectionRevision: a.Account.ConnectionRevision, BotTokenVersion: token.Meta.Version, State: "QUEUED", Outcome: "UNKNOWN", ReasonCode: "CHANNEL_PREFLIGHT_QUEUED", Freshness: "NOT_CHECKED", RequestedAt: now, JobDeadlineAt: now.Add(preflightLifetime), Checks: []channelv1.PreflightCheck{}}}
 		if err = tx.Save(ctx, r); err != nil {
 			return err
 		}
@@ -382,7 +384,7 @@ func (s *PreflightService) Get(ctx context.Context, actor Actor, account, id str
 
 func preflightGrant(r PreflightRecord, now time.Time) channelv1.PreflightGrant {
 	v := r.View
-	return channelv1.PreflightGrant{SchemaVersion: 1, ServerTime: now, PreflightID: v.PreflightID, ScopeID: r.ScopeID, SourceEpoch: r.SourceEpoch, TenantID: v.TenantID, AccountID: v.AccountID, Provider: v.Provider, ProviderAccountID: v.ProviderAccountID, AccountRevision: v.AccountRevision, ConnectionRevision: v.ConnectionRevision, WebhookPath: r.WebhookPath, Credentials: channelv1.PreflightCredential{Purpose: domain.TelegramBotToken, CredentialID: r.CredentialID, CredentialVersion: v.BotTokenVersion, Configured: r.BotTokenConfigured}, WebhookSecretConfigured: r.WebhookSecretConfigured, LeaseEpoch: r.LeaseEpoch, LeaseExpiresAt: *r.LeaseExpiresAt, JobDeadlineAt: v.JobDeadlineAt, GatewayConfigDigest: *v.GatewayConfigDigest}
+	return channelv1.PreflightGrant{ReceiveMode: v.ReceiveMode, DiagnosticPolicy: v.DiagnosticPolicy, EffectiveConfigDigest: v.EffectiveConfigDigest, SchemaVersion: 1, ServerTime: now, PreflightID: v.PreflightID, ScopeID: r.ScopeID, SourceEpoch: r.SourceEpoch, TenantID: v.TenantID, AccountID: v.AccountID, Provider: v.Provider, ProviderAccountID: v.ProviderAccountID, AccountRevision: v.AccountRevision, ConnectionRevision: v.ConnectionRevision, WebhookPath: r.WebhookPath, Credentials: channelv1.PreflightCredential{Purpose: domain.TelegramBotToken, CredentialID: r.CredentialID, CredentialVersion: v.BotTokenVersion, Configured: r.BotTokenConfigured}, WebhookSecretConfigured: r.WebhookSecretConfigured, LeaseEpoch: r.LeaseEpoch, LeaseExpiresAt: *r.LeaseExpiresAt, JobDeadlineAt: v.JobDeadlineAt, GatewayConfigDigest: *v.GatewayConfigDigest}
 }
 func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input channelv1.PreflightClaimRequest) (*channelv1.PreflightGrant, error) {
 	if err := s.authorize(p, input.ScopeID, input.SourceEpoch); err != nil {
@@ -396,7 +398,7 @@ func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input
 		return nil, err
 	}
 	key, _ := preflightDigest([]string{input.ScopeID, p.PrincipalID, p.InstanceID, input.InstanceEpoch, input.ClaimRequestID})
-	candidate, hasCandidate, err := s.deps.Store.Candidate(ctx, input.ScopeID)
+	candidate, hasCandidate, err := s.deps.Store.Candidate(ctx, input.ScopeID, input.DiagnosticPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +481,7 @@ func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if !ok || r.View.DiagnosticPolicy != input.DiagnosticPolicy {
 			return saveEmpty()
 		}
 		now, err = tx.Now(ctx)
@@ -496,7 +498,16 @@ func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input
 		if r.View.State == "RUNNING" && r.LeaseExpiresAt != nil && now.Before(*r.LeaseExpiresAt) {
 			return saveEmpty()
 		}
-		if r.View.GatewayConfigDigest != nil && *r.View.GatewayConfigDigest != input.GatewayConfigDigest {
+		effective := ""
+		configChanged := r.View.GatewayConfigDigest != nil && *r.View.GatewayConfigDigest != input.GatewayConfigDigest
+		if r.View.DiagnosticPolicy != "" {
+			effective, err = channelv1.PreflightEffectiveConfigDigest(input.ScopeID, input.SourceEpoch, r.View.ReceiveMode, r.View.ConnectionRevision, input.ExpectedPublicOrigin, input.OriginStatus)
+			if err != nil {
+				return invalid("/gateway_config_digest")
+			}
+			configChanged = r.View.EffectiveConfigDigest != "" && r.View.EffectiveConfigDigest != effective
+		}
+		if configChanged {
 			preflightStale(&r, "CHANNEL_PREFLIGHT_GATEWAY_CONFIG_CHANGED")
 			if err = tx.Save(ctx, r); err != nil {
 				return err
@@ -509,11 +520,21 @@ func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input
 		}
 		if r.View.StartedAt == nil {
 			r.View.StartedAt = &now
-			r.View.GatewayConfigDigest = &input.GatewayConfigDigest
-			r.View.ExpectedPublicOrigin = input.ExpectedPublicOrigin
 			unconfirmed := "UNCONFIRMED"
 			r.View.GatewayConfigFreshness = &unconfirmed
-			r.OriginStatus = input.OriginStatus
+		}
+		// Each lease freezes its global instance evidence. An expired polling
+		// lease may refresh irrelevant inbound origin only when effective
+		// configuration remains identical; old claim receipts stay unchanged.
+		r.View.GatewayConfigDigest = &input.GatewayConfigDigest
+		r.View.ExpectedPublicOrigin = input.ExpectedPublicOrigin
+		r.OriginStatus = input.OriginStatus
+		if r.View.DiagnosticPolicy != "" {
+			r.View.EffectiveConfigDigest = effective
+			r.GatewayPublicOrigin = input.ExpectedPublicOrigin
+			if r.View.ReceiveMode == domain.LongPolling {
+				r.View.ExpectedPublicOrigin = nil
+			}
 		}
 		r.LeaseEpoch++
 		expiry := now.Add(preflightLease)
@@ -687,14 +708,29 @@ func (s *PreflightService) Complete(ctx context.Context, p WorkloadPrincipal, id
 		if operationErr = preflightUsable(r, now); operationErr != nil {
 			return nil
 		}
-		computed, err := channelv1.PreflightConfigDigest(input.ScopeID, input.SourceEpoch, input.ExpectedPublicOrigin, input.Checks[2].Code)
+		if input.DiagnosticPolicy != r.View.DiagnosticPolicy || input.ReceiveMode != r.View.ReceiveMode || (input.DiagnosticPolicy != "" && input.ConnectionRevision != r.View.ConnectionRevision) {
+			return preflightError("RESULT_CONFLICT")
+		}
+		originStatus := input.Checks[2].Code
+		if input.DiagnosticPolicy != "" {
+			originStatus = input.OriginStatus
+		}
+		computed, err := channelv1.PreflightConfigDigest(input.ScopeID, input.SourceEpoch, input.ExpectedPublicOrigin, originStatus)
 		if err != nil || computed != input.GatewayConfigDigest {
 			return invalid("/gateway_config_digest")
 		}
 		if r.View.GatewayConfigDigest == nil {
 			return ErrDependencyUnavailable
 		}
-		if computed != *r.View.GatewayConfigDigest {
+		configChanged := computed != *r.View.GatewayConfigDigest
+		if input.DiagnosticPolicy != "" {
+			configChanged = input.EffectiveConfigDigest != r.View.EffectiveConfigDigest
+			if !configChanged && computed != *r.View.GatewayConfigDigest {
+				// Same lease cannot substitute fresh global config evidence.
+				return preflightError("RESULT_CONFLICT")
+			}
+		}
+		if configChanged {
 			preflightStale(&r, "CHANNEL_PREFLIGHT_GATEWAY_CONFIG_CHANGED")
 			if err = tx.Save(ctx, r); err != nil {
 				return err
@@ -706,10 +742,10 @@ func (s *PreflightService) Complete(ctx context.Context, p WorkloadPrincipal, id
 			BotTokenConfigured      bool `json:"bot_token_configured"`
 			WebhookSecretConfigured bool `json:"webhook_secret_configured"`
 		}
-		if json.Unmarshal(input.Checks[0].Details, &configured) != nil || configured.BotTokenConfigured != r.BotTokenConfigured || configured.WebhookSecretConfigured != r.WebhookSecretConfigured || input.Checks[2].Code != r.OriginStatus {
+		if json.Unmarshal(input.Checks[0].Details, &configured) != nil || configured.BotTokenConfigured != r.BotTokenConfigured || configured.WebhookSecretConfigured != r.WebhookSecretConfigured || originStatus != r.OriginStatus {
 			return preflightError("RESULT_CONFLICT")
 		}
-		outcome, err := channelv1.ValidatePreflightChecks(input.Checks)
+		outcome, err := channelv1.ValidatePreflightChecksForMode(input.DiagnosticPolicy, input.ReceiveMode, input.Checks)
 		if err != nil {
 			return invalid("/checks")
 		}

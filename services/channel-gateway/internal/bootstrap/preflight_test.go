@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 )
 
 func TestPreflightBootstrapDisabledAccountWithoutRuntime(t *testing.T) {
@@ -31,11 +33,22 @@ func TestPreflightBootstrapDisabledAccountWithoutRuntime(t *testing.T) {
 			_ = json.Unmarshal(body["scope_id"], &scope)
 			_ = json.Unmarshal(body["source_epoch"], &epoch)
 			_ = json.Unmarshal(body["gateway_config_digest"], &digest)
-			if len(body) != 10 || body["origin_status"] == nil || string(body["limit"]) != "1" {
+			if wire.Validate("preflight-claim.schema.json", raw) != nil || len(body) != 11 || body["origin_status"] == nil || string(body["limit"]) != "1" {
 				t.Error("claim wire drift")
 			}
 			now := time.Now().UTC()
 			grant := map[string]any{"schema_version": 1, "server_time": now, "preflight_id": "cpf_disabled", "scope_id": scope, "source_epoch": epoch, "tenant_id": "tnt_test", "account_id": "cha_disabled", "provider": "telegram", "provider_account_id": "123", "account_revision": 7, "connection_revision": 4, "webhook_path": "/v1/telegram/cha_disabled", "credentials": map[string]any{"purpose": "telegram.bot_token", "credential_id": "ccr_token", "credential_version": 2, "configured": false}, "webhook_secret_configured": false, "lease_epoch": 1, "lease_expires_at": now.Add(30 * time.Second), "job_deadline_at": now.Add(120 * time.Second), "gateway_config_digest": digest}
+			var origin *string
+			var originStatus string
+			_ = json.Unmarshal(body["expected_public_origin"], &origin)
+			_ = json.Unmarshal(body["origin_status"], &originStatus)
+			effective, e := wire.PreflightEffectiveConfigDigest(scope, epoch, "webhook", 4, origin, originStatus)
+			if e != nil {
+				t.Error(e)
+			}
+			grant["receive_mode"] = "webhook"
+			grant["diagnostic_policy"] = wire.PreflightReceiveModesPolicy
+			grant["effective_config_digest"] = effective
 			if e := json.NewEncoder(w).Encode(grant); e != nil {
 				t.Error(e)
 			}

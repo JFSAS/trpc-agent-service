@@ -1,7 +1,7 @@
 # Channel Gateway 实施状态与当前协议选择
 
 - **历史开发工作树**：`trpc-agent-service-channel-gateway`，分支 `codex/channel-gateway`，基线 `bf107766`。
-- **最新复核日期**：2026-09-06；历史切片保持原日期。
+- **最新复核日期**：2026-09-07；历史切片保持原日期。
 - **第一切片历史应用/验证状态**：第一切片已应用到本工作树，真实 PostgreSQL/NATS race 联合测试、全仓测试、vet、生成一致性、NATS ACL、实际镜像启动与有界停止均通过；未提交或发布。验收使用合成 Provider 输入与测试订阅者，不代表真实机器人收发或完整 Agent E2E。
 - **上一 Connection 切片：已实现，实际工作树与镜像已核验。** 新增 Connection 账户/lease/epoch/Supervisor、0005、企微入站、同事务 owner guard 与 SDK 直接装配；实际工作树应用、完整联合套件与新镜像验收已完成，准确证据见 §9.5。CGR-27/0004 与 SDK 上一切片的已应用证据原样保留于第 8 节，该切片增量见第 9 节。
 - **证据时间点**：第 7–10 节保留此前切片验收；当前 Runtime 切片的分项与最终验收在第 11 节。不以历史日志替代新增代码验证。
@@ -13,6 +13,13 @@
 不启用 Sender、发送 Runner、ReplyIntent Consumer 或默认许可。本轮最终验收已通过，见第 11 节。
 
 ## 0. 最新阅读口径：设计、实现与验证分开
+
+**2026-09-07 Telegram 双接收模式**：Control/API/Web 与 Gateway 源码在
+`codex/channel-gateway-receive-modes` 本地集成；增加长轮询、统一物理 owner、持久 cursor、
+模式化预检及旧请求兼容。Gateway 0011/Control 0003 不改旧迁移；同一 Gateway workload。
+真实 PG/NATS + 合成 Telegram HTTP 纵切与独立 Control/Web 验证已执行；没有本轮真实 Bot
+模式切换或远端 main 发布。当前口径见 [双模式开发记录](telegram-receive-modes-implementation.md)，
+精确命令/结果由该工作树 artifacts 下最终 VERIFICATION.txt 记录；以下旧节为历史证据。
 
 **2026-09-06 GCI2 运行接线**：生产来源现在默认 Control mTLS；凭据 bridge、Admission/A1/A2
 账户门禁、Telegram 持久注册 fence/BEGIN_CALL/动态 Handler、Delivery Runner 和 observations

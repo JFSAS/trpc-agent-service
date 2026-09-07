@@ -90,14 +90,24 @@ func validatePreflightRecord(r application.PreflightRecord) error {
 		return integrity()
 	}
 	if r.LeaseEpoch == 0 {
-		if r.LeaseExpiresAt != nil || r.PrincipalID != "" || r.InstanceID != "" || r.InstanceEpoch != "" || r.ClaimTokenHash != "" || r.OriginStatus != "" || v.StartedAt != nil || v.GatewayConfigDigest != nil || v.GatewayConfigFreshness != nil || v.ExpectedPublicOrigin != nil || v.State == "RUNNING" || v.State == "COMPLETED" {
+		if r.LeaseExpiresAt != nil || r.PrincipalID != "" || r.InstanceID != "" || r.InstanceEpoch != "" || r.ClaimTokenHash != "" || r.OriginStatus != "" || r.GatewayPublicOrigin != nil || v.EffectiveConfigDigest != "" || v.StartedAt != nil || v.GatewayConfigDigest != nil || v.GatewayConfigFreshness != nil || v.ExpectedPublicOrigin != nil || v.State == "RUNNING" || v.State == "COMPLETED" {
 			return integrity()
 		}
 	} else {
 		if r.LeaseExpiresAt == nil || !r.LeaseExpiresAt.After(v.RequestedAt) || !validPreflightPrincipal(r.PrincipalID) || !domain.ValidID(r.InstanceID) || !domain.ValidEpoch(r.InstanceEpoch) || !domain.ValidDigest(r.ClaimTokenHash) || v.StartedAt == nil || v.GatewayConfigDigest == nil || v.GatewayConfigFreshness == nil || *v.GatewayConfigFreshness != "UNCONFIRMED" || v.State == "QUEUED" {
 			return integrity()
 		}
-		digest, err := channelv1.PreflightConfigDigest(r.ScopeID, r.SourceEpoch, v.ExpectedPublicOrigin, r.OriginStatus)
+		origin := v.ExpectedPublicOrigin
+		if v.DiagnosticPolicy != "" {
+			origin = r.GatewayPublicOrigin
+			effective, err := channelv1.PreflightEffectiveConfigDigest(r.ScopeID, r.SourceEpoch, v.ReceiveMode, v.ConnectionRevision, origin, r.OriginStatus)
+			if err != nil || effective != v.EffectiveConfigDigest || (v.ReceiveMode == domain.Webhook && !reflect.DeepEqual(origin, v.ExpectedPublicOrigin)) {
+				return integrity()
+			}
+		} else if r.GatewayPublicOrigin != nil {
+			return integrity()
+		}
+		digest, err := channelv1.PreflightConfigDigest(r.ScopeID, r.SourceEpoch, origin, r.OriginStatus)
 		if err != nil || digest != *v.GatewayConfigDigest {
 			return integrity()
 		}
@@ -127,7 +137,7 @@ func preflightActive(state string) bool { return state == "QUEUED" || state == "
 
 func validatePreflightChange(old, next application.PreflightRecord) error {
 	a, b := old.View, next.View
-	if old.ScopeID != next.ScopeID || old.SourceEpoch != next.SourceEpoch || old.CredentialID != next.CredentialID || old.BotTokenConfigured != next.BotTokenConfigured || old.WebhookSecretConfigured != next.WebhookSecretConfigured || old.WebhookPath != next.WebhookPath || a.PreflightID != b.PreflightID || a.TenantID != b.TenantID || a.AccountID != b.AccountID || a.RequestedBy != b.RequestedBy || a.Provider != b.Provider || a.ProviderAccountID != b.ProviderAccountID || a.AccountRevision != b.AccountRevision || a.ConnectionRevision != b.ConnectionRevision || a.BotTokenVersion != b.BotTokenVersion || !a.RequestedAt.Equal(b.RequestedAt) || !a.JobDeadlineAt.Equal(b.JobDeadlineAt) || next.LastCheckedAt.Before(old.LastCheckedAt) {
+	if a.ReceiveMode != b.ReceiveMode || a.DiagnosticPolicy != b.DiagnosticPolicy || old.ScopeID != next.ScopeID || old.SourceEpoch != next.SourceEpoch || old.CredentialID != next.CredentialID || old.BotTokenConfigured != next.BotTokenConfigured || old.WebhookSecretConfigured != next.WebhookSecretConfigured || old.WebhookPath != next.WebhookPath || a.PreflightID != b.PreflightID || a.TenantID != b.TenantID || a.AccountID != b.AccountID || a.RequestedBy != b.RequestedBy || a.Provider != b.Provider || a.ProviderAccountID != b.ProviderAccountID || a.AccountRevision != b.AccountRevision || a.ConnectionRevision != b.ConnectionRevision || a.BotTokenVersion != b.BotTokenVersion || !a.RequestedAt.Equal(b.RequestedAt) || !a.JobDeadlineAt.Equal(b.JobDeadlineAt) || next.LastCheckedAt.Before(old.LastCheckedAt) {
 		return integrity()
 	}
 	if !preflightActive(a.State) {
@@ -140,8 +150,14 @@ func validatePreflightChange(old, next application.PreflightRecord) error {
 		}
 		return nil
 	}
-	if a.StartedAt != nil && !samePreflightTime(a.StartedAt, b.StartedAt) || a.GatewayConfigDigest != nil && !reflect.DeepEqual(a.GatewayConfigDigest, b.GatewayConfigDigest) || a.ExpectedPublicOrigin != nil && !reflect.DeepEqual(a.ExpectedPublicOrigin, b.ExpectedPublicOrigin) || old.OriginStatus != "" && old.OriginStatus != next.OriginStatus {
+	if a.StartedAt != nil && !samePreflightTime(a.StartedAt, b.StartedAt) || a.EffectiveConfigDigest != "" && a.EffectiveConfigDigest != b.EffectiveConfigDigest {
 		return integrity()
+	}
+	if a.GatewayConfigDigest != nil {
+		refreshedLease := a.DiagnosticPolicy != "" && a.ReceiveMode == domain.LongPolling && next.LeaseEpoch == old.LeaseEpoch+1 && a.EffectiveConfigDigest == b.EffectiveConfigDigest
+		if !refreshedLease && (!reflect.DeepEqual(a.GatewayConfigDigest, b.GatewayConfigDigest) || !reflect.DeepEqual(a.ExpectedPublicOrigin, b.ExpectedPublicOrigin) || !reflect.DeepEqual(old.GatewayPublicOrigin, next.GatewayPublicOrigin) || old.OriginStatus != next.OriginStatus) {
+			return integrity()
+		}
 	}
 	if next.LeaseEpoch < old.LeaseEpoch || next.LeaseEpoch > old.LeaseEpoch+1 || next.LeaseEpoch != old.LeaseEpoch && b.State != "RUNNING" {
 		return integrity()

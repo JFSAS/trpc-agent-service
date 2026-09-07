@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 )
 
 const runnerEpoch = "11111111-1111-4111-8111-111111111111"
@@ -26,7 +28,13 @@ func runnerConfig(t *testing.T) ConfigSnapshot {
 }
 func runnerGrant(r ClaimRequest) Grant {
 	now := time.Now().UTC()
-	return Grant{PreflightID: "cpf_test", ScopeID: "pool", SourceEpoch: runnerEpoch, TenantID: "tnt_test", AccountID: "cha_test", Provider: "telegram", ProviderAccountID: "123", WebhookPath: "/v1/telegram/cha_test", AccountRevision: 7, ConnectionRevision: 4, LeaseEpoch: 1, Credential: Credential{Purpose: "telegram.bot_token", ID: "ccr_token", Version: 2, Configured: true}, WebhookSecretConfigured: true, ServerTime: now, LeaseExpiresAt: now.Add(30 * time.Second), JobDeadlineAt: now.Add(120 * time.Second), ConfigDigest: r.Config.Digest, Request: r}
+	g := Grant{PreflightID: "cpf_test", ScopeID: "pool", SourceEpoch: runnerEpoch, TenantID: "tnt_test", AccountID: "cha_test", Provider: "telegram", ProviderAccountID: "123", WebhookPath: "/v1/telegram/cha_test", AccountRevision: 7, ConnectionRevision: 4, LeaseEpoch: 1, Credential: Credential{Purpose: "telegram.bot_token", ID: "ccr_token", Version: 2, Configured: true}, WebhookSecretConfigured: true, ServerTime: now, LeaseExpiresAt: now.Add(30 * time.Second), JobDeadlineAt: now.Add(120 * time.Second), ConfigDigest: r.Config.Digest, Request: r}
+	if r.DiagnosticPolicy != "" {
+		g.DiagnosticPolicy = r.DiagnosticPolicy
+		g.ReceiveMode = "webhook"
+		g.EffectiveConfigDigest, _ = wire.PreflightEffectiveConfigDigest(g.ScopeID, g.SourceEpoch, g.ReceiveMode, g.ConnectionRevision, r.Config.PublicOrigin, r.Config.OriginStatus)
+	}
+	return g
 }
 
 type runnerControl struct {

@@ -40,7 +40,7 @@ func NextVersion(v int64) (int64, error) {
 	}
 	return v + 1, nil
 }
-func RequiredPurposes(p Provider) []string {
+func AllowedPurposes(p Provider) []string {
 	switch p {
 	case Telegram:
 		return []string{TelegramBotToken, TelegramWebhookSecret}
@@ -50,12 +50,29 @@ func RequiredPurposes(p Provider) []string {
 		return nil
 	}
 }
+
+const (
+	LongPolling = "long_polling"
+	Webhook     = "webhook"
+)
+
+func ValidReceiveMode(mode string) bool { return mode == LongPolling || mode == Webhook }
+
+// RequiredPurposes defaults to the legacy webhook contract for callers that
+// operate on a provider only. Account operations always pass the saved mode.
+func RequiredPurposes(p Provider, mode ...string) []string {
+	if p == Telegram && len(mode) == 1 && mode[0] == LongPolling {
+		return []string{TelegramBotToken}
+	}
+	return AllowedPurposes(p)
+}
 func ValidPurpose(p Provider, purpose string) bool {
-	return slices.Contains(RequiredPurposes(p), purpose)
+	return slices.Contains(AllowedPurposes(p), purpose)
 }
 
 // ConnectionConfig is closed by provider; callers cannot submit endpoints or paths.
 type ConnectionConfig struct {
+	ReceiveMode string `json:"receive_mode,omitempty"`
 	WebhookPath string `json:"webhook_path,omitempty"`
 	BotID       string `json:"bot_id,omitempty"`
 }
@@ -110,7 +127,7 @@ func normalizeMetadata(name, description string) (string, error) {
 	}
 	return name, nil
 }
-func NewAccount(tenant, id, scope, actor string, provider Provider, physicalID, name, description string, now time.Time) (Account, error) {
+func NewAccount(tenant, id, scope, actor string, provider Provider, physicalID, name, description string, now time.Time, mode ...string) (Account, error) {
 	if !ValidID(tenant) || !ValidID(id) || !ValidID(scope) || !ValidID(actor) {
 		return Account{}, failure(InputInvalid, "")
 	}
@@ -125,6 +142,13 @@ func NewAccount(tenant, id, scope, actor string, provider Provider, physicalID, 
 	a := Account{TenantID: tenant, ID: id, ScopeID: scope, Provider: provider, ProviderAccountID: physicalID, Name: name, Description: description, Revision: 1, ConnectionRevision: 1, CreatedBy: actor, CreatedAt: now, UpdatedAt: now}
 	if provider == Telegram {
 		a.Config.WebhookPath = "/v1/telegram/" + id
+		a.Config.ReceiveMode = Webhook
+		if len(mode) > 0 {
+			a.Config.ReceiveMode = mode[0]
+		}
+		if !ValidReceiveMode(a.Config.ReceiveMode) || len(mode) > 1 {
+			return Account{}, failure(InputInvalid, "/config/receive_mode")
+		}
 	} else {
 		a.Config.BotID = physicalID
 	}
@@ -140,10 +164,10 @@ func (a Account) Validate() error {
 		return failure(SourceIntegrity, "")
 	}
 	if a.Provider == Telegram {
-		if a.Config.WebhookPath != "/v1/telegram/"+a.ID || a.Config.BotID != "" {
+		if a.Config.WebhookPath != "/v1/telegram/"+a.ID || a.Config.BotID != "" || !ValidReceiveMode(a.Config.ReceiveMode) {
 			return failure(SourceIntegrity, "/config")
 		}
-	} else if a.Config.BotID != physical || a.Config.WebhookPath != "" {
+	} else if a.Config.BotID != physical || a.Config.WebhookPath != "" || a.Config.ReceiveMode != "" {
 		return failure(SourceIntegrity, "/config")
 	}
 	return nil
@@ -184,7 +208,7 @@ func (a Account) SetEnabled(expected int64, enabled bool, credentials []Credenti
 		return a, false, failure(RevisionConflict, "/expected_account_revision")
 	}
 	if enabled {
-		if err := ValidateCredentialSet(a.Provider, credentials, true); err != nil {
+		if err := ValidateCredentialSet(a.Provider, credentials, true, a.Config.ReceiveMode); err != nil {
 			return a, false, err
 		}
 	}
@@ -211,4 +235,41 @@ func (a Account) AdvanceConnection(now time.Time) (Account, error) {
 	a.ConnectionRevision = c
 	a.UpdatedAt = now
 	return a, nil
+}
+
+// ChangeConfiguration changes metadata and the single user-owned connection
+// field atomically. Generated paths and physical identity remain immutable.
+func (a Account) ChangeConfiguration(expected int64, name, description *string, mode *string, now time.Time) (Account, bool, error) {
+	if expected != a.Revision || !ValidVersion(expected) {
+		return a, false, failure(RevisionConflict, "/expected_account_revision")
+	}
+	if mode == nil {
+		return a.ChangeMetadata(expected, name, description, now)
+	}
+	if a.Provider != Telegram || !ValidReceiveMode(*mode) {
+		return a, false, failure(InputInvalid, "/config/receive_mode")
+	}
+	changedMode := *mode != a.Config.ReceiveMode
+	if changedMode && a.Enabled {
+		return a, false, failure(AccountMustBeDisabled, "/config/receive_mode")
+	}
+	next := a
+	if name != nil || description != nil {
+		var err error
+		next, _, err = a.ChangeMetadata(expected, name, description, now)
+		if err != nil {
+			return a, false, err
+		}
+	}
+	if changedMode {
+		c, err := a.AdvanceConnection(now)
+		if err != nil {
+			return a, false, err
+		}
+		next.Revision = c.Revision
+		next.ConnectionRevision = c.ConnectionRevision
+		next.UpdatedAt = now
+		next.Config.ReceiveMode = *mode
+	}
+	return next, next != a, nil
 }

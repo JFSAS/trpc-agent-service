@@ -35,7 +35,7 @@ func (cl *PreflightClient) Close() { cl.client.Close() }
 // Control owns diagnostic wire DTOs and schemas. Application grants remain
 // independent of that transport contract and never marshal as runtime permits.
 func (cl *PreflightClient) validateClaim(r p.ClaimRequest) error {
-	if cl == nil || cl.client == nil || p.ValidateConfig(r.Config) != nil || r.Config.ScopeID != cl.client.scope || r.Config.SourceEpoch != cl.client.epoch || !c.ValidEpoch(r.InstanceEpoch) || !c.ValidEpoch(r.RequestID) {
+	if (r.DiagnosticPolicy != "" && r.DiagnosticPolicy != wire.PreflightReceiveModesPolicy) || cl == nil || cl.client == nil || p.ValidateConfig(r.Config) != nil || r.Config.ScopeID != cl.client.scope || r.Config.SourceEpoch != cl.client.epoch || !c.ValidEpoch(r.InstanceEpoch) || !c.ValidEpoch(r.RequestID) {
 		return p.ErrInvalid
 	}
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(r.Token.Reveal())
@@ -50,7 +50,7 @@ func (cl *PreflightClient) Claim(ctx context.Context, r p.ClaimRequest) (*p.Gran
 	if err := cl.validateClaim(r); err != nil {
 		return nil, err
 	}
-	req := wire.PreflightClaimRequest{SchemaVersion: 1, ScopeID: r.Config.ScopeID, SourceEpoch: r.Config.SourceEpoch, InstanceEpoch: r.InstanceEpoch, ClaimRequestID: r.RequestID, ClaimToken: r.Token.Reveal(), GatewayConfigDigest: r.Config.Digest, ExpectedPublicOrigin: r.Config.PublicOrigin, OriginStatus: r.Config.OriginStatus, Limit: 1}
+	req := wire.PreflightClaimRequest{DiagnosticPolicy: r.DiagnosticPolicy, SchemaVersion: 1, ScopeID: r.Config.ScopeID, SourceEpoch: r.Config.SourceEpoch, InstanceEpoch: r.InstanceEpoch, ClaimRequestID: r.RequestID, ClaimToken: r.Token.Reveal(), GatewayConfigDigest: r.Config.Digest, ExpectedPublicOrigin: r.Config.PublicOrigin, OriginStatus: r.Config.OriginStatus, Limit: 1}
 	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights:claim", req, 4<<10, "preflight-claim.schema.json")
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (cl *PreflightClient) Claim(ctx context.Context, r p.ClaimRequest) (*p.Gran
 	if err := wire.Decode("preflight-grant.schema.json", raw, &w); err != nil {
 		return nil, preflightWireError(err)
 	}
-	g := p.Grant{PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
+	g := p.Grant{ReceiveMode: w.ReceiveMode, DiagnosticPolicy: w.DiagnosticPolicy, EffectiveConfigDigest: w.EffectiveConfigDigest, PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
 	if err := p.ValidateGrant(g, r.Config); err != nil {
 		return nil, err
 	}
@@ -114,6 +114,13 @@ func (cl *PreflightClient) Complete(ctx context.Context, g p.Grant, r p.Result) 
 		return err
 	}
 	req := wire.PreflightCompleteRequest{SchemaVersion: 1, ScopeID: g.ScopeID, SourceEpoch: g.SourceEpoch, InstanceEpoch: g.Request.InstanceEpoch, LeaseEpoch: g.LeaseEpoch, ClaimToken: g.Request.Token.Reveal(), GatewayConfigDigest: r.Config.Digest, ExpectedPublicOrigin: r.Config.PublicOrigin, ObservedAt: r.ObservedAt, Checks: preflightWireChecks(r.Checks)}
+	if g.DiagnosticPolicy != "" {
+		req.ReceiveMode = g.ReceiveMode
+		req.DiagnosticPolicy = g.DiagnosticPolicy
+		req.EffectiveConfigDigest = g.EffectiveConfigDigest
+		req.ConnectionRevision = g.ConnectionRevision
+		req.OriginStatus = r.Config.OriginStatus
+	}
 	raw, status, err := cl.exchange(ctx, "/internal/v1/channel-preflights/"+g.PreflightID+":complete", req, 16<<10, "preflight-complete.schema.json")
 	clear(raw)
 	if err != nil {
@@ -265,7 +272,7 @@ func validatePreflightResult(g p.Grant, r p.Result) error {
 		return p.ErrInvalid
 	}
 	checks := preflightWireChecks(r.Checks)
-	if _, err := wire.ValidatePreflightChecks(checks); err != nil {
+	if _, err := wire.ValidatePreflightChecksForMode(g.DiagnosticPolicy, g.ReceiveMode, checks); err != nil {
 		return preflightWireError(err)
 	}
 	// This is a projection of already schema-validated details, not another wire
@@ -274,7 +281,7 @@ func validatePreflightResult(g p.Grant, r p.Result) error {
 		Bot     bool `json:"bot_token_configured"`
 		Webhook bool `json:"webhook_secret_configured"`
 	}
-	if json.Unmarshal(checks[0].Details, &credentials) != nil || credentials.Bot != g.Credential.Configured || credentials.Webhook != g.WebhookSecretConfigured || checks[2].Code != r.Config.OriginStatus {
+	if json.Unmarshal(checks[0].Details, &credentials) != nil || credentials.Bot != g.Credential.Configured || credentials.Webhook != g.WebhookSecretConfigured || (g.ReceiveMode != "long_polling" && checks[2].Code != r.Config.OriginStatus) {
 		return p.ErrInvalid
 	}
 	return nil

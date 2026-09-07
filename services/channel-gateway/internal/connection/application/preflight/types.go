@@ -32,6 +32,7 @@ type ConfigSnapshot struct {
 	PublicOrigin                               *string
 }
 type ClaimRequest struct {
+	DiagnosticPolicy         string
 	Config                   ConfigSnapshot
 	InstanceEpoch, RequestID string
 	Token                    Secret
@@ -42,6 +43,7 @@ type Credential struct {
 	Configured  bool
 }
 type Grant struct {
+	ReceiveMode, DiagnosticPolicy, EffectiveConfigDigest   string
 	PreflightID, ScopeID, SourceEpoch, TenantID, AccountID string
 	Provider, ProviderAccountID, WebhookPath               string
 	AccountRevision, ConnectionRevision, LeaseEpoch        int64

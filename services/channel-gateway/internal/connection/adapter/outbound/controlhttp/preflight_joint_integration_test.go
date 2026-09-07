@@ -108,13 +108,23 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 	const token = "TEST_ONLY_GATEWAY_JOINT_BOT_TOKEN"
 	const secret = "TEST_ONLY_GATEWAY_JOINT_WEBHOOK_SECRET"
 	var lastClaim time.Time
-	for i, tc := range []struct{ name, origin, originCode, webhookCode string }{
-		{"invalid_origin", "https://localhost:18443", p.OriginInvalid, "WEBHOOK_COMPARISON_UNAVAILABLE"},
-		{"non_public_origin", "https://127.0.0.1", p.OriginNotPublic, "WEBHOOK_COMPARISON_UNAVAILABLE"},
-		{"valid_origin", "https://gateway.example.com", p.OriginValid, "WEBHOOK_MATCH"},
+	for i, tc := range []struct {
+		name, mode, origin, originCode, webhookCode, outcome string
+		present                                              bool
+	}{
+		{"invalid_origin", "webhook", "https://localhost:18443", p.OriginInvalid, "WEBHOOK_COMPARISON_UNAVAILABLE", "FAIL", true},
+		{"non_public_origin", "webhook", "https://127.0.0.1", p.OriginNotPublic, "WEBHOOK_COMPARISON_UNAVAILABLE", "FAIL", true},
+		{"valid_origin", "webhook", "https://gateway.example.com", p.OriginValid, "WEBHOOK_MATCH", "WARN", true},
+		{"polling_no_origin", "long_polling", "", p.OriginInvalid, "WEBHOOK_NONE", "PASS", false},
+		{"polling_private_origin", "long_polling", "https://127.0.0.1", p.OriginNotPublic, "WEBHOOK_NONE", "PASS", false},
+		{"polling_blocked", "long_polling", "", p.OriginInvalid, "WEBHOOK_BLOCKS_LONG_POLLING", "FAIL", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			accountRaw := jointPreflightPublic(t, ctx, public, base, "POST", "/v1/tenants/"+tenant.ID+"/channel-accounts", "joint-account-"+tc.name, map[string]any{"provider": "telegram", "provider_account_id": fmt.Sprint(123456789 + i), "name": "Joint disabled " + tc.name, "credentials": map[string]any{"telegram.bot_token": map[string]string{"action": "replace", "value": token}, "telegram.webhook_secret": map[string]string{"action": "replace", "value": secret}}}, 201)
+			credentials := map[string]any{"telegram.bot_token": map[string]string{"action": "replace", "value": token}}
+			if tc.mode == "webhook" {
+				credentials["telegram.webhook_secret"] = map[string]string{"action": "replace", "value": secret}
+			}
+			accountRaw := jointPreflightPublic(t, ctx, public, base, "POST", "/v1/tenants/"+tenant.ID+"/channel-accounts", "joint-account-"+tc.name, map[string]any{"provider": "telegram", "provider_account_id": fmt.Sprint(123456789 + i), "name": "Joint disabled " + tc.name, "config": map[string]string{"receive_mode": tc.mode}, "credentials": credentials}, 201)
 			var account struct {
 				Account struct {
 					ID                 string `json:"account_id"`
@@ -157,7 +167,7 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 			if err != nil || cfg.OriginStatus != tc.originCode {
 				t.Fatal("invalid diagnostic configuration", err)
 			}
-			claim := p.ClaimRequest{Config: cfg, InstanceEpoch: "55555555-5555-4555-8555-555555555555", RequestID: fmt.Sprintf("66666666-6666-4666-8666-%012d", i+1), Token: p.NewSecret(base64.RawURLEncoding.EncodeToString(jointPreflightRandomBytes(t, 32)))}
+			claim := p.ClaimRequest{DiagnosticPolicy: wire.PreflightReceiveModesPolicy, Config: cfg, InstanceEpoch: "55555555-5555-4555-8555-555555555555", RequestID: fmt.Sprintf("66666666-6666-4666-8666-%012d", i+1), Token: p.NewSecret(base64.RawURLEncoding.EncodeToString(jointPreflightRandomBytes(t, 32)))}
 			// One shared instance owns these claims; respect the real 2/s gate
 			// rather than turning three fast scenarios into a quota test.
 			if !lastClaim.IsZero() {
@@ -174,14 +184,14 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 			if err != nil || grant == nil {
 				t.Fatal("real Gateway Claim -> Control handler failed", err)
 			}
-			if grant.PreflightID != created.PreflightID || grant.AccountID != account.Account.ID || grant.Credential.Version != tokenVersion {
+			if grant.PreflightID != created.PreflightID || grant.AccountID != account.Account.ID || grant.Credential.Version != tokenVersion || grant.ReceiveMode != tc.mode || grant.DiagnosticPolicy != wire.PreflightReceiveModesPolicy || grant.EffectiveConfigDigest == "" {
 				t.Fatal("claim did not preserve exact task/account/version")
 			}
 			resolved, err := gateway.ResolveBotToken(ctx, *grant)
 			if err != nil || resolved.Reveal() != token {
 				t.Fatal("real exact BotToken resolve failed", err)
 			}
-			probe := &jointPreflightProbe{token: token, identity: fmt.Sprint(123456789 + i), originValid: cfg.PublicOrigin != nil}
+			probe := &jointPreflightProbe{token: token, identity: fmt.Sprint(123456789 + i), originValid: cfg.PublicOrigin != nil, present: tc.present, polling: tc.mode == "long_polling"}
 			service := p.Service{Control: gateway, Probe: probe}
 			workCtx, stopWork := context.WithTimeout(ctx, 20*time.Second)
 			result, err := service.Execute(workCtx, *grant, cfg)
@@ -189,7 +199,11 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 			if err != nil || probe.calls.Load() != 1 {
 				t.Fatal("real Service execution failed", err)
 			}
-			if len(result.Checks) != 8 || result.Checks[2].Code != tc.originCode || result.Checks[3].Code != tc.webhookCode {
+			checkOriginCode := tc.originCode
+			if tc.mode == "long_polling" {
+				checkOriginCode = "PUBLIC_ORIGIN_NOT_APPLICABLE"
+			}
+			if len(result.Checks) != 8 || result.Checks[2].Code != checkOriginCode || result.Checks[3].Code != tc.webhookCode {
 				t.Fatal("Service diagnostic branch differs from real Control contract")
 			}
 			if err := gateway.Complete(ctx, *grant, result); err != nil {
@@ -200,11 +214,8 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 			if err := wire.Decode("preflight-view.schema.json", viewRaw, &view); err != nil {
 				t.Fatal(err)
 			}
-			wantOutcome := "WARN"
-			if cfg.PublicOrigin == nil {
-				wantOutcome = "FAIL"
-			}
-			if view.State != "COMPLETED" || view.Outcome != wantOutcome || len(view.Checks) != 8 || view.GatewayConfigFreshness == nil || *view.GatewayConfigFreshness != "UNCONFIRMED" || view.Checks[2].Code != tc.originCode || view.Checks[3].Code != tc.webhookCode {
+			wantOutcome := tc.outcome
+			if view.State != "COMPLETED" || view.Outcome != wantOutcome || len(view.Checks) != 8 || view.GatewayConfigFreshness == nil || *view.GatewayConfigFreshness != "UNCONFIRMED" || view.Checks[2].Code != checkOriginCode || view.Checks[3].Code != tc.webhookCode {
 				t.Fatal("real completed public View differs from Gateway result")
 			}
 			if err := gateway.Complete(ctx, *grant, result); err != nil {
@@ -229,9 +240,10 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 }
 
 type jointPreflightProbe struct {
-	token, identity string
-	originValid     bool
-	calls           atomic.Int32
+	token, identity  string
+	originValid      bool
+	present, polling bool
+	calls            atomic.Int32
 }
 
 func (q *jointPreflightProbe) Inspect(ctx context.Context, r p.ProbeRequest) (p.ProbeResult, error) {
@@ -242,11 +254,18 @@ func (q *jointPreflightProbe) Inspect(ctx context.Context, r p.ProbeRequest) (p.
 	if r.Token.Reveal() != q.token || r.ExpectedIdentity != q.identity || (r.ExpectedWebhook != nil) != q.originValid {
 		return p.ProbeResult{}, p.ErrInvalid
 	}
-	yes, count := true, int64(2)
-	result := p.ProbeResult{IdentityCode: "BOT_IDENTITY_MATCH", IdentityMatch: &yes, Presence: &yes, PendingUpdates: &count, HasLastError: &yes}
-	last := time.Now().Add(-time.Minute).UTC()
-	result.LastErrorAt = &last
-	if q.originValid {
+	yes, count, hasError := true, int64(2), true
+	if q.polling {
+		count, hasError = 0, false
+	}
+	result := p.ProbeResult{IdentityCode: "BOT_IDENTITY_MATCH", IdentityMatch: &yes, Presence: &q.present, PendingUpdates: &count, HasLastError: &hasError}
+	if hasError {
+		last := time.Now().Add(-time.Minute).UTC()
+		result.LastErrorAt = &last
+	}
+	if !q.present {
+		result.WebhookCode, result.Relation = "WEBHOOK_NONE", "NONE"
+	} else if q.originValid {
 		result.WebhookCode = "WEBHOOK_MATCH"
 		result.Relation = "MATCH"
 	} else {

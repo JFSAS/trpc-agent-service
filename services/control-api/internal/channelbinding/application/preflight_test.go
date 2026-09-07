@@ -124,11 +124,15 @@ func (m *preflightMemory) Lookup(_ context.Context, scope, id string) (Preflight
 	r, ok := m.records[id]
 	return PreflightKey{id, r.View.TenantID, r.View.AccountID, r.View.RequestedBy}, ok && r.ScopeID == scope, nil
 }
-func (m *preflightMemory) Candidate(_ context.Context, scope string) (PreflightKey, bool, error) {
+func (m *preflightMemory) Candidate(_ context.Context, scope string, policy ...string) (PreflightKey, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	diagnosticPolicy := ""
+	if len(policy) == 1 {
+		diagnosticPolicy = policy[0]
+	}
 	for id, r := range m.records {
-		if r.ScopeID == scope && preflightActive(r) && (r.View.State == "QUEUED" || !m.now.Before(*r.LeaseExpiresAt)) {
+		if r.View.DiagnosticPolicy == diagnosticPolicy && r.ScopeID == scope && preflightActive(r) && (r.View.State == "QUEUED" || !m.now.Before(*r.LeaseExpiresAt)) {
 			return PreflightKey{id, r.View.TenantID, r.View.AccountID, r.View.RequestedBy}, true, nil
 		}
 	}
@@ -147,7 +151,12 @@ func (*preflightMemory) Cleanup(context.Context) error { return nil }
 func preflightSetup(t *testing.T) (*PreflightService, *preflightMemory, string, channelv1.PreflightCreateRequest) {
 	t.Helper()
 	base, accounts, access, _ := setup(t)
-	result := create(t, base)
+	in := input()
+	in.Config = &AccountConfigInput{ReceiveMode: domain.Webhook}
+	result, err := base.CreateAccount(context.Background(), owner, "create", in)
+	if err != nil {
+		t.Fatal(err)
+	}
 	account := result.Account.ID
 	m := &preflightMemory{now: base.deps.Now(), epoch: "11111111-1111-4111-8111-111111111111", accounts: accounts, records: map[string]PreflightRecord{}, receipts: map[string]PreflightRequest{}, requester: true, session: true, tenant: true}
 	s, err := NewPreflightService(PreflightDependencies{Store: m, Access: access, Accounts: accounts, Cipher: base.deps.Cipher, ScopeID: base.deps.ScopeID, SourceEpoch: m.epoch, NewID: base.deps.NewID})
@@ -161,7 +170,7 @@ func preflightSetup(t *testing.T) (*PreflightService, *preflightMemory, string, 
 func preflightInput(t *testing.T, seq int) channelv1.PreflightClaimRequest {
 	t.Helper()
 	origin := "https://gateway.example.com"
-	r := channelv1.PreflightClaimRequest{SchemaVersion: 1, ScopeID: "gateway_pool", SourceEpoch: "11111111-1111-4111-8111-111111111111", InstanceEpoch: "22222222-2222-4222-8222-222222222222", ClaimRequestID: fmt.Sprintf("33333333-3333-4333-8333-%012d", seq), ClaimToken: strings.Repeat("A", 43), ExpectedPublicOrigin: &origin, OriginStatus: "PUBLIC_ORIGIN_STATIC_VALID", Limit: 1}
+	r := channelv1.PreflightClaimRequest{DiagnosticPolicy: channelv1.PreflightReceiveModesPolicy, SchemaVersion: 1, ScopeID: "gateway_pool", SourceEpoch: "11111111-1111-4111-8111-111111111111", InstanceEpoch: "22222222-2222-4222-8222-222222222222", ClaimRequestID: fmt.Sprintf("33333333-3333-4333-8333-%012d", seq), ClaimToken: strings.Repeat("A", 43), ExpectedPublicOrigin: &origin, OriginStatus: "PUBLIC_ORIGIN_STATIC_VALID", Limit: 1}
 	var err error
 	r.GatewayConfigDigest, err = channelv1.PreflightConfigDigest(r.ScopeID, r.SourceEpoch, r.ExpectedPublicOrigin, r.OriginStatus)
 	if err != nil {
@@ -195,6 +204,10 @@ func preflightCompleteInput(t *testing.T, c channelv1.PreflightClaimRequest, epo
 	r.LeaseEpoch = epoch
 	r.GatewayConfigDigest = c.GatewayConfigDigest
 	r.ExpectedPublicOrigin = c.ExpectedPublicOrigin
+	if c.DiagnosticPolicy != "" {
+		r.DiagnosticPolicy, r.ReceiveMode, r.ConnectionRevision, r.OriginStatus = c.DiagnosticPolicy, domain.Webhook, 1, c.OriginStatus
+		r.EffectiveConfigDigest, _ = channelv1.PreflightEffectiveConfigDigest(c.ScopeID, c.SourceEpoch, r.ReceiveMode, r.ConnectionRevision, c.ExpectedPublicOrigin, c.OriginStatus)
+	}
 	return r
 }
 func requirePFError(t *testing.T, err error, code string) {
@@ -456,6 +469,7 @@ func TestPreflightApplicationCompleteConfigChangeCommitsStale(t *testing.T) {
 	origin := "https://other-gateway.example.com"
 	changed.ExpectedPublicOrigin = &origin
 	changed.GatewayConfigDigest, _ = channelv1.PreflightConfigDigest(claim.ScopeID, claim.SourceEpoch, &origin, claim.OriginStatus)
+	changed.EffectiveConfigDigest, _ = channelv1.PreflightEffectiveConfigDigest(claim.ScopeID, claim.SourceEpoch, changed.ReceiveMode, changed.ConnectionRevision, &origin, claim.OriginStatus)
 	requirePFError(t, s.Complete(ctx, preflightPrincipal(), created.PreflightID, changed), "CHANNEL_PREFLIGHT_STALE")
 	view, err := s.Get(ctx, owner, id, created.PreflightID)
 	if err != nil || view.State != "STALE" || view.ReasonCode != "CHANNEL_PREFLIGHT_GATEWAY_CONFIG_CHANGED" {

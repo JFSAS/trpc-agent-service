@@ -76,7 +76,7 @@ func (b Binding) SetEnabled(expected int64, enabled bool, a Account, credentials
 		if !a.Enabled {
 			return b, false, failure(AccountDisabled, "")
 		}
-		if err := ValidateCredentialSet(a.Provider, credentials, true); err != nil {
+		if err := ValidateCredentialSet(a.Provider, credentials, true, a.Config.ReceiveMode); err != nil {
 			return b, false, err
 		}
 		if err := b.Target.Validate(a.TenantID); err != nil {

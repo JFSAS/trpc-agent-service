@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+
 	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application"
 	observations "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountobservations"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
@@ -28,6 +29,10 @@ func (b accountObservationSource) Observations() []c.Observation {
 		} else if account.Provider == "telegram" {
 			s := a.telegram.Status(account.ID)
 			state, reason = s.State, s.Reason
+			if s.OwnerEpoch > 0 {
+				v := s.OwnerEpoch
+				owner = &v
+			}
 			if state == "" || s.Revision != account.ConnectionRevision {
 				state, reason = "CONNECTING", "REGISTRATION_PENDING"
 			}
@@ -43,7 +48,7 @@ func (b accountObservationSource) Observations() []c.Observation {
 				state = "CONNECTING"
 			}
 		}
-		out = append(out, c.Observation{ScopeID: a.controlConfig.ScopeID, SourceEpoch: a.controlConfig.SourceEpoch, TenantID: account.TenantID, AccountID: account.ID, Provider: account.Provider, ConnectionRevision: account.ConnectionRevision, InstanceID: a.instanceID, InstanceEpoch: a.instanceEpoch, State: state, Reason: reason, OwnerEpoch: owner})
+		out = append(out, c.Observation{ReceiveMode: account.ReceiveMode(), ScopeID: a.controlConfig.ScopeID, SourceEpoch: a.controlConfig.SourceEpoch, TenantID: account.TenantID, AccountID: account.ID, Provider: account.Provider, ConnectionRevision: account.ConnectionRevision, InstanceID: a.instanceID, InstanceEpoch: a.instanceEpoch, State: state, Reason: reason, OwnerEpoch: owner})
 	}
 	return out
 }

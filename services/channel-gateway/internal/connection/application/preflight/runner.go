@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	catalog "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 )
 
@@ -123,7 +124,7 @@ func (r *Runner) newClaim() (ClaimRequest, error) {
 	id[6] = (id[6] & 0x0f) | 0x40
 	id[8] = (id[8] & 0x3f) | 0x80
 	requestID := fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:])
-	return ClaimRequest{Config: r.config, InstanceEpoch: r.instanceEpoch, RequestID: requestID, Token: NewSecret(base64.RawURLEncoding.EncodeToString(token[:]))}, nil
+	return ClaimRequest{DiagnosticPolicy: wire.PreflightReceiveModesPolicy, Config: r.config, InstanceEpoch: r.instanceEpoch, RequestID: requestID, Token: NewSecret(base64.RawURLEncoding.EncodeToString(token[:]))}, nil
 }
 func executionDeadlines(t0 time.Time, g Grant) (work, report time.Time) {
 	remaining := min(g.LeaseExpiresAt.Sub(g.ServerTime), g.JobDeadlineAt.Sub(g.ServerTime))

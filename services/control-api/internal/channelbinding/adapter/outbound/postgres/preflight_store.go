@@ -159,13 +159,20 @@ func (s *PreflightStore) Lookup(ctx context.Context, scope, id string) (applicat
 	return scanPreflightKey(s.base.db.QueryRow(ctx, `SELECT id,tenant_id,account_id,requested_by FROM channel_preflights WHERE scope_id=$1 AND id=$2`, scope, id))
 }
 
-func (s *PreflightStore) Candidate(ctx context.Context, scope string) (application.PreflightKey, bool, error) {
+func (s *PreflightStore) Candidate(ctx context.Context, scope string, policy ...string) (application.PreflightKey, bool, error) {
 	if scope != s.base.options.ScopeID {
 		return application.PreflightKey{}, false, application.ErrWorkloadDenied
 	}
+	diagnosticPolicy := ""
+	if len(policy) > 1 {
+		return application.PreflightKey{}, false, integrity()
+	}
+	if len(policy) == 1 {
+		diagnosticPolicy = policy[0]
+	}
 	// The choice is deliberately unlocked: the transaction must lock owning
 	// Identity/Tenant/Account before it may lock and recheck the task.
-	return scanPreflightKey(s.base.db.QueryRow(ctx, `SELECT id,tenant_id,account_id,requested_by FROM channel_preflights WHERE scope_id=$1 AND (state='QUEUED' OR (state='RUNNING' AND lease_expires_at<=clock_timestamp())) ORDER BY requested_at,id LIMIT 1`, scope))
+	return scanPreflightKey(s.base.db.QueryRow(ctx, `SELECT id,tenant_id,account_id,requested_by FROM channel_preflights WHERE scope_id=$1 AND COALESCE(record_jsonb->'view'->>'diagnostic_policy','')=$2 AND (state='QUEUED' OR (state='RUNNING' AND lease_expires_at<=clock_timestamp())) ORDER BY requested_at,id LIMIT 1`, scope, diagnosticPolicy))
 }
 
 // ActiveAccount discovers the original requester before the transaction locks

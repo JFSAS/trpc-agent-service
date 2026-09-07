@@ -185,7 +185,7 @@ func (c *ChannelConfig) validateWorkloads() error {
 		}
 		kinds := map[string]bool{}
 		for _, kind := range p.Consumers {
-			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_preflight"}, kind) {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight"}, kind) {
 				return errors.New("channel workload consumer is invalid")
 			}
 			kinds[kind] = true

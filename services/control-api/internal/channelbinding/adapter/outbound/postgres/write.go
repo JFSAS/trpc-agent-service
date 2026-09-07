@@ -33,7 +33,7 @@ func validateAggregate(a application.Aggregate) error {
 	if a.Route.TenantID != a.Account.TenantID || a.Route.AccountID != a.Account.ID || a.Route.Generation != a.Account.MinRouteGeneration {
 		return integrity()
 	}
-	if err := domain.ValidateCredentialSet(a.Account.Provider, a.CredentialMetadata(), a.Account.Enabled); err != nil {
+	if err := domain.ValidateCredentialSet(a.Account.Provider, a.CredentialMetadata(), a.Account.Enabled, a.Account.Config.ReceiveMode); err != nil {
 		return err
 	}
 	for _, c := range a.Credentials {
@@ -68,17 +68,21 @@ func validateChange(old, a application.Aggregate, exists bool) error {
 			return integrity()
 		}
 		for _, c := range a.Credentials {
-			if c.Meta.Version != 1 || !c.Meta.Configured {
+			if c.Meta.Version != 1 || (slices.Contains(domain.RequiredPurposes(a.Account.Provider, a.Account.Config.ReceiveMode), c.Meta.Purpose) && !c.Meta.Configured) {
 				return integrity()
 			}
 		}
 		return nil
 	}
 	o, n := old.Account, a.Account
-	if o.ID != n.ID || o.TenantID != n.TenantID || o.ScopeID != n.ScopeID || o.Provider != n.Provider || o.ProviderAccountID != n.ProviderAccountID || o.Config != n.Config || o.CreatedBy != n.CreatedBy || !o.CreatedAt.Equal(n.CreatedAt) {
+	if o.ID != n.ID || o.TenantID != n.TenantID || o.ScopeID != n.ScopeID || o.Provider != n.Provider || o.ProviderAccountID != n.ProviderAccountID || o.Config.WebhookPath != n.Config.WebhookPath || o.Config.BotID != n.Config.BotID || o.CreatedBy != n.CreatedBy || !o.CreatedAt.Equal(n.CreatedAt) {
 		return integrity()
 	}
-	accountChanged := o.Name != n.Name || o.Description != n.Description || o.Enabled != n.Enabled
+	modeChanged := o.Config.ReceiveMode != n.Config.ReceiveMode
+	if modeChanged && (o.Enabled || n.Enabled) {
+		return integrity()
+	}
+	accountChanged := modeChanged || o.Name != n.Name || o.Description != n.Description || o.Enabled != n.Enabled
 	credentialChanged := false
 	for _, before := range old.Credentials {
 		var after *domain.CredentialRecord
@@ -108,7 +112,7 @@ func validateChange(old, a application.Aggregate, exists bool) error {
 	} else if n.Revision != o.Revision {
 		return integrity()
 	}
-	if o.Enabled != n.Enabled || credentialChanged {
+	if modeChanged || o.Enabled != n.Enabled || credentialChanged {
 		if o.ConnectionRevision == domain.MaxVersion || n.ConnectionRevision != o.ConnectionRevision+1 {
 			return integrity()
 		}

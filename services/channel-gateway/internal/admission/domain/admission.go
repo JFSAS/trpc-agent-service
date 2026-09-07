@@ -58,6 +58,8 @@ func (o ReplyOrigin) Validate() error {
 }
 
 type Inbound struct {
+	// TelegramFence is local polling authority, not source content or a reply socket.
+	TelegramFence   *TelegramFence   `json:"-"`
 	ReplyOrigin     *ReplyOrigin     `json:"-"`
 	ConnectionFence *ConnectionFence `json:"-"`
 	Key             EventKey         `json:"key"`
@@ -70,6 +72,19 @@ type Inbound struct {
 	SourceDigest    string           `json:"source_digest"`
 	ReceivedAt      time.Time        `json:"received_at"`
 }
+
+type TelegramFence struct {
+	ScopeID, InstanceID, InstanceEpoch string
+	Epoch, Revision                    int64
+}
+
+func (f TelegramFence) Validate() error {
+	if !identifier.MatchString(f.ScopeID) || !identifier.MatchString(f.InstanceID) || f.InstanceEpoch == "" || f.Epoch < 1 || f.Revision < 1 || f.Epoch > 9007199254740991 || f.Revision > 9007199254740991 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
 type Receipt struct {
 	Decision    string `json:"decision"`
 	Reason      string `json:"reason,omitempty"`
@@ -113,6 +128,9 @@ func opaque(value string, max int, required bool) bool {
 }
 func (i Inbound) Validate() error {
 	if i.Key.Provider == "wecom" {
+		if i.TelegramFence != nil {
+			return ErrInvalidInput
+		}
 		if i.ConnectionFence == nil || i.ConnectionFence.Validate() != nil {
 			return ErrInvalidInput
 		}
@@ -120,6 +138,9 @@ func (i Inbound) Validate() error {
 			return ErrInvalidInput
 		}
 	} else if i.ConnectionFence != nil || i.ReplyOrigin != nil {
+		return ErrInvalidInput
+	}
+	if i.TelegramFence != nil && (i.Key.Provider != "telegram" || i.TelegramFence.Validate() != nil) {
 		return ErrInvalidInput
 	}
 	if (i.Key.Provider != "telegram" && i.Key.Provider != "wecom") || !identifier.MatchString(i.Key.AccountID) || !opaque(i.Key.EventID, 256, true) || !sourceDigest.MatchString(i.SourceDigest) || i.ReceivedAt.IsZero() {
