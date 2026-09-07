@@ -172,6 +172,34 @@
             "kind",
             "instance_id"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "telegram_receiver"
+            },
+            "instance_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9._:-]"
+              }
+            },
+            "owner_epoch": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "kind",
+            "instance_id",
+            "owner_epoch"
+          ]
         }
       ]
     },
@@ -237,6 +265,12 @@
                   "minLength": 1,
                   "maxLength": 256,
                   "pattern": "^/v1/telegram/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "receive_mode": {
+                  "enum": [
+                    "long_polling",
+                    "webhook"
+                  ]
                 }
               },
               "required": [
@@ -312,6 +346,12 @@
                     "minLength": 1,
                     "maxLength": 256,
                     "pattern": "^/v1/telegram/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                  },
+                  "receive_mode": {
+                    "enum": [
+                      "long_polling",
+                      "webhook"
+                    ]
                   }
                 },
                 "required": [

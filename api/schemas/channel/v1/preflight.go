@@ -32,6 +32,9 @@ type PreflightCreated struct {
 	StatusURL     string    `json:"status_url"`
 }
 type PreflightView struct {
+	ReceiveMode            string           `json:"receive_mode,omitempty"`
+	DiagnosticPolicy       string           `json:"diagnostic_policy,omitempty"`
+	EffectiveConfigDigest  string           `json:"effective_config_digest,omitempty"`
 	PreflightID            string           `json:"preflight_id"`
 	TenantID               string           `json:"tenant_id"`
 	AccountID              string           `json:"account_id"`
@@ -57,6 +60,7 @@ type PreflightView struct {
 	Checks                 []PreflightCheck `json:"checks"`
 }
 type PreflightClaimRequest struct {
+	DiagnosticPolicy     string  `json:"diagnostic_policy,omitempty"`
 	SchemaVersion        int     `json:"schema_version"`
 	ScopeID              string  `json:"scope_id"`
 	SourceEpoch          string  `json:"source_epoch"`
@@ -75,6 +79,9 @@ type PreflightCredential struct {
 	Configured        bool   `json:"configured"`
 }
 type PreflightGrant struct {
+	ReceiveMode             string              `json:"receive_mode,omitempty"`
+	DiagnosticPolicy        string              `json:"diagnostic_policy,omitempty"`
+	EffectiveConfigDigest   string              `json:"effective_config_digest,omitempty"`
 	SchemaVersion           int                 `json:"schema_version"`
 	ServerTime              time.Time           `json:"server_time"`
 	PreflightID             string              `json:"preflight_id"`
@@ -113,16 +120,21 @@ type PreflightResolveResponse struct {
 	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
 }
 type PreflightCompleteRequest struct {
-	SchemaVersion        int              `json:"schema_version"`
-	ScopeID              string           `json:"scope_id"`
-	SourceEpoch          string           `json:"source_epoch"`
-	InstanceEpoch        string           `json:"instance_epoch"`
-	LeaseEpoch           int64            `json:"lease_epoch"`
-	ClaimToken           string           `json:"claim_token"`
-	GatewayConfigDigest  string           `json:"gateway_config_digest"`
-	ExpectedPublicOrigin *string          `json:"expected_public_origin"`
-	ObservedAt           time.Time        `json:"observed_at"`
-	Checks               []PreflightCheck `json:"checks"`
+	ReceiveMode           string           `json:"receive_mode,omitempty"`
+	DiagnosticPolicy      string           `json:"diagnostic_policy,omitempty"`
+	EffectiveConfigDigest string           `json:"effective_config_digest,omitempty"`
+	ConnectionRevision    int64            `json:"connection_revision,omitempty"`
+	OriginStatus          string           `json:"origin_status,omitempty"`
+	SchemaVersion         int              `json:"schema_version"`
+	ScopeID               string           `json:"scope_id"`
+	SourceEpoch           string           `json:"source_epoch"`
+	InstanceEpoch         string           `json:"instance_epoch"`
+	LeaseEpoch            int64            `json:"lease_epoch"`
+	ClaimToken            string           `json:"claim_token"`
+	GatewayConfigDigest   string           `json:"gateway_config_digest"`
+	ExpectedPublicOrigin  *string          `json:"expected_public_origin"`
+	ObservedAt            time.Time        `json:"observed_at"`
+	Checks                []PreflightCheck `json:"checks"`
 }
 type PreflightCheck struct {
 	ID      string          `json:"id"`
@@ -180,7 +192,7 @@ func ValidatePreflightChecks(checks []PreflightCheck) (string, error) {
 	if compiled.err != nil {
 		return "", ErrUnknownSchema
 	}
-	s, ok := compiled.schemas["preflight-complete.schema.json"]
+	_, ok := compiled.schemas["preflight-complete.schema.json"]
 	if !ok {
 		return "", ErrUnknownSchema
 	}
@@ -192,7 +204,7 @@ func ValidatePreflightChecks(checks []PreflightCheck) (string, error) {
 		return "", ErrInvalidDocument
 	}
 	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil || s.Properties["checks"].Validate(value) != nil {
+	if err != nil || compiled.schemas["preflight-checks.schema.json"].OneOf[0].Properties["checks"].Validate(value) != nil {
 		return "", ErrInvalidDocument
 	}
 	// A missing token prevents all remote facts. getWebhookInfo follows verified
@@ -359,16 +371,29 @@ func validatePreflightSemantics(name string, raw []byte) error {
 		if json.Unmarshal(raw, &result) != nil {
 			return ErrInvalidDocument
 		}
-		if _, err := ValidatePreflightChecks(result.Checks); err != nil {
+		if _, err := ValidatePreflightChecksForMode(result.DiagnosticPolicy, result.ReceiveMode, result.Checks); err != nil {
 			return err
 		}
-		d, err := PreflightConfigDigest(result.ScopeID, result.SourceEpoch, result.ExpectedPublicOrigin, result.Checks[2].Code)
+		status := result.Checks[2].Code
+		if result.DiagnosticPolicy != "" {
+			status = result.OriginStatus
+		}
+		d, err := PreflightConfigDigest(result.ScopeID, result.SourceEpoch, result.ExpectedPublicOrigin, status)
 		if err != nil || d != result.GatewayConfigDigest {
 			return ErrInvalidDocument
+		}
+		if result.DiagnosticPolicy != "" {
+			effective, e := PreflightEffectiveConfigDigest(result.ScopeID, result.SourceEpoch, result.ReceiveMode, result.ConnectionRevision, result.ExpectedPublicOrigin, result.OriginStatus)
+			if e != nil || effective != result.EffectiveConfigDigest {
+				return ErrInvalidDocument
+			}
 		}
 	case "preflight-view.schema.json":
 		var view PreflightView
 		if json.Unmarshal(raw, &view) != nil {
+			return ErrInvalidDocument
+		}
+		if view.ReceiveMode == "long_polling" && view.ExpectedPublicOrigin != nil {
 			return ErrInvalidDocument
 		}
 		if view.ExpectedPublicOrigin != nil {
@@ -378,7 +403,7 @@ func validatePreflightSemantics(name string, raw []byte) error {
 			}
 		}
 		if view.State == "COMPLETED" {
-			outcome, err := ValidatePreflightChecks(view.Checks)
+			outcome, err := ValidatePreflightChecksForMode(view.DiagnosticPolicy, view.ReceiveMode, view.Checks)
 			if err != nil || outcome != view.Outcome {
 				return ErrInvalidDocument
 			}

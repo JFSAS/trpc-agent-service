@@ -55,995 +55,35 @@
       "maxLength": 35
     },
     "checks": {
-      "type": "array",
-      "items": {},
-      "minItems": 8,
-      "maxItems": 8,
-      "prefixItems": [
+      "anyOf": [
         {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "credential_configuration"
-                },
-                "status": {
-                  "const": "PASS"
-                },
-                "code": {
-                  "enum": [
-                    "CREDENTIALS_CONFIGURED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "bot_token_configured": {
-                      "const": true
-                    },
-                    "webhook_secret_configured": {
-                      "const": true
-                    }
-                  },
-                  "required": [
-                    "bot_token_configured",
-                    "webhook_secret_configured"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "credential_configuration"
-                },
-                "status": {
-                  "const": "FAIL"
-                },
-                "code": {
-                  "enum": [
-                    "BOT_TOKEN_MISSING"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "bot_token_configured": {
-                      "const": false
-                    },
-                    "webhook_secret_configured": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "bot_token_configured",
-                    "webhook_secret_configured"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "credential_configuration"
-                },
-                "status": {
-                  "const": "FAIL"
-                },
-                "code": {
-                  "enum": [
-                    "WEBHOOK_SECRET_MISSING"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "bot_token_configured": {
-                      "const": true
-                    },
-                    "webhook_secret_configured": {
-                      "const": false
-                    }
-                  },
-                  "required": [
-                    "bot_token_configured",
-                    "webhook_secret_configured"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
+          "$ref": "preflight-checks.schema.json#/$defs/webhook"
         },
         {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "bot_identity"
-                },
-                "status": {
-                  "const": "PASS"
-                },
-                "code": {
-                  "enum": [
-                    "BOT_IDENTITY_MATCH"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "identity_match": {
-                      "const": true
-                    }
-                  },
-                  "required": [
-                    "identity_match"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "bot_identity"
-                },
-                "status": {
-                  "const": "FAIL"
-                },
-                "code": {
-                  "enum": [
-                    "BOT_IDENTITY_MISMATCH"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "identity_match": {
-                      "const": false
-                    }
-                  },
-                  "required": [
-                    "identity_match"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "bot_identity"
-                },
-                "status": {
-                  "const": "FAIL"
-                },
-                "code": {
-                  "enum": [
-                    "TOKEN_REJECTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "identity_match": {
-                      "const": null
-                    }
-                  },
-                  "required": [
-                    "identity_match"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "bot_identity"
-                },
-                "status": {
-                  "const": "UNKNOWN"
-                },
-                "code": {
-                  "enum": [
-                    "PROVIDER_NETWORK",
-                    "PROVIDER_TIMEOUT",
-                    "PROVIDER_RATE_LIMITED",
-                    "PROVIDER_UNAVAILABLE",
-                    "PROVIDER_RESPONSE_INVALID"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "identity_match": {
-                      "const": null
-                    }
-                  },
-                  "required": [
-                    "identity_match"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "bot_identity"
-                },
-                "status": {
-                  "const": "SKIPPED"
-                },
-                "code": {
-                  "enum": [
-                    "NOT_EXECUTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "identity_match": {
-                      "const": null
-                    }
-                  },
-                  "required": [
-                    "identity_match"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "public_origin"
-                },
-                "status": {
-                  "const": "PASS"
-                },
-                "code": {
-                  "enum": [
-                    "PUBLIC_ORIGIN_STATIC_VALID"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "validation": {
-                      "const": "STATIC_ONLY"
-                    }
-                  },
-                  "required": [
-                    "validation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "public_origin"
-                },
-                "status": {
-                  "const": "FAIL"
-                },
-                "code": {
-                  "enum": [
-                    "PUBLIC_ORIGIN_INVALID",
-                    "PUBLIC_ORIGIN_NOT_PUBLIC"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "validation": {
-                      "const": "STATIC_ONLY"
-                    }
-                  },
-                  "required": [
-                    "validation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "PASS"
-                },
-                "code": {
-                  "enum": [
-                    "WEBHOOK_MATCH"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": true
-                    },
-                    "relation": {
-                      "const": "MATCH"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "WARN"
-                },
-                "code": {
-                  "enum": [
-                    "WEBHOOK_DIFFERENT"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": true
-                    },
-                    "relation": {
-                      "const": "DIFFERENT"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "WARN"
-                },
-                "code": {
-                  "enum": [
-                    "WEBHOOK_NONE"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": false
-                    },
-                    "relation": {
-                      "const": "NONE"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "UNKNOWN"
-                },
-                "code": {
-                  "enum": [
-                    "WEBHOOK_COMPARISON_UNAVAILABLE"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": true
-                    },
-                    "relation": {
-                      "const": "UNKNOWN"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "FAIL"
-                },
-                "code": {
-                  "enum": [
-                    "TOKEN_REJECTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": null
-                    },
-                    "relation": {
-                      "const": "UNKNOWN"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "UNKNOWN"
-                },
-                "code": {
-                  "enum": [
-                    "PROVIDER_NETWORK",
-                    "PROVIDER_TIMEOUT",
-                    "PROVIDER_RATE_LIMITED",
-                    "PROVIDER_UNAVAILABLE",
-                    "PROVIDER_RESPONSE_INVALID"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": null
-                    },
-                    "relation": {
-                      "const": "UNKNOWN"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "webhook_registration"
-                },
-                "status": {
-                  "const": "SKIPPED"
-                },
-                "code": {
-                  "enum": [
-                    "NOT_EXECUTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "presence": {
-                      "const": null
-                    },
-                    "relation": {
-                      "const": "UNKNOWN"
-                    }
-                  },
-                  "required": [
-                    "presence",
-                    "relation"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "pending_updates"
-                },
-                "status": {
-                  "const": "PASS"
-                },
-                "code": {
-                  "enum": [
-                    "PENDING_UPDATES_ZERO"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "pending_update_count": {
-                      "const": 0
-                    }
-                  },
-                  "required": [
-                    "pending_update_count"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "pending_updates"
-                },
-                "status": {
-                  "const": "WARN"
-                },
-                "code": {
-                  "enum": [
-                    "PENDING_UPDATES_PRESENT"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "pending_update_count": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "pending_update_count"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "pending_updates"
-                },
-                "status": {
-                  "const": "SKIPPED"
-                },
-                "code": {
-                  "enum": [
-                    "NOT_EXECUTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "pending_update_count": {
-                      "const": null
-                    }
-                  },
-                  "required": [
-                    "pending_update_count"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "delivery_errors"
-                },
-                "status": {
-                  "const": "PASS"
-                },
-                "code": {
-                  "enum": [
-                    "DELIVERY_ERROR_NOT_REPORTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "has_last_error": {
-                      "const": false
-                    },
-                    "last_error_at": {
-                      "const": null
-                    }
-                  },
-                  "required": [
-                    "has_last_error",
-                    "last_error_at"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "delivery_errors"
-                },
-                "status": {
-                  "const": "WARN"
-                },
-                "code": {
-                  "enum": [
-                    "DELIVERY_ERROR_REPORTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "has_last_error": {
-                      "const": true
-                    },
-                    "last_error_at": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "Z$",
-                          "maxLength": 35
-                        },
-                        {
-                          "const": null
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "has_last_error",
-                    "last_error_at"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "delivery_errors"
-                },
-                "status": {
-                  "const": "SKIPPED"
-                },
-                "code": {
-                  "enum": [
-                    "NOT_EXECUTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "has_last_error": {
-                      "const": null
-                    },
-                    "last_error_at": {
-                      "const": null
-                    }
-                  },
-                  "required": [
-                    "has_last_error",
-                    "last_error_at"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "recovery_materials"
-                },
-                "status": {
-                  "const": "UNKNOWN"
-                },
-                "code": {
-                  "enum": [
-                    "RECOVERY_MATERIALS_UNAVAILABLE"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "secret_token_readable": {
-                      "const": false
-                    },
-                    "restore_available": {
-                      "const": false
-                    }
-                  },
-                  "required": [
-                    "secret_token_readable",
-                    "restore_available"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "const": "delivery_verification"
-                },
-                "status": {
-                  "const": "UNKNOWN"
-                },
-                "code": {
-                  "enum": [
-                    "DELIVERY_NOT_TESTED"
-                  ]
-                },
-                "details": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "verification": {
-                      "const": "NOT_TESTED"
-                    }
-                  },
-                  "required": [
-                    "verification"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "status",
-                "code",
-                "details"
-              ]
-            }
-          ]
+          "$ref": "preflight-checks.schema.json#/$defs/long_polling"
         }
+      ]
+    },
+    "diagnostic_policy": {
+      "const": "telegram-receive-modes-v1"
+    },
+    "receive_mode": {
+      "enum": [
+        "long_polling",
+        "webhook"
+      ]
+    },
+    "effective_config_digest": {
+      "$ref": "common.schema.json#/$defs/digest"
+    },
+    "connection_revision": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "origin_status": {
+      "enum": [
+        "PUBLIC_ORIGIN_STATIC_VALID",
+        "PUBLIC_ORIGIN_INVALID",
+        "PUBLIC_ORIGIN_NOT_PUBLIC"
       ]
     }
   },
@@ -1058,5 +98,80 @@
     "expected_public_origin",
     "observed_at",
     "checks"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "diagnostic_policy"
+        ]
+      },
+      "then": {
+        "required": [
+          "diagnostic_policy",
+          "receive_mode",
+          "effective_config_digest",
+          "connection_revision",
+          "origin_status"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "diagnostic_policy"
+              ]
+            },
+            {
+              "required": [
+                "receive_mode"
+              ]
+            },
+            {
+              "required": [
+                "effective_config_digest"
+              ]
+            },
+            {
+              "required": [
+                "connection_revision"
+              ]
+            },
+            {
+              "required": [
+                "origin_status"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receive_mode": {
+            "const": "long_polling"
+          }
+        },
+        "required": [
+          "receive_mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "checks": {
+            "$ref": "preflight-checks.schema.json#/$defs/long_polling"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "checks": {
+            "$ref": "preflight-checks.schema.json#/$defs/webhook"
+          }
+        }
+      }
+    }
   ]
 }

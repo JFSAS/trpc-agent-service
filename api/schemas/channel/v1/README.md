@@ -53,3 +53,53 @@ JSON Schema 2020-12 `prefixItems` closes the ordered check tuple. `const: null`
 represents null exactly; `items: {}` with min/maxItems=8 does not permit a ninth
 item. Authorization, current version checks, claim fencing, server deadlines,
 rate limits and transactional completion remain in the consuming Application.
+
+## Telegram receive modes
+
+New Telegram creates default to `config.receive_mode=long_polling`; explicit
+`webhook` requires both credentials. Both modes retain the two stable credential
+metadata entries and generated webhook path. A disabled account can change mode
+with `expected_account_revision`; saving configuration performs no Telegram I/O.
+
+Explicit recovery of a pre-upgrade pending create uses
+`X-Channel-Create-Contract: webhook-v1`, its original idempotency key, and the
+original body with no `config` field and both replacement credentials. Without
+that header, omitted mode means new long-polling semantics. Channel mutation
+responses identify the response interpretation with
+`X-Channel-Result-Contract: webhook-v1` for an original historical account result
+whose config lacks mode, or `receive-modes-v1` otherwise. Historical receipts and
+preflight results are decoded as historical shapes, not reinterpreted using the
+account's current mode.
+
+`telegram_receiver` requires `owner_epoch`, forbids `registration_epoch`, and
+resolves only `telegram.bot_token` for either mode. Control authenticates the
+consumer and exact account/version/use; Gateway separately validates actual
+receiver ownership. `telegram_registration` and `telegram_webhook` are webhook
+only. Delivery works for either mode. New Telegram observations include mode;
+long-polling READY requires owner epoch. A standby reports CONFIG_APPLIED with
+WAITING_FOR_OWNER, not READY. RECEIVER_DRAINING, WEBHOOK_CONFLICT and
+POLLING_CONFLICT are closed, redacted reason codes. Missing observation mode is
+legacy webhook and must not carry owner epoch.
+
+New preflight tasks freeze `receive_mode` and
+`diagnostic_policy=telegram-receive-modes-v1`. Claim advertises that policy;
+legacy claims consume legacy tasks only. Grants, claimed views and completions
+also carry `effective_config_digest`. Completions additionally carry the fixed
+`connection_revision` and global `origin_status`. QUEUED views have no effective
+digest. `PreflightConfigDigest` remains the global instance config evidence.
+`PreflightEffectiveConfigDigest` binds scope, source epoch, connection revision,
+mode and policy, but replaces irrelevant inbound origin with NOT_APPLICABLE for
+long polling. A re-lease may accept a changed global origin when that effective
+digest stays equal; an existing lease does not silently replace its config.
+
+`ValidatePreflightChecksForMode` preserves the original webhook rules. Long
+polling fixes checks 3, 6 and 7 to NOT_APPLICABLE; check 4 is WEBHOOK_NONE/PASS or
+WEBHOOK_BLOCKS_LONG_POLLING/FAIL (or a closed remote error). Bot token is required;
+webhook secret is optional. Check 8 remains DELIVERY_NOT_TESTED/UNKNOWN. Only
+applicable checks among 1–6 determine the outcome; no diagnostic clears a webhook,
+starts polling or proves delivery.
+
+The `preflight-polling-*-valid.json` and `preflight-mode-claim-valid.json`
+fixtures are the exact cross-task wire examples. Their `*-invalid.json`
+companions cover missing policy, wrong effective digest, an origin check pretending
+to apply to polling, and a webhook-secret requirement leaking into polling.

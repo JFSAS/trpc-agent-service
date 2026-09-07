@@ -27,6 +27,18 @@
     },
     "credentials": {
       "type": "object"
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receive_mode": {
+          "enum": [
+            "long_polling",
+            "webhook"
+          ]
+        }
+      }
     }
   },
   "required": [
@@ -101,11 +113,40 @@
               }
             },
             "required": [
-              "telegram.bot_token",
-              "telegram.webhook_secret"
+              "telegram.bot_token"
             ]
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "config": {
+                  "properties": {
+                    "receive_mode": {
+                      "const": "webhook"
+                    }
+                  },
+                  "required": [
+                    "receive_mode"
+                  ]
+                }
+              },
+              "required": [
+                "config"
+              ]
+            },
+            "then": {
+              "properties": {
+                "credentials": {
+                  "required": [
+                    "telegram.webhook_secret"
+                  ]
+                }
+              }
+            }
+          }
+        ]
       },
       "else": {
         "properties": {
