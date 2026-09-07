@@ -386,5 +386,17 @@ EXIT_STATUS=0
 - Web全量 **569/569** 通过，含直接读取共享 `preflight-polling-view-valid.json` / `preflight-polling-queued-valid.json` 及八项checks逐字对照。TypeScript、Next production build和差异空白检查通过。
 - 一次性副本恢复了136个基线Web/文档文件的原哈希及属性，原有 **525/525** 测试通过；只加入最初三项新回归后，三个原缺陷再次全部复现，退出1符合预期。活动Web工作树仍保留新实现。
 - 并行全量回归曾发现一个原测试在DOM提交后过早断言revision读取effect；已改为等待原有精确断言成立，没有放宽调用参数或产品行为。
-- 真实Control BFF脚本已通过语法检查；当前等待Control隔离实例及测试Session，尚未把准备好的脚本标记为真实HTTP通过。真实Bot、消息接纳和回复另由统筹验收。
+- 源码提交时真实Control BFF脚本已通过语法检查，彼时仍等待隔离实例；后续真实HTTP和浏览器结果见下方增量记录。真实Bot、消息接纳和回复另由统筹验收。
 - 四件交付证据位于 `/private/tmp/web-telegram-receive-modes-b4P1cz/`：`MODIFIED_FILE.tar.gz`、`DIFF_FILE.patch`、`VERIFICATION.txt`、可执行 `ROLLBACK.sh`。回退工具仅接受该证据目录下带专用标记的一次性副本，不操作活动worktree。
+
+### 真实 Session / BFF / 浏览器增量验收
+
+- Web功能提交为 `ef9a075b0500a841ff4dc424ec9e971acc30e8c1`；交给Gateway后保持不变。本次补充只涉及测试断言计数与本文档，不改产品代码或共享契约。
+- 使用Control任务提供的独立数据库、真实Session和专用HTTP实例 `127.0.0.1:52775`，本任务启动临时Next production实例 `127.0.0.1:13105`。未修改既有部署。凭据只通过受限本地配置读入进程，不写入仓库或测试报告。
+- `web/test/channel-receive-modes-real-e2e.mjs` 实际通过 **70项断言 / 21个HTTP请求**。覆盖匿名401/no-store、LP Token-only创建、可选Secret稳定版本、disabled模式PATCH/CAS/重放、metadata与connection revision分离、首次补齐Secret，以及未落库旧Webhook请求恢复和幂等冲突。成功结果与退出0记录于 `live/real-bff.stdout.log`、`live/real-bff.exit`。
+- 真实浏览器登录与操作通过 **31项检查**：默认LP、只填Token创建、身份确认、取消不提交、LP→Webhook→LP、模式变更保留凭据和停用状态、缺Secret仍可保存Webhook并提示启用前补齐。检查未点击启用或触发预检。
+- 浏览器只读DOM几何检查覆盖 **1440×1000、768×1024、390×844**，三者document scrollWidth均等于viewport宽度；桌面卡片等高对齐，手机单列，模式选项点击区域高度均大于44px。浏览器warning/error日志为0。
+- 操作结束后额外通过真实Session GET回读：**13项断言 / 4个HTTP请求**，三个测试账户全部 `enabled=false`。原BFF账户回到LP、connection revision 6；浏览器创建账户保存Webhook、connection revision 2、Secret仍为version 1且configured=false。
+- 证据目录为 `/private/tmp/web-telegram-receive-modes-b4P1cz/live/`，含 `browser-checks.json`、`browser-final-http.json`、`browser-final.dom.txt`、`create-desktop.png`、`create-tablet.png`、`create-mobile.png`、`missing-secret-saved.png`。截图均已实际回看。
+- 所有账户均为隔离合成身份；本轮 **enable=0、preflight=0、Telegram请求=0**。这里的真实验收指Session、Control、BFF与浏览器操作，不将其写作真实机器人收取消息或执行回复成功。
+- 本任务已恢复浏览器原尺寸、关闭专用标签页，停止临时Next进程（Ctrl-C退出130）；Control实例交还所属任务管理。结果已回报Control和Gateway，远端集成由Gateway统筹。
