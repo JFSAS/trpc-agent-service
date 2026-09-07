@@ -24,7 +24,7 @@ function LoginForm() {
       if (session.password_change_required) router.replace("/change-password");
       else {
         const requested = search.get("next");
-        router.replace(requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/");
+        router.replace(requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/console");
       }
     } catch (caught) {
       setError(caught instanceof ControlApiError && caught.code === "INVALID_CREDENTIALS" ? "用户名或密码错误" : caught instanceof Error ? caught.message : "登录失败");

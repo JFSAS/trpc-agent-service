@@ -6,6 +6,20 @@ Profile, Deployment, and Channel management capabilities.
 It uses the shadcn `dashboard-01` source layout with the selected A-style
 white, slate, and cloud-blue visual system.
 
+## Public project site
+
+The public homepage `/` uses an ivory-and-forest visual system independent of
+the existing console. `/docs` links to a complete illustrated user guide and
+six readable reference pages. Public pages do not restore a Control session.
+The original role-aware bootstrap now lives at `/console`; default post-login
+and post-password-change navigation goes there.
+
+Run `npm run docs:sync` after changing the Markdown in `docs/site` or
+`docs/user-guide/v1`. Commit the generated `public/docs` files with the source.
+`npm run docs:check` detects stale output. The standalone Docker image includes
+`public`, so published documentation is served without the repository mounted.
+See [site maintenance](../docs/site/README.md).
+
 ## Local development
 
 The Control API must listen on `127.0.0.1:8080` unless overridden:
@@ -19,6 +33,9 @@ handler forwards requests and the opaque HttpOnly session cookie to Control
 API, avoiding a cross-origin authentication path.
 
 ## Implemented pages
+
+- `/` and `/docs` (public homepage and documentation hub)
+- `/console` (role-aware authenticated console entry)
 
 - `/login` and `/change-password`
 - `/admin`, `/admin/users`, `/admin/operators`, `/admin/tenants`

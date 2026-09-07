@@ -1,91 +1,40 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { ControlApiError } from "../lib/control-api";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Home from "./page";
+import DocsPage from "./docs/page";
+import { docTopics, referenceUrl } from "../components/site/doc-topics";
+const api = vi.hoisted(() => ({ getMe: vi.fn(), getCapabilities: vi.fn() }));
+vi.mock("../lib/control-api", () => ({ controlApi: api }));
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
-const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
-const api = vi.hoisted(() => ({
-  getMe: vi.fn(),
-  getCapabilities: vi.fn(),
-  listMyTenants: vi.fn(),
-}));
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => navigation,
-}));
-
-vi.mock("../lib/control-api", async () => {
-  const actual = await vi.importActual<typeof import("../lib/control-api")>("../lib/control-api");
-  return { ...actual, controlApi: api };
-});
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  api.getMe.mockResolvedValue({
-    user: { id: "user-1", username: "alice", display_name: "Alice" },
-    password_change_required: false,
-  });
-  api.getCapabilities.mockResolvedValue({ capabilities: ["users:manage"] });
-  api.listMyTenants.mockResolvedValue({ tenants: [] });
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  cleanup();
-});
-
-describe("role-aware console landing", () => {
-  it("lands a Platform Operator on Admin", async () => {
+describe("public project site", () => {
+  it("renders the homepage without restoring a Control API session", () => {
     render(<Home />);
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/admin"));
-    expect(api.listMyTenants).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("让你的 Agent，真正开始工作。");
+    expect(screen.queryByText("正在打开控制台")).not.toBeInTheDocument();
+    expect(api.getMe).not.toHaveBeenCalled();
+    expect(api.getCapabilities).not.toHaveBeenCalled();
+    expect(screen.getByText("流程示意 · 非运行状态")).toBeInTheDocument();
+    expect(screen.getByText(/工具、知识与组合节点的配置入口不代表/)).toBeInTheDocument();
   });
-
-  it.each(["OWNER", "MEMBER"])("lands a single-Tenant %s on the Tenant chooser", async (role) => {
-    api.getCapabilities.mockRejectedValue(new ControlApiError(403, "PLATFORM_FORBIDDEN", "forbidden"));
-    api.listMyTenants.mockResolvedValue({ tenants: [{
-      id: "tenant/a", slug: "team-a", name: "Team A", status: "ACTIVE", role,
-      created_at: "", updated_at: "",
-    }] });
-
+  it("exposes tutorial, documentation and the separate console entry", () => {
     render(<Home />);
-
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/tenants"));
-    expect(api.listMyTenants).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: "开始搭建我的 Agent" })).toHaveAttribute("href", "/docs/guide.html#chapter-4");
+    expect(screen.getByRole("link", { name: "阅读文档" })).toHaveAttribute("href", "/docs");
+    for (const link of screen.getAllByRole("link", { name: "进入控制台" })) expect(link).toHaveAttribute("href", "/console");
+    const nav = within(screen.getByRole("navigation", { name: "主导航" }));
+    expect(nav.getByRole("link", { name: "概览" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute("href", "#main-content");
+    for (const link of screen.getAllByRole("link")) expect(link.getAttribute("href")).not.toBe("#");
   });
-
-  it("uses the Tenant chooser when the user has multiple memberships", async () => {
-    api.getCapabilities.mockRejectedValue(new ControlApiError(403, "PLATFORM_FORBIDDEN", "forbidden"));
-    api.listMyTenants.mockResolvedValue({ tenants: [
-      { id: "tenant-1", role: "OWNER" },
-      { id: "tenant-2", role: "MEMBER" },
-    ] });
-
-    render(<Home />);
-
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/tenants"));
-  });
-
-  it("shows an operational error instead of misclassifying a server failure as logout", async () => {
-    api.getCapabilities.mockRejectedValue(new ControlApiError(500, "INTERNAL_ERROR", "request failed"));
-
-    render(<Home />);
-
-    expect(await screen.findByText("控制台暂时不可用")).toBeInTheDocument();
-    expect(screen.getByText("request failed")).toBeInTheDocument();
-    expect(navigation.replace).not.toHaveBeenCalledWith("/login");
-  });
-
-  it("stops waiting and exposes retry when session restoration never settles", async () => {
-    vi.useFakeTimers();
-    api.getMe.mockImplementation(() => new Promise(() => undefined));
-
-    render(<Home />);
-    await act(async () => vi.advanceTimersByTimeAsync(10_000));
-
-    expect(screen.getByText("控制台连接超时")).toBeInTheDocument();
-    expect(screen.getByText("恢复会话超过 10 秒，请确认 Web 服务与 Control API 均可访问后重试。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  it("offers six readable reference topics and three task-based paths", () => {
+    render(<DocsPage />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("少一点摸索，多一点开始。");
+    for (const topic of docTopics) {
+      expect(screen.getByRole("heading", { name: topic.title }).closest("a")).toHaveAttribute("href", referenceUrl(topic.slug));
+    }
+    expect(screen.getByRole("heading", { name: "解决使用中的问题" }).closest("a")).toHaveAttribute("href", "/docs/guide.html#chapter-11");
+    expect(screen.getByRole("heading", { name: "安装自己的平台" }).closest("a")).toHaveAttribute("href", "/docs/guide.html#chapter-13");
+    expect(api.getMe).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,48 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Agent tRPC V1 使用参考：Telegram 与企业微信"><title>Telegram 与企业微信 · Agent tRPC 文档</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:#fbfcf9;color:#234039;font:15px/1.9 -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif}a{color:#087c63;text-decoration:none}a:hover{text-decoration:underline}a:focus-visible,summary:focus-visible{outline:3px solid #16896c;outline-offset:4px;border-radius:3px}.skip{position:absolute;top:-90px;background:white;padding:10px 20px;z-index:5}.skip:focus{top:10px}header{max-width:1220px;margin:auto;display:flex;justify-content:space-between;align-items:center;gap:20px;padding:26px 40px;border-bottom:1px solid #e0e7dc}.brand{font-size:20px;color:#183d32;letter-spacing:-.5px}header nav{display:flex;gap:28px;align-items:center;font-size:12px}.console{padding:7px 12px;border:1px solid #cddccf;border-radius:7px}.layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:55px;max-width:1220px;margin:auto;padding:40px}aside{align-self:start;position:sticky;top:26px;max-height:90vh;overflow-y:auto;font-size:12px}aside a{display:block;padding:7px 10px;color:#748770;border-radius:5px}aside a[aria-current=page]{background:#e9f0e3;color:#296448;font-weight:650}aside a:hover{background:#edf3e9;text-decoration:none}.back{margin-bottom:28px}.label{display:block;font:9px ui-monospace,monospace;color:#95a188;letter-spacing:1.3px;margin:29px 10px 11px}main{min-width:0;max-width:820px;padding:11px 0 40px}.eyebrow{font:10px ui-monospace,monospace;letter-spacing:2px;color:#8b9b80}h1{font-size:36px;letter-spacing:-1px;line-height:1.35;margin:20px 0 13px}.meta{font-size:11px;color:#99a58d;padding-bottom:23px;border-bottom:1px solid #dfe7d9;margin-bottom:28px}h2{font-size:23px;line-height:1.5;margin:38px 0 17px}h3{font-size:18px;margin-top:27px}p{margin:17px 0}li{margin:9px 0}code{font:12px ui-monospace,monospace;padding:3px 5px;background:#edf2e7;border-radius:4px;overflow-wrap:anywhere}pre{padding:22px;border:1px solid #284e3e;border-radius:10px;background:#193c31;color:#e5eddc;overflow:auto;font-size:12px;line-height:1.8}pre code{font:inherit;background:none;padding:0;overflow-wrap:normal}.table-scroll{overflow-x:auto;border:1px solid #dfe6d9;border-radius:9px;margin:20px 0}table{width:100%;border-collapse:collapse;font-size:12px;min-width:550px}td,th{padding:13px 15px;text-align:left;border-bottom:1px solid #e5ebdf;vertical-align:top}th{background:#edf2e6}tr:last-child td{border:0}blockquote{margin:24px 0;padding:2px 20px;background:#edf3e8;border-left:3px solid #8fab74;border-radius:0 8px 8px 0}footer{margin-top:40px;border-top:1px solid #dce5d5;padding-top:24px;display:flex;justify-content:space-between;gap:20px;font-size:12px}details{display:none}article a{text-decoration:underline;text-underline-offset:3px}article{overflow-wrap:anywhere}@media(max-width:900px){.layout{gap:25px;padding:30px;grid-template-columns:190px minmax(0,1fr)}header{padding:23px 30px}h1{font-size:30px}}@media(max-width:680px){header{padding:20px;gap:15px;flex-wrap:wrap}.brand{font-size:19px}header nav{font-size:11px;gap:18px}.layout{display:block;padding:25px 20px}aside{display:none}main{padding:0}h1{font-size:29px;margin-top:18px}h2{font-size:21px}.eyebrow{font-size:8px;letter-spacing:1.5px}body{font-size:14px}details{display:block;background:#f0f4e9;padding:12px 16px;border:1px solid #dfe7d7;border-radius:8px;margin:23px 0;font-size:12px}details nav{padding-top:12px}details a{display:block;padding:5px 0}summary{cursor:pointer;color:#58764a}footer{font-size:11px;flex-wrap:wrap}table{font-size:11px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media print{header,aside,details{display:none}.layout{display:block;padding:0}main{max-width:none}body{background:white;font-size:11pt}table{min-width:0}h2,h3{break-after:avoid}tr{break-inside:avoid}pre{white-space:pre-wrap}.table-scroll{overflow:visible}footer{display:none}}
+</style></head><body><a class="skip" href="#main-content">跳到正文</a><header><a class="brand" href="/">⬡ Agent <strong>tRPC</strong></a><nav aria-label="站点导航"><a href="/docs/guide.html">教程</a><a href="/docs">文档中心</a><a class="console" href="/console">进入控制台 ↗</a></nav></header><div class="layout"><aside><a class="back" href="/docs">← 返回文档中心</a><span class="label">REFERENCE / V1</span><nav aria-label="参考文档"><a href="concepts.html">理解核心概念</a><a href="agent.html">Agent 与版本</a><a href="runtime-profile.html">运行配置与资源</a><a href="deployment.html">部署与生命周期</a><a href="channels.html" aria-current="page">Telegram 与企业微信</a><a href="administration.html">账号、租户与权限</a></nav><span class="label">本文目录</span><nav aria-label="本文目录"><a href="#section-1">通用接入顺序</a><a href="#section-2">Telegram：优先使用长轮询</a><a href="#section-3">预检能做什么</a><a href="#section-4">企业微信：使用智能机器人长连接</a><a href="#section-5">两个开关的影响</a><a href="#section-6">做一次两轮验收</a><a href="#section-7">继续阅读</a></nav></aside><main id="main-content"><div class="eyebrow">AGENT TRPC / USER REFERENCE</div><h1>Telegram 与企业微信</h1><p class="meta">V1 · 使用者参考 · 2026.09.07</p><details><summary>文档与本页目录</summary><nav><a href="concepts.html">理解核心概念</a><a href="agent.html">Agent 与版本</a><a href="runtime-profile.html">运行配置与资源</a><a href="deployment.html">部署与生命周期</a><a href="channels.html" aria-current="page">Telegram 与企业微信</a><a href="administration.html">账号、租户与权限</a><a href="#section-1">通用接入顺序</a><a href="#section-2">Telegram：优先使用长轮询</a><a href="#section-3">预检能做什么</a><a href="#section-4">企业微信：使用智能机器人长连接</a><a href="#section-5">两个开关的影响</a><a href="#section-6">做一次两轮验收</a><a href="#section-7">继续阅读</a></nav></details><article><p>渠道把外部机器人收到的消息，交给一个明确的部署版本。页面入口：当前租户 → <strong>渠道接入</strong>。创建、凭据、启停与诊断由租户 OWNER 操作。</p>
+<h2 id="section-1">通用接入顺序</h2><p>创建停用的渠道账户 → 填写身份与凭据 → 预检或诊断 → 保存固定部署目标（路由关闭）→ 启用接入 → 开启路由 → 发送真实消息。</p>
+<p>V1 一个渠道账户对应一个 Binding，目标是具体的 Deployment Revision，不是“自动跟随最新版本”。Provider、机器人身份和自动生成字段只读；Telegram 接收方式可在账户停用后独立切换，并确认影响。修改凭据不会更改接收模式。</p>
+<h2 id="section-2">Telegram：优先使用长轮询</h2><p>准备数字 Bot ID 和 Bot Token。长轮询 <code>long_polling</code> 由 Gateway 主动获取消息，<strong>不需要公网 IP 或入站 HTTPS 回调</strong>，但服务器仍需要能够访问 Telegram。</p>
+<ul>
+<li>长轮询和 Webhook 是两种不同接收方式。已有 Webhook 或另一个轮询进程可能冲突。</li>
+<li>首次使用长轮询，先运行接入预检，查看身份与接收方式诊断。</li>
+<li>预检通过后，完成接入与路由启用，再给机器人发送私聊文本。</li>
+<li>使用 Webhook 时，还需公网 HTTPS 回调与 Webhook Secret；不能把回调地址填成本机内网地址。</li>
+</ul>
+<h3 id="section-3">预检能做什么</h3><p>Telegram 预检是只读检查，查询机器人身份与 Webhook 状态。它不会发送测试消息，不会拉取更新，也不会修改 Webhook 或启用账户。</p>
+<p>“通过”不等于入站与回复已验收。真实消息投递仍需单独验证；结果中的 UNKNOWN 不应被当作失败或成功回复。</p>
+<h2 id="section-4">企业微信：使用智能机器人长连接</h2><p>准备<strong>智能机器人长连接专用 Bot ID 和 Bot Secret</strong>，不是群机器人 Webhook，也不是旧回调模式的 URL、Token、AESKey。</p>
+<p>接入诊断需要账户处于停用状态，并明确确认影响。诊断会临时建立真实连接，可能替换同一机器人已有客户端；期间收到的消息不会交给 Agent，也不会回复。结束后诊断连接断开，不会自动恢复其他客户端。</p>
+<p>查看凭据和鉴权检查结果。真实消息投递可能标为 NOT_TESTED；完成正式接入与路由后再验收。</p>
+<h2 id="section-5">两个开关的影响</h2><div class="table-scroll"><table>
+<thead>
+<tr>
+<th>操作</th>
+<th>接入意图</th>
+<th>路由意图</th>
+<th>恢复时的含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>停用接入</td>
+<td>关闭</td>
+<td>保留原值</td>
+<td>重新启用后，原本开启的路由可能恢复</td>
+</tr>
+<tr>
+<td>暂停路由</td>
+<td>保留原值</td>
+<td>关闭</td>
+<td>只恢复接入不会自动打开路由</td>
+</tr>
+<tr>
+<td>启用接入并开启路由</td>
+<td>开启</td>
+<td>开启</td>
+<td>新消息进入绑定的固定部署目标</td>
+</tr>
+</tbody></table></div>
+<p>计划维护时，先暂停路由，再停用接入。页面中的意图状态不是远端连接健康或消息已回复的证明。</p>
+<h2 id="section-6">做一次两轮验收</h2><p>第一条：请机器人介绍自己。第二条：围绕上一条内容继续追问。两轮都收到合适的文本回复，再确认会话能承接上文。保留时间、渠道与部署版本，便于排查。</p>
+<h2 id="section-7">继续阅读</h2><p><a href="/docs/guide.html#chapter-7">Telegram 图文步骤</a> · <a href="/docs/guide.html#chapter-8">企业微信图文步骤</a> · <a href="/docs/guide.html#chapter-11">问题排查</a></p>
+</article><footer><a href="/docs">← 返回文档中心</a><a href="/docs/guide.html">阅读完整图文教程 →</a></footer></main></div></body></html>

@@ -17,7 +17,7 @@ export default function ChangePasswordPage() {
     event.preventDefault(); setError("");
     if (next !== confirm) return setError("两次输入的新密码不一致");
     setSubmitting(true);
-    try { await controlApi.changePassword({ current_password: current, new_password: next }); router.replace("/"); }
+    try { await controlApi.changePassword({ current_password: current, new_password: next }); router.replace("/console"); }
     catch (caught) { setError(caught instanceof ControlApiError && caught.code === "WEAK_PASSWORD" ? "新密码不符合密码策略" : caught instanceof Error ? caught.message : "修改失败"); }
     finally { setSubmitting(false); }
   }

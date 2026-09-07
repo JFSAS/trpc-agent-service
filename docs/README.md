@@ -1,5 +1,15 @@
 # 文档索引
 
+## 项目主页与文档中心
+
+Web 根地址 `/` 提供公开项目主页；`/docs` 是教程与六篇主题参考文档入口；
+原会话恢复入口位于 `/console`。站点内容与更新方式见 [主页与站内文档](site/README.md)。
+
+## 给使用者的指南
+
+- [Agent tRPC V1 部署与使用指南](user-guide/v1/README.md)：逐页操作、单 LLM Agent 上线、Telegram / 企微接入、升级回退与常见问题，附图文。另提供[可独立阅读的 HTML 版](user-guide/v1/部署与使用指南.html)。
+
+
 本仓库的架构文档分为两类：
 
 - [`architecture-next/`](architecture-next/README.md)：当前重构使用的规范性文档，
