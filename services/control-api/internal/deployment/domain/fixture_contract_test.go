@@ -84,7 +84,11 @@ func TestGoldenEventFixturesEmbedValidManifest(t *testing.T) {
 				t.Fatal("event identity and embedded manifest do not agree")
 			}
 			var standalone RuntimeManifest
-			fixtureDecode(t, filepath.Join(fixtureRepositoryRoot, "api/schemas/deployment/v1/examples/valid/runtime-manifest.json"), &standalone)
+			standaloneName := "runtime-manifest.json"
+			if filepath.Base(path) == "runtime-manifest-worker-v1.json" {
+				standaloneName = "runtime-manifest-worker-v1.json"
+			}
+			fixtureDecode(t, filepath.Join(fixtureRepositoryRoot, "api/schemas/deployment/v1/examples/valid", standaloneName), &standalone)
 			if !bytes.Equal(fixtureCanonicalJSON(t, event.Manifest), fixtureCanonicalJSON(t, standalone)) {
 				t.Fatal("event fixture embeds a different snapshot from the standalone golden manifest")
 			}

@@ -12,3 +12,15 @@ streams:
     max_bytes: 268435456
     max_message_bytes: 1048576
     replicas: 1
+  - name: RUNTIME_MANIFESTS_V1
+    subject: control.runtime-manifest.published.v1
+    retention: limits
+    max_bytes: 268435456
+    max_message_bytes: 1048576
+    replicas: 1
+  - name: REPLY_INTENTS_V1
+    subject: execution.reply-intent.v1
+    retention: workqueue
+    max_bytes: 268435456
+    max_message_bytes: 1048576
+    replicas: 1

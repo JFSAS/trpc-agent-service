@@ -33,12 +33,12 @@
 - [RuntimeProfileSpec V1](control-api/runtime-profile-spec.md)：当前四种 Resource Kind、
   Write/Canonical/Read 分离、内部 CredentialID、校验、Digest、Schema 与 Fixture。
 - [Runtime Profile 凭据](control-api/runtime-profile-credentials.md)：直接录入、加密存储、
-  Draft COW、live 更新与已实现的消费边界；真实 Run/Attempt 与 Worker 接线仍待后续。
+  Draft COW、live 更新与已实现的消费边界；已加入真实 Run/Attempt mTLS 反查接线，联合验收另记。
 - [Deployment V1](control-api/deployment.md)：已接受无 Environment、无用户绑定表的
   简化边界；确定 AgentVersion + ProfileRevision，经同名匹配、校验和编译，生成不可变
   DeploymentRevision + 最小 RuntimeManifest。Schema / Event、Compiler、Application、
-  PostgreSQL 原子发布、八个 HTTP 路由、Bootstrap 与多副本固定 Digest 启动门禁已实现；发布当前停在
-  `PENDING` Outbox，不表示 Relay 分发或 Worker 执行已完成。
+  PostgreSQL 原子发布、八个 HTTP 路由、Bootstrap 与多副本固定 Digest 启动门禁已实现；发布事务停在
+  `PENDING` Outbox；新增 Manifest Relay/Owner Export 见 [Worker Runtime](../../services/control-api/WORKER_RUNTIME.md)。
 - [ChannelAccount V1 设计与实现](control-api/channel-account.md)：租户自助接入机器人、账户内部
   凭据、完整账户快照、Gateway 认证解析与状态回传；管理/内部 HTTP 与真实 PostgreSQL 已实现。
 - [ChannelBinding V1 设计与实现](control-api/channelbinding.md)：精确部署目标、Binding CAS、
@@ -48,15 +48,22 @@
   Gateway/Web/真实Telegram联合验收由协调任务记录，不等同于启用、注册或消息投递。
 - [Gateway Control 接入与验收](channel-gateway/control-integration-v1.md)：可信快照/凭据 Adapter、
   动态 Telegram、启动装配与运行观测已实现；真实 Telegram 入站到 RunRequested 已验收。
-  此入口区分已验收入站与仍待实现的 Worker 执行、ReplyIntent Consumer 和完整回复。
+  此历史入口仅证明入站；Worker/Reply 新增实现及联合验收见 [Worker 状态](agent-worker/implementation-status.md)。
 - [产品易用性 TODO](control-api/product-usability-todo.md)：同名表单骨架、托管 Session Storage、
   模板/独立连接测试、分层状态展示和客户端技术字段处理；目标已确认，能力待设计与实现。
 - [Channel Gateway 技术栈、代码结构与部署设计](channel-gateway/README.md)：Go Gateway、
   进程内公开 Go 企微库、四 Module 与持久接纳/执行所有权；当前 Control 默认来源已接
-  账户/凭据和 Delivery Runner，由 Runner 独占 Maintenance，共 10 个迁移（0001–0010）。
-  ReplyIntent Consumer、真实 Worker 和完整 Final 回复仍待交付。
+  账户/凭据和 Delivery Runner，由 Runner 独占 Maintenance，共 11 个迁移（0001–0011）。
+  ReplyIntent Consumer/Worker 证明已有实现，完整 Final 联合验收另记。
 - [Channel Gateway 实施状态](channel-gateway/implementation-status.md)：保留各切片历史验收，当前 Control 接入与真实 Telegram 入站集中于 §13–14。
 - [Delivery Runtime V1](channel-gateway/delivery-runtime-v1.md)：独立维护、有界 Runner/PG RuntimePorts、LocalOwner，以及 Control Runner 与 fixture 独立维护的互斥装配。
+- [Database V1](operations/database-v1.md)：同一 PostgreSQL/database、四 Schema 与独立角色；
+  Control/Gateway/Worker 双身份启动，Session 显式准备；真实权限验收与执行 gate 分开。
+- [Worker V1](agent-worker/README.md)：首版为 Telegram 文本 → 单 LLM → 正式 Session → Final；
+  W1 贯通 Manifest/装配/执行/Session，W2 接入真实回复与恢复验收。Session 采用候选内容与接受引用的
+  实现；组合按 SDK 原生能力，Memory/累计 Token 账本列入后续计划。代码与真实 PG/NATS/SDK
+  fixture 已有验证，真实模型/Telegram 尚待联合验收；[实现状态](agent-worker/implementation-status.md) 与术语见
+  [Execution 术语表](agent-worker/CONTEXT.md)。
 - [Channel Gateway 四 Module 入门说明](channel-gateway/module-introduction.md)：先理解四类事实和调用关系，再读详细规范。
 - [Channel Gateway 四个业务 Module](channel-gateway/module-boundaries.md)：解释单一 Gateway
   Workload 内 routing、admission、connection、delivery 的职责追踪、目录分工、深接口、事务 seam 和故障时序。
@@ -91,14 +98,15 @@ Deployment 的 Control Publication 已经落地并覆盖以下阶段：
    `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`，Bootstrap 在 DB / HTTP 前比对，
    不匹配即启动失败；只读 CLI 支持按最终 Host 配置预计算，Compose 强制要求预期值。
 
-渠道切片已按以下依赖落地；Worker 为后续阶段，不把“Binding 表完成”当作完整执行闭环：
+渠道切片已按以下依赖落地；Worker 联合验收继续推进，不把“Binding 表完成”当作完整执行闭环：
 
 1. 已实现 ChannelAccount：租户账户、模块私有凭据、版本/CAS与静态管理纵切。
 2. 已实现 ChannelBinding：精确目标、账户有效路由与幂等事务Outbox；与账户启停一起验证原子性。
 3. 已实现 Control→Gateway 扩展：完整账户快照、认证凭据读取、Gateway动态接入与运行观测。
 4. Distribution：Control路由Relay已通过真实PG/JetStream回归；Gateway固定可信路由三元组。
    Manifest正文读取/执行属于Worker，路由日志恢复由Gateway验证。
-5. Worker：固定Manifest、新Attempt凭据授权与真实执行，仍为独立Runtime切片。
+5. Worker：W1 贯通固定 Manifest、凭据、单 LLM 与正式 Session；W2 完成 Telegram Final 回复。
+   组合、Memory、累计 Token 账本为后续计划；代码/fixture 与真实渠道验收分别记录。
 
 上面1～4的Control代码与真实PG/mTLS/NATS回归已接通，公开11个操作列入OpenAPI；
 Gateway 的账户门禁、动态 Telegram 和运行观测已接线。联合真实 Telegram 收信已通过，

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"github.com/go-telegram/bot"
 	use "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
@@ -11,6 +12,7 @@ import (
 	d "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -56,8 +58,9 @@ func (b *controlDelivery) DispatchAccount(ctx context.Context, r d.ClaimRequest)
 }
 
 type controlSenders struct {
-	use   *use.Service
-	wecom *wecom.Provider
+	telegramAPIURL string
+	use            *use.Service
+	wecom          *wecom.Provider
 }
 
 func (b controlSenders) Reserve(ctx context.Context, r app.SendRequest) (app.ReservedSender, error) {
@@ -89,7 +92,11 @@ func (b controlSenders) Reserve(ctx context.Context, r app.SendRequest) (app.Res
 		tr.DisableCompression = true
 		close = tr.CloseIdleConnections
 		h := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		client, err := bot.New(values[0].Value, bot.WithSkipGetMe(), bot.WithHTTPClient(5*time.Second, h))
+		options := []bot.Option{bot.WithSkipGetMe(), bot.WithHTTPClient(5*time.Second, h)}
+		if b.telegramAPIURL != "" {
+			options = append(options, bot.WithServerURL(strings.TrimSuffix(b.telegramAPIURL, "/")))
+		}
+		client, err := bot.New(values[0].Value, options...)
 		values[0].Value = ""
 		if err != nil {
 			close()
@@ -100,7 +107,24 @@ func (b controlSenders) Reserve(ctx context.Context, r app.SendRequest) (app.Res
 		identity, err := client.GetMe(op)
 		stop()
 		cancel()
-		if err != nil || identity == nil || !identity.IsBot || strconv.FormatInt(identity.ID, 10) != v.Account.ProviderAccountID || p.Check() != nil {
+		if p.Check() != nil {
+			close()
+			return nil, d.ErrUnauthorized
+		}
+		if err != nil {
+			close()
+			// getMe is preparation, not sendMessage. A transport or server
+			// failure proves no Final was sent but does not prove bad identity.
+			// Keep it on the existing bounded preparation retry path.
+			if errors.Is(err, bot.ErrorUnauthorized) || errors.Is(err, bot.ErrorForbidden) || errors.Is(err, bot.ErrorBadRequest) || errors.Is(err, bot.ErrorNotFound) {
+				return nil, d.ErrUnauthorized
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, d.ErrUnavailable
+		}
+		if identity == nil || !identity.IsBot || strconv.FormatInt(identity.ID, 10) != v.Account.ProviderAccountID {
 			close()
 			return nil, d.ErrUnauthorized
 		}

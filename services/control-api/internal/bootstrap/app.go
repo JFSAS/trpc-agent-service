@@ -16,13 +16,16 @@ import (
 	channelpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/postgres"
 	channelapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
+	deploymenthttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/inbound/runtimehttp"
+	deploymentnats "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/nats"
+	deploymentpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/postgres"
+	deploymentapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/application"
 	deploymentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/httpserver"
-	sharedpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/postgres"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile"
+	profileapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant"
-	"github.com/liuzengh/trpc-agent-service/services/control-api/migrations"
 	"github.com/nats-io/nats.go"
 )
 
@@ -34,6 +37,9 @@ type serverLifecycle interface {
 // App owns the modules and process lifecycle assembled for Control API.
 type App struct {
 	routeRelay      *channelapp.RouteRelay
+	manifestRelay   *deploymentapp.ManifestRelay
+	manifestNATS    *nats.Conn
+	runtimeServer   serverLifecycle
 	natsConnection  *nats.Conn
 	database        *pgxpool.Pool
 	server          serverLifecycle
@@ -56,13 +62,9 @@ func New(ctx context.Context, config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	pool, err := sharedpostgres.Open(ctx, config.DatabaseURL)
+	pool, err := openDatabase(ctx, config)
 	if err != nil {
 		return nil, err
-	}
-	if err := sharedpostgres.Migrate(ctx, pool, migrations.Files); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("migrate control database: %w", err)
 	}
 
 	router := gin.New()
@@ -123,7 +125,22 @@ func New(ctx context.Context, config Config) (*App, error) {
 		pool.Close()
 		return nil, fmt.Errorf("assemble agent: %w", err)
 	}
+	var executionVerifier profileapp.ExecutionAuthorizationVerifier
+	var authenticateWorker gin.HandlerFunc
+	var runtimeRouter *gin.Engine
+	if config.Runtime != nil {
+		executionVerifier, err = config.Runtime.executionVerifier()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		authenticateWorker = config.Runtime.authenticateWorker()
+		runtimeRouter = gin.New()
+		_ = runtimeRouter.SetTrustedProxies(nil)
+		runtimeRouter.Use(gin.RecoveryWithWriter(nil))
+	}
 	runtimeProfileModule, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
+		ExecutionVerifier: executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
 		DB: pool, Routes: router,
 		Authenticate:  identityModule.AuthenticationMiddleware(),
 		CredentialKey: config.ProfileCredentialKey,
@@ -192,8 +209,51 @@ func New(ctx context.Context, config Config) (*App, error) {
 		internalServer = httpserver.NewTLS(config.Channel.InternalAddress, channelModule.InternalHandler, tlsConfig)
 	}
 
+	var runtimeServer serverLifecycle
+	var manifestRelay *deploymentapp.ManifestRelay
+	var manifestNATS *nats.Conn
+	if config.Runtime != nil {
+		tc, tlsErr := config.Runtime.serverTLS()
+		if tlsErr != nil {
+			if nc != nil {
+				nc.Close()
+			}
+			pool.Close()
+			return nil, tlsErr
+		}
+		manifestNATS, err = config.Runtime.connectNATS()
+		if err != nil {
+			if nc != nil {
+				nc.Close()
+			}
+			pool.Close()
+			return nil, err
+		}
+		publisher, publishErr := deploymentnats.NewManifestPublisher(manifestNATS)
+		if publishErr != nil {
+			manifestNATS.Close()
+			if nc != nil {
+				nc.Close()
+			}
+			pool.Close()
+			return nil, publishErr
+		}
+		store := deploymentpostgres.NewStore(pool)
+		manifestRelay, err = deploymentapp.NewManifestRelay(store, publisher)
+		if err != nil {
+			manifestNATS.Close()
+			if nc != nil {
+				nc.Close()
+			}
+			pool.Close()
+			return nil, err
+		}
+		deploymenthttp.RegisterManifestExport(runtimeRouter.Group("", authenticateWorker), store, config.ProfileCredentialKey)
+		runtimeServer = httpserver.NewTLS(config.Runtime.InternalAddress, runtimeRouter, tc)
+	}
 	return &App{
 		routeRelay: relay, natsConnection: nc,
+		manifestRelay: manifestRelay, manifestNATS: manifestNATS, runtimeServer: runtimeServer,
 		database:        pool,
 		server:          httpserver.New(config.HTTPAddress, router),
 		shutdownTimeout: config.ShutdownTimeout,
@@ -209,7 +269,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 }
 
 func deploymentPlatformContract(config Config) (deploymentdomain.PlatformExecutionContract, error) {
-	contract := deploymentdomain.DefaultPlatformExecutionContract()
+	contract := deploymentdomain.WorkerV1PlatformExecutionContract()
 	if len(config.DeploymentAllowedEndpointHosts) > 0 {
 		contract.Execution.AllowedEndpointHosts = append(
 			[]string(nil), config.DeploymentAllowedEndpointHosts...,

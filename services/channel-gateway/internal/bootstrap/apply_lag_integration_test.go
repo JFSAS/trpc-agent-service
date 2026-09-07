@@ -89,7 +89,7 @@ func TestGatewayApplyLagAdmissionGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer broker.Close()
-	for _, name := range []string{transport.RouteStream, transport.RunStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 		if err = broker.JS.DeleteStream(ctx, name); err != nil && !errors.Is(err, jetstream.ErrStreamNotFound) {
 			t.Fatal(err)
 		}
@@ -97,19 +97,20 @@ func TestGatewayApplyLagAdmissionGate(t *testing.T) {
 	defer func() {
 		c, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
-		for _, name := range []string{transport.RouteStream, transport.RunStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 			_ = broker.JS.DeleteStream(c, name)
 		}
 	}()
 	if err = broker.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: u.String(), NATSURL: natsURL, Topology: topology, Accounts: []Account{{ID: "acct-1", SecretEnv: "FIXTURE_SECRET", Secret: "fixture-webhook-secret"}}}
+	database := fixtureDatabaseConfig(t, u.String())
+	cfg := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, Accounts: []Account{{ID: "acct-1", SecretEnv: "FIXTURE_SECRET", Secret: "fixture-webhook-secret"}}}
 	var apps []*App
 	var public, health []*httptest.Server
 	var faults []*failingFetch
 	for range 2 {
-		app, e := New(ctx, cfg)
+		app, e := newWithDatabaseTarget(ctx, cfg, database.target)
 		if e != nil {
 			t.Fatal(e)
 		}

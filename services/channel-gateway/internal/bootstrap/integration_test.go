@@ -67,13 +67,13 @@ func TestGatewayVerticalIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	for _, name := range []string{transport.RouteStream, transport.RunStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 		if err = admin.JS.DeleteStream(ctx, name); err != nil && err != jetstream.ErrStreamNotFound {
 			t.Fatal(err)
 		}
 	}
 	defer func() {
-		for _, name := range []string{transport.RouteStream, transport.RunStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 			_ = admin.JS.DeleteStream(context.Background(), name)
 		}
 	}()
@@ -87,18 +87,19 @@ func TestGatewayVerticalIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := runstream.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "integration-subscriber", AckPolicy: jetstream.AckExplicitPolicy})
+	worker, err := runstream.Consumer(ctx, transport.RunConsumer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: u.String(), NATSURL: natsURL, Topology: topology, Accounts: []Account{{ID: "acct-1", SecretEnv: "TEST_SECRET", Secret: "test-secret-1234567890"}}}
+	database := fixtureDatabaseConfig(t, u.String())
+	config := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, Accounts: []Account{{ID: "acct-1", SecretEnv: "TEST_SECRET", Secret: "test-secret-1234567890"}}}
 	var apps []*App
 	var servers []*httptest.Server
 	var healthServers []*httptest.Server
 	var cancels []context.CancelFunc
 	var exits []chan error
 	for i := 0; i < 2; i++ {
-		app, err := New(ctx, config)
+		app, err := newWithDatabaseTarget(ctx, config, database.target)
 		if err != nil {
 			t.Fatal(err)
 		}

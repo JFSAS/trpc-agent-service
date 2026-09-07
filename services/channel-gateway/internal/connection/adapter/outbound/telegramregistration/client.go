@@ -8,22 +8,27 @@ import (
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
-type Factory struct{}
+type Factory struct{ ServerURL string }
 type client struct {
 	bot       *bot.Bot
 	transport *http.Transport
 }
 
-func (Factory) New(token string) (app.Remote, error) {
+func (f Factory) New(token string) (app.Remote, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxConnsPerHost = 2
 	tr.DisableCompression = true
 	tr.ResponseHeaderTimeout = 5 * time.Second
 	h := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	b, e := bot.New(token, bot.WithSkipGetMe(), bot.WithHTTPClient(5*time.Second, h))
+	options := []bot.Option{bot.WithSkipGetMe(), bot.WithHTTPClient(5*time.Second, h)}
+	if f.ServerURL != "" {
+		options = append(options, bot.WithServerURL(strings.TrimSuffix(f.ServerURL, "/")))
+	}
+	b, e := bot.New(token, options...)
 	if e != nil {
 		tr.CloseIdleConnections()
 		return nil, c.ErrInvalid

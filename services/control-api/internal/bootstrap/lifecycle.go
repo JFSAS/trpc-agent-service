@@ -22,6 +22,9 @@ func (a *App) Run(ctx context.Context) error {
 	if a.database != nil {
 		defer a.database.Close()
 	}
+	if a.manifestNATS != nil {
+		defer a.manifestNATS.Close()
+	}
 	if a.natsConnection != nil {
 		defer a.natsConnection.Close()
 	}
@@ -30,6 +33,9 @@ func (a *App) Run(ctx context.Context) error {
 	servers := []serverLifecycle{a.server}
 	if a.internalServer != nil {
 		servers = append(servers, a.internalServer)
+	}
+	if a.runtimeServer != nil {
+		servers = append(servers, a.runtimeServer)
 	}
 	result := make(chan error, len(servers))
 	for _, server := range servers {
@@ -40,6 +46,13 @@ func (a *App) Run(ctx context.Context) error {
 		defer close(relayDone)
 		if a.routeRelay != nil {
 			_ = a.routeRelay.Run(runCtx)
+		}
+	}()
+	manifestRelayDone := make(chan struct{})
+	go func() {
+		defer close(manifestRelayDone)
+		if a.manifestRelay != nil {
+			_ = a.manifestRelay.Run(runCtx)
 		}
 	}()
 	maintenanceDone := make(chan struct{})
@@ -104,6 +117,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	select {
 	case <-relayDone:
+	case <-shutdownCtx.Done():
+		return errors.Join(first, shutdownCtx.Err())
+	}
+	select {
+	case <-manifestRelayDone:
 	case <-shutdownCtx.Done():
 		return errors.Join(first, shutdownCtx.Err())
 	}

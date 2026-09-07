@@ -12,6 +12,18 @@ test:
 test-integration:
     bash scripts/test-control-integration.sh
 
+# Creates and removes its own PostgreSQL 17 fixture; no production DSN is used.
+test-database-v1:
+    python3 scripts/test-v1-database-isolation.py
+
+# Real storage/broker/SDK fixture gate; live model/Telegram acceptance is separate.
+test-worker-v1:
+    python3 scripts/test-worker-v1.py --race
+
+# Actual Control/Gateway/Worker processes; model and Telegram remain explicit fixtures.
+test-worker-v1-joint:
+    python3 scripts/test-worker-v1-joint.py --model-name gpt-4o --race --faults --contracts --recovery --durability --uncertainty --authorization --finality --manifest-rebuild
+
 openapi:
     go test ./api/... ./services/control-api/internal/agent/domain ./services/control-api/internal/runtimeprofile/domain ./services/control-api/internal/deployment/domain
 

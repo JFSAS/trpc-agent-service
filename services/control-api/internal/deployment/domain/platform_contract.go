@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gowebpki/jcs"
+	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 	profiledomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
 )
@@ -134,16 +135,17 @@ func DefaultPlatformExecutionContract() PlatformExecutionContract {
 // itself. Set-shaped host lists and adapter maps are normalized first.
 func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 	payload := struct {
-		Version                string                                                   `json:"version"`
-		CompilerVersion        string                                                   `json:"compiler_version"`
-		ManifestSchemaVersion  string                                                   `json:"manifest_schema_version"`
-		RuntimeContractVersion string                                                   `json:"runtime_contract_version"`
-		ModelAdapters          map[profiledomain.ModelKind]AdapterContract              `json:"model_adapters"`
-		ToolAdapters           map[profiledomain.ToolKind]AdapterContract               `json:"tool_adapters"`
-		KnowledgeAdapters      map[profiledomain.KnowledgeKind]KnowledgeAdapterContract `json:"knowledge_adapters"`
-		StorageAdapters        map[profiledomain.StorageKind]AdapterContract            `json:"storage_adapters"`
-		Execution              ExecutionPolicy                                          `json:"execution"`
-		Limits                 CompileLimits                                            `json:"limits"`
+		Version                  string                                                   `json:"version"`
+		CompilerVersion          string                                                   `json:"compiler_version"`
+		ManifestSchemaVersion    string                                                   `json:"manifest_schema_version"`
+		RuntimeContractVersion   string                                                   `json:"runtime_contract_version"`
+		ModelAdapters            map[profiledomain.ModelKind]AdapterContract              `json:"model_adapters"`
+		ToolAdapters             map[profiledomain.ToolKind]AdapterContract               `json:"tool_adapters"`
+		KnowledgeAdapters        map[profiledomain.KnowledgeKind]KnowledgeAdapterContract `json:"knowledge_adapters"`
+		StorageAdapters          map[profiledomain.StorageKind]AdapterContract            `json:"storage_adapters"`
+		Execution                ExecutionPolicy                                          `json:"execution"`
+		Limits                   CompileLimits                                            `json:"limits"`
+		WorkerSessionRuntimeRole string                                                   `json:"worker_session_runtime_role,omitempty"`
 	}{
 		Version: c.Version, CompilerVersion: c.CompilerVersion,
 		ManifestSchemaVersion:  c.ManifestSchemaVersion,
@@ -151,6 +153,11 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 		ModelAdapters:          cloneMap(c.ModelAdapters), ToolAdapters: cloneMap(c.ToolAdapters),
 		KnowledgeAdapters: cloneMap(c.KnowledgeAdapters), StorageAdapters: cloneMap(c.StorageAdapters),
 		Execution: c.Execution, Limits: c.Limits,
+	}
+	// This is a frozen Worker V1 rule, not a configurable role framework. Omit it
+	// entirely for platform-v1 so historical contract digests remain unchanged.
+	if c.Version == deploymentv1.WorkerV1PlatformVersion {
+		payload.WorkerSessionRuntimeRole = deploymentv1.WorkerV1SessionRuntimeRole
 	}
 	payload.Execution.AllowedEndpointHosts = sortedUnique(c.Execution.AllowedEndpointHosts)
 	encoded, err := json.Marshal(payload)
@@ -166,7 +173,7 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 }
 
 func (c PlatformExecutionContract) Validate() error {
-	if c.Version != PlatformContractVersionV1 || c.CompilerVersion != CompilerVersionV1 ||
+	if (c.Version != PlatformContractVersionV1 && c.Version != deploymentv1.WorkerV1PlatformVersion) || c.CompilerVersion != CompilerVersionV1 ||
 		c.ManifestSchemaVersion != SchemaVersionV1 ||
 		c.RuntimeContractVersion != RuntimeContractVersionV1 ||
 		c.Execution.Backend != "worker-process-v1" || c.Execution.MaxRunSeconds <= 0 ||
@@ -310,4 +317,20 @@ func cloneMap[K comparable, V any](source map[K]V) map[K]V {
 		result[key] = value
 	}
 	return result
+}
+
+// WorkerV1PlatformExecutionContract preserves the historical platform-v1
+// constructor for immutable reads/tests while selecting the actual V1 runtime
+// matrix for new publications. Changing Version participates in the digest.
+func WorkerV1PlatformExecutionContract() PlatformExecutionContract {
+	c := DefaultPlatformExecutionContract()
+	c.Version = deploymentv1.WorkerV1PlatformVersion
+	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{}
+	c.KnowledgeAdapters = map[profiledomain.KnowledgeKind]KnowledgeAdapterContract{}
+	digest, err := c.CalculateDigest()
+	if err != nil {
+		panic(err)
+	}
+	c.Digest = digest
+	return c
 }

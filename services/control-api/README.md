@@ -202,7 +202,8 @@ Control integration tests do not stand in for Gateway/Telegram/Web acceptance.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `CONTROL_DATABASE_URL` | yes | — | PostgreSQL connection string |
+| `CONTROL_DATABASE_URL` | yes | — | Business PostgreSQL connection using the least-privileged Control runtime role |
+| `CONTROL_MIGRATION_DATABASE_URL` | yes | — | Independent Control schema-owner/migrator connection; never defaults to the runtime connection |
 | `CONTROL_PROFILE_CREDENTIAL_KEY` | yes | — | Externally generated base64-encoded 32-byte Profile encryption/MAC master key |
 | `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` | no | closed built-in V1 host set | Comma-separated exact lowercase hosts accepted by the Deployment Compiler |
 | `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` | yes | — | Release-pinned `sha256:` digest shared by all replicas; startup fails before DB access if the effective platform contract differs |
@@ -215,6 +216,63 @@ Control integration tests do not stand in for Gateway/Telegram/Web acceptance.
 | `CONTROL_BOOTSTRAP_USERNAME` | with `auto` | — | Initial operator username |
 | `CONTROL_BOOTSTRAP_DISPLAY_NAME` | no | `Platform Operator` | Initial operator display name |
 | `CONTROL_BOOTSTRAP_PASSWORD` | with `auto` | — | Initial operator temporary password |
+
+### Database and schema isolation
+
+Control can share one PostgreSQL instance and database with Gateway and Worker,
+while using its fixed `control` schema and separate `control_migrator` and
+`control_runtime` roles. Production bootstrap verifies these exact names before
+DDL; matching two Gateway or Worker DSNs does not authorize Control to use their
+schema. Configure a trusted role-default `search_path` (or an
+explicit service connection parameter); no business pool falls back to `public`.
+The schema must already exist and both roles must have `USAGE` on it. The migrator
+owns its schema and tables; the runtime has business-table DML but no schema
+`CREATE`, table ownership, or migration-ledger mutation rights. Roles do not
+inherit one another and receive no access to the other workload schemas.
+
+After checking the release-pinned Deployment contract, startup opens the two
+explicit connections (whose configured host, port and database must match) and
+compares their server-observed `current_database()` and
+`current_schema()` before any migration. Database/schema must match, schema must
+be non-system, and effective roles must differ. Each connection must authenticate
+directly as that role (`session_user = current_user`), not use admin credentials
+with `SET ROLE` or a startup role option. The runtime identity must not be a
+superuser, schema owner, have schema `CREATE`, or have `CREATEDB`, `CREATEROLE`,
+`REPLICATION`, or `BYPASSRLS`. The migrator must own the target schema and have
+schema `CREATE`, but must have none of those global administrative attributes;
+a bootstrap/admin DSN is rejected even on the migration path. It then migrates only through the
+privileged pool, closes that pool, and retains only the runtime pool in the App.
+Migration startup errors do not expose either DSN or driver error detail. The
+existing versioned SQL files remain unchanged; table names and the Control ledger
+resolve within the same configured schema. Updating a DSN does not move existing
+objects or ledger rows from another schema; existing installations need a separate,
+explicitly verified data migration before switching targets.
+
+The `control_schema_migrations` ledger is created only after acquiring the
+migration advisory lock, including first startup. Runtime privileges inherited
+from default table grants are revoked on that ledger in the same transaction,
+before it is committed; runtime retains at most `SELECT` there. Provision reruns
+must preserve this exception instead of granting ledger DML again. On PostgreSQL
+17 (the V1 deployment contract), startup also checks the runtime role has no ledger
+mutation, reference, trigger or `MAINTAIN` privilege, including indirect grants.
+
+Run the dedicated real PostgreSQL contract tests against an isolated provisioned
+fixture (the admin URL is test-only and is never a production fallback):
+
+```sh
+# Supply CONTROL_DB_CONTRACT_ADMIN_URL, CONTROL_DB_CONTRACT_MIGRATION_URL,
+# and CONTROL_DB_CONTRACT_RUNTIME_URL from the fixture environment.
+go test -count=1 -v ./services/control-api/internal/bootstrap -run '^TestV1DatabaseContractControl'
+```
+
+The tests verify runtime business DML, rejected DDL and ledger mutation, concurrent
+first migration, and target mismatch/admin/non-owner rejection before DDL. The
+shared V1 fixture also supplies the two Gateway test URLs to verify that Control
+rejects a complete other-workload connection pair without creating its ledger
+there. Isolated temporary schemas are a package-private test seam, not a production
+schema override. Ordinary tests skip
+this suite only when all three fixture variables are absent; partially configured
+fixtures fail rather than silently skip.
 
 Local plain-HTTP testing sets `CONTROL_SESSION_COOKIE_SECURE=false`. A new
 database sets bootstrap mode to `auto` and supplies the username and temporary
@@ -296,3 +354,7 @@ and [Gateway inbound evidence](../../docs/architecture-next/channel-gateway/tele
 not inferred from build/test success. Telegram and the public Go WeCom connector remain
 in-process Gateway dependencies, not separate connector deployments. Helm stays at
 FINAL-INTEGRATION after all production workloads are complete.
+
+Worker V1 的版本化发布门禁、Manifest Relay、mTLS Credential Resolve 与最小 Owner Export：
+见 [WORKER_RUNTIME.md](WORKER_RUNTIME.md)。`CONTROL_RUNTIME_CONFIG_FILE` 显式启用此接缝；
+历史 Manifest 保持不可变，新发布使用 `worker-v1` Contract identity。

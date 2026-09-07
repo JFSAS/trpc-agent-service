@@ -53,7 +53,7 @@ func TestResolveForAttemptRechecksAuthorizationAfterProfileLockWait(t *testing.T
 			store := beforeProfileTransaction{CredentialStore: h.store, before: func() {
 				switch change {
 				case "revoked":
-					verifier.err = errors.New("current lease revoked during lock wait")
+					verifier.err = application.ErrExecutionUnauthorized
 				case "epoch":
 					verifier.auth.LeaseEpoch++
 				case "allowed-uses":
@@ -68,6 +68,29 @@ func TestResolveForAttemptRechecksAuthorizationAfterProfileLockWait(t *testing.T
 			batch, err := service.ResolveForAttempt(context.Background(), command)
 			if !errors.Is(err, application.ErrExecutionUnauthorized) || len(batch.Credentials) != 0 || spy.decryptCalls != 0 {
 				t.Fatalf("stale authorization reached decryption: err=%v decrypts=%d", err, spy.decryptCalls)
+			}
+		})
+	}
+}
+
+func TestResolveForAttemptClassifiesDependencyFailuresBeforeAndAfterLock(t *testing.T) {
+	for _, afterLock := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before-lock", true: "after-lock"}[afterLock], func(t *testing.T) {
+			h := newCredentialHarness(t)
+			h.save(t, modelCredentialCommand(1, "seed", "private-value"))
+			publishCredentialHarness(t, h)
+			command, verifier := executionForHarness(h, credentialUses(h))
+			spy := &credentialCipherObserver{inner: h.cipher}
+			var store application.CredentialStore = h.store
+			if afterLock {
+				store = beforeProfileTransaction{CredentialStore: h.store, before: func() { verifier.err = errors.New("transport secret canary") }}
+			} else {
+				verifier.err = errors.New("transport secret canary")
+			}
+			service := application.NewService(application.Dependencies{Store: h.store.base, Credentials: store, Cipher: spy, OwnerAccess: h.owners, ExecutionVerifier: verifier, TenantAccess: accessStub{members: map[string]bool{"tnt_a/usr_owner": true}}, NewProfileID: func() (string, error) { return "unused", nil }, NewRevisionID: func() (string, error) { return "unused", nil }, NewCredentialID: func() (string, error) { return "unused", nil }, Now: func() time.Time { return h.now }})
+			batch, err := service.ResolveForAttempt(context.Background(), command)
+			if !errors.Is(err, application.ErrExecutionDependencyUnavailable) || errors.Is(err, application.ErrExecutionUnauthorized) || len(batch.Credentials) != 0 || spy.decryptCalls != 0 || strings.Contains(err.Error(), "canary") {
+				t.Fatalf("dependency misclassified: %v", err)
 			}
 		})
 	}

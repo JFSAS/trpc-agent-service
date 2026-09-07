@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrCredentialIdempotencyConflict = errors.New("profile credential idempotency conflict")
-	ErrExecutionUnauthorized         = errors.New("execution authorization required")
+	ErrCredentialIdempotencyConflict  = errors.New("profile credential idempotency conflict")
+	ErrExecutionUnauthorized          = errors.New("execution authorization required")
+	ErrExecutionDependencyUnavailable = errors.New("execution authorization dependency unavailable")
 )
 
 // OwnerAccess is the authorization fact required for credential writes.

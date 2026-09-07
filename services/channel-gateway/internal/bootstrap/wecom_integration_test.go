@@ -84,7 +84,7 @@ func TestWeComConnectionGatewayIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer broker.Close()
-	for _, name := range []string{transport.RouteStream, transport.RunStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 		if err = broker.JS.DeleteStream(ctx, name); err != nil && !errors.Is(err, jetstream.ErrStreamNotFound) {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func TestWeComConnectionGatewayIntegration(t *testing.T) {
 	defer func() {
 		c, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
-		for _, name := range []string{transport.RouteStream, transport.RunStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 			_ = broker.JS.DeleteStream(c, name)
 		}
 	}()
@@ -187,13 +187,14 @@ func TestWeComConnectionGatewayIntegration(t *testing.T) {
 		}
 	}
 	writeAccounts(1, true, "CONNECTION_SECRET_ONE")
+	database := fixtureDatabaseConfig(t, u.String())
 	apps := []*App{}
 	stops := []context.CancelFunc{}
 	exits := []chan error{}
 	closed := []bool{}
 	for i := range 2 {
-		cfg := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: u.String(), NATSURL: natsURL, Topology: topology, WeComAccountsFile: path, WeComURL: "ws" + strings.TrimPrefix(server.URL, "http"), InstanceID: fmt.Sprintf("replica-%d", i), ConnectionOptions: connapp.Options{LeaseTTL: 900 * time.Millisecond, PollInterval: 20 * time.Millisecond, OperationTimeout: 100 * time.Millisecond, DrainTimeout: 600 * time.Millisecond}}
-		app, e := New(ctx, cfg)
+		cfg := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, WeComAccountsFile: path, WeComURL: "ws" + strings.TrimPrefix(server.URL, "http"), InstanceID: fmt.Sprintf("replica-%d", i), ConnectionOptions: connapp.Options{LeaseTTL: 900 * time.Millisecond, PollInterval: 20 * time.Millisecond, OperationTimeout: 100 * time.Millisecond, DrainTimeout: 600 * time.Millisecond}}
+		app, e := newWithDatabaseTarget(ctx, cfg, database.target)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -244,7 +245,7 @@ func TestWeComConnectionGatewayIntegration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	consumer, e := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "wecom-test-worker", AckPolicy: jetstream.AckExplicitPolicy, FilterSubject: transport.RunSubject})
+	consumer, e := stream.Consumer(ctx, transport.RunConsumer)
 	if e != nil {
 		t.Fatal(e)
 	}

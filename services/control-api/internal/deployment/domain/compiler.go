@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
+	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 	profiledomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
 )
@@ -94,6 +96,19 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 			"runtime manifest content could not be canonicalized",
 		))
 		return CompiledManifest{}, report
+	}
+	if input.Platform.Version == deploymentv1.WorkerV1PlatformVersion {
+		wire, decodeErr := deploymentv1.DecodeManifestContent(canonical)
+		if decodeErr != nil {
+			return CompiledManifest{}, report.WithDiagnostics(diagnostic(DiagnosticInputInvalid, SeverityError, DiagnosticSourcePlatform, "", "Worker V1 manifest codec rejected compiled content"))
+		}
+		if gateErr := deploymentv1.ValidateWorkerV1(wire, input.Platform.Digest); gateErr != nil {
+			if errors.Is(gateErr, deploymentv1.ErrWorkerV1SessionRuntimeRole) {
+				path := "/resources/storage/" + wire.StorageRoles["session"] + "/destination/username"
+				return CompiledManifest{}, report.WithDiagnostics(diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, path, gateErr.Error()))
+			}
+			return CompiledManifest{}, report.WithDiagnostics(diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, "/agent_plan", gateErr.Error()))
+		}
 	}
 	if len(canonical) > input.Platform.Limits.MaxManifestBytes {
 		report = report.WithDiagnostics(diagnostic(

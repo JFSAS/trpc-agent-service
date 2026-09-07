@@ -39,7 +39,7 @@
       "additionalProperties": false,
       "required": ["version", "digest"],
       "properties": {
-        "version": {"const": "platform-v1"},
+        "version": {"enum": ["platform-v1", "worker-v1"]},
         "digest": {"$ref": "#/$defs/digest"}
       }
     },

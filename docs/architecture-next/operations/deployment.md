@@ -433,3 +433,13 @@ Execution 完成证明、Reply transport/Consumer、CGR-37、有效发送截止�
 配置校验 → 镜像构建 → PG/NATS 初始化 → 接纳/重投 → Worker/Final E2E → 企微真实连接/
 抢占/断线窗口。全部生产 Workload 完成后再进入 FINAL-INTEGRATION，由 Helm 复用已经稳定的
 配置、健康与初始化契约。
+
+## 7. Database V1 更新（2026-09-07）
+
+本节更新上文历史 Compose 部署布局：当前默认基线已改为同 PostgreSQL、同 database，
+control/gateway/worker/runtime_session 四 Schema 与各自 migrator/runtime 角色。
+`database-schemas` 取代旧 gateway-database 初始化；Control/Gateway 强制独立迁移 DSN，
+先核对目标与角色，再执行自有迁移并关闭迁移 pool，业务不使用初始化管理员。
+Worker 和 Session 只预置隔离空间，尚无业务表。现有旧卷不自动迁移，guard 在写入前终止。
+准确配置、权限、迁移前提和真实 PG 验收见 [Database V1](database-v1.md) 与
+[Compose 当前说明](../../../deploy/compose/README.md)。前文旧实例/历史验收不代表已迁库。

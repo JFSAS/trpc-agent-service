@@ -14,11 +14,13 @@ import (
 // Config contains the process configuration required by Control API V1.
 type Config struct {
 	Channel                          *ChannelConfig
+	Runtime                          *RuntimeConfig
 	ProfileCredentialKey             []byte
 	DeploymentAllowedEndpointHosts   []string
 	DeploymentExpectedContractDigest string
 	HTTPAddress                      string
 	DatabaseURL                      string
+	MigrationDatabaseURL             string
 	SessionLifetime                  time.Duration
 	SessionCookieName                string
 	SessionCookieDomain              string
@@ -35,6 +37,11 @@ func LoadConfig() (Config, error) {
 	databaseURL := strings.TrimSpace(os.Getenv("CONTROL_DATABASE_URL"))
 	if databaseURL == "" {
 		return Config{}, errors.New("CONTROL_DATABASE_URL is required")
+	}
+
+	migrationDatabaseURL := strings.TrimSpace(os.Getenv("CONTROL_MIGRATION_DATABASE_URL"))
+	if migrationDatabaseURL == "" {
+		return Config{}, errors.New("CONTROL_MIGRATION_DATABASE_URL is required")
 	}
 
 	credentialKey, err := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(os.Getenv("CONTROL_PROFILE_CREDENTIAL_KEY")))
@@ -68,8 +75,13 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 
+	runtime, err := loadRuntimeConfig(strings.TrimSpace(os.Getenv("CONTROL_RUNTIME_CONFIG_FILE")))
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Channel:                          channel,
+		Runtime:                          runtime,
 		ProfileCredentialKey:             credentialKey,
 		DeploymentExpectedContractDigest: expectedContractDigest,
 		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment(
@@ -77,6 +89,7 @@ func LoadConfig() (Config, error) {
 		),
 		HTTPAddress:          stringEnvironment("CONTROL_HTTP_ADDRESS", ":8080"),
 		DatabaseURL:          databaseURL,
+		MigrationDatabaseURL: migrationDatabaseURL,
 		SessionLifetime:      sessionLifetime,
 		SessionCookieName:    stringEnvironment("CONTROL_SESSION_COOKIE_NAME", "control_session"),
 		SessionCookieDomain:  strings.TrimSpace(os.Getenv("CONTROL_SESSION_COOKIE_DOMAIN")),

@@ -90,7 +90,7 @@ func TestRuntimeCredentialHTTPFailuresNeverExposePartialBatch(t *testing.T) {
 	for _, tt := range []struct {
 		err    error
 		status int
-	}{{application.ErrExecutionUnauthorized, 403}, {domain.ErrCredentialUnavailable, 409}, {domain.ErrCredentialAssociation, 409}, {errors.New("private-error-canary"), 500}} {
+	}{{application.ErrExecutionDependencyUnavailable, 503}, {application.ErrExecutionUnauthorized, 403}, {domain.ErrCredentialUnavailable, 409}, {domain.ErrCredentialAssociation, 409}, {errors.New("private-error-canary"), 500}} {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
 			secret := []byte("private-partial-canary")
 			resolver := &resolverStub{err: tt.err, batch: application.CredentialBatch{TenantID: "partial-tenant", Credentials: []application.ResolvedCredential{{Value: secret}}}}

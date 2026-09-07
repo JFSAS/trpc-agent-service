@@ -13,7 +13,8 @@ export GATEWAY_HTTP_ADDRESS=127.0.0.1:8090
 export GATEWAY_ADMIN_ADDRESS=127.0.0.1:8091
 export GATEWAY_INSTANCE_ID=gw-1
 # 以下变量由受限运行配置提供，示例不是有效凭据/服务地址：
-# GATEWAY_DATABASE_URL, GATEWAY_NATS_URL, GATEWAY_NATS_USER, GATEWAY_NATS_PASSWORD
+# GATEWAY_DATABASE_URL, GATEWAY_MIGRATION_DATABASE_URL
+# GATEWAY_NATS_URL, GATEWAY_NATS_USER, GATEWAY_NATS_PASSWORD
 # GATEWAY_CONTROL_URL, GATEWAY_CONTROL_SCOPE_ID, GATEWAY_CONTROL_SOURCE_EPOCH
 # GATEWAY_CONTROL_CA_FILE, GATEWAY_CONTROL_CERT_FILE, GATEWAY_CONTROL_KEY_FILE
 # GATEWAY_PUBLIC_ORIGIN
@@ -40,7 +41,9 @@ go build -o ./bin/channel-gateway ./services/channel-gateway/cmd/channel-gateway
 8. 状态变化及 30 秒心跳经 mTLS 上报，失败不修改授权或更新 freshness。
 
 新增迁移 `0009_control_use_binding.sql`、`0010_telegram_registration.sql`；0001–0008 保持原哈希。
-本轮没有 Worker 实现，没有 ReplyIntent NATS consumer，也没有自行填造 committed-Final verifier。
+上述账户目录/注册阶段不包含 Worker。后续 Worker V1 已新增 ReplyIntent durable Consumer、
+真实 mTLS committed-Final verifier 和 0011 transport receipt migration，配置与事务边界见
+[Gateway Worker V1 Reply 接管](README.md#worker-v1-reply-接管)。历史入站记录仍不等同于回复验收。
 
 ## Telegram 真实入站就绪条件
 
@@ -74,6 +77,19 @@ NATS RUN_REQUESTS_V1 sequence1 的严格Schema和规范payload匹配，DeliveryI
 本次目标的模型与Storage配置仅为 admission-only fixture，没有宣称其真实执行能力。
 
 
+## 自建 Telegram Bot API origin
+
+`GATEWAY_TELEGRAM_API_URL` 是可选的运维配置，空值沿用 SDK 默认 `https://api.telegram.org`。
+同一个固定 origin 同时注入 registration 的 GetMe/SetWebhook 和 Delivery 的 GetMe/SendMessage，
+不由租户 Account/Profile 字段选择；它与入站 `GATEWAY_PUBLIC_ORIGIN` 是两个方向。
+支持 HTTPS origin，或字面量 loopback IP 的 HTTP origin（如 `http://127.0.0.1:8081`）；
+拒绝非 loopback HTTP、userinfo、非根路径、query 和 fragment。HTTPS 保留系统证书与主机名验证，
+不提供跳过验证。Compose 基线显式透传该可选变量；空值不改变公共端点。
+
+自建端点仍接收 Control 托管的 Bot Token；GetMe 的物理 Bot ID 必须与 Account 一致。
+账户资格、注册 fence、webhook secret、Route、Worker committed proof 和 Delivery A2 门禁保持不变。
+联合 gate 可将此 origin 指向本地外部 Telegram HTTP fixture，同时运行真实 Control/Gateway/
+Worker 二进制及 PG/NATS。该结果证明内部跨进程闭环，不代表真实 Telegram 账号验收。
 ## Telegram 接入预检（Gateway 实现，跨端验收独立）
 
 Gateway 在 `control` 模式由 LoadConfig 默认启用独立预检 Runner，固定4个执行槽、
