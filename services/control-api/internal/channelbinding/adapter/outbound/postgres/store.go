@@ -150,7 +150,7 @@ func dbError(err error) error {
 	var pgerr *pgconn.PgError
 	if errors.As(err, &pgerr) {
 		switch pgerr.ConstraintName {
-		case "channel_accounts_provider_identity":
+		case "channel_accounts_provider_identity", "channel_accounts_telegram_identity":
 			return application.ErrIdentityConflict
 		case "channel_bindings_one_account":
 			return application.ErrAccountAlreadyBound

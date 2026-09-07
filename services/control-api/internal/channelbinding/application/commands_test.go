@@ -402,7 +402,7 @@ func TestCrossTenantAndFailedReceiptPreservePublishedRoute(t *testing.T) {
 	s, m, _, _ := setup(t)
 	ctx := context.Background()
 	created := create(t, s)
-	_, err := s.UpdateAccount(ctx, Actor{"tnt_b", "usr_owner"}, created.Account.ID, "cross", UpdateAccountInput{1, ptr("x"), nil})
+	_, err := s.UpdateAccount(ctx, Actor{"tnt_b", "usr_owner"}, created.Account.ID, "cross", UpdateAccountInput{ExpectedAccountRevision: 1, Name: ptr("x")})
 	if !errors.Is(err, ErrAccountNotFound) {
 		t.Fatal(err)
 	}

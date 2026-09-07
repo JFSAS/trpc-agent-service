@@ -53,14 +53,14 @@ func (s *Store) ReadAccount(ctx context.Context, tenant, id string) (application
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return application.AccountDetails{}, dbError(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT connection_revision,instance_id,instance_epoch::text,report_sequence,state,reason_code,observed_at,owner_epoch,received_at FROM channel_account_observations WHERE tenant_id=$1 AND account_id=$2 AND received_at>=clock_timestamp()-interval '24 hours' ORDER BY received_at DESC,instance_id,instance_epoch LIMIT 32`, tenant, id)
+	rows, err := tx.Query(ctx, `SELECT connection_revision,instance_id,instance_epoch::text,report_sequence,state,reason_code,observed_at,owner_epoch,received_at,COALESCE(receive_mode,'') FROM channel_account_observations WHERE tenant_id=$1 AND account_id=$2 AND received_at>=clock_timestamp()-interval '24 hours' ORDER BY received_at DESC,instance_id,instance_epoch LIMIT 32`, tenant, id)
 	if err != nil {
 		return application.AccountDetails{}, dbError(err)
 	}
 	observations := make([]application.ObservationView, 0)
 	for rows.Next() {
 		var v application.ObservationView
-		if err = rows.Scan(&v.ConnectionRevision, &v.InstanceID, &v.InstanceEpoch, &v.ReportSequence, &v.State, &v.ReasonCode, &v.ObservedAt, &v.OwnerEpoch, &v.ReceivedAt); err != nil {
+		if err = rows.Scan(&v.ConnectionRevision, &v.InstanceID, &v.InstanceEpoch, &v.ReportSequence, &v.State, &v.ReasonCode, &v.ObservedAt, &v.OwnerEpoch, &v.ReceivedAt, &v.ReceiveMode); err != nil {
 			rows.Close()
 			return application.AccountDetails{}, dbError(err)
 		}

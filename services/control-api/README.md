@@ -296,3 +296,19 @@ and [Gateway inbound evidence](../../docs/architecture-next/channel-gateway/tele
 not inferred from build/test success. Telegram and the public Go WeCom connector remain
 in-process Gateway dependencies, not separate connector deployments. Helm stays at
 FINAL-INTEGRATION after all production workloads are complete.
+
+### Telegram receive modes
+
+The existing ChannelAccount create/PATCH operations now accept a closed
+`config.receive_mode` (`long_polling` by default for new creates, or `webhook`).
+Only disabled accounts change mode under account CAS. Polling needs BotToken;
+WebhookSecret remains optional stable credential metadata until configured.
+Migration `0003_telegram_receive_modes.sql` preserves old accounts as webhook
+and rejects duplicate physical Telegram Bots across scopes atomically.
+
+Preflight tasks pin mode/policy and effective configuration, preserve legacy
+results, and apply the fixed polling N/A matrix. This Control slice neither
+starts polling nor changes Telegram registration. See [Channel runtime](CHANNEL_RUNTIME.md)
+and the [mode-aware preflight contract](../../docs/architecture-next/control-api/telegram-preflight-v1.md#12-双接收模式的实现补充)
+for migration, workload, idempotency and validation details. Gateway/Web integration
+and deployment acceptance are separate from these local Control tests.

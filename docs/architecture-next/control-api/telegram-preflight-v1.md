@@ -1,6 +1,7 @@
 # Telegram 接入预检 V1：Control 任务与 wire 契约
 
 - 日期：2026-09-07；状态：**契约已冻结；Control代码已实现并通过本地回归，协调联合验收待完成**。
+- 2026-09-07 双模式补充：本分支已实现模式化预检；第 12 节覆盖原 webhook-only 的适用性与配置摘要规则，不引入产品 V2。
 - 基线：`661e4a826ce8f539d8f610b3f1ef99cdbe4a4fdd`。
 - Control 分支：`codex/control-telegram-preflight-v1`；本文由 Control ChannelBinding 任务维护。
 - 上位产品契约由协调任务维护：`docs/architecture-next/channel-preflight-v1.md`；Gateway 实现设计由其任务维护：`docs/architecture-next/channel-gateway/telegram-preflight-v1.md`。它们在各自工作树设计，不复制正文；合并时检查仓库链接。
@@ -384,3 +385,43 @@ TIMED_OUT原因区分CHANNEL_PREFLIGHT_NO_EXECUTOR（从未领取）和CHANNEL_P
 2. Control真实PG+Session+mTLS覆盖创建→claim→resolve→complete→GET；完整结果只持久化去秘密事实。普通运行disabled门禁、路由Outbox与mTLS身份回归保持通过。
 3. 重点回归包括合法配置A→首次complete合法B持久STALE、原A迟到拒绝；旧OWNER降级后新OWNER同事务收敛旧任务；当前Session在middleware后提交前撤销时预检两表与八张运行表零变化。
 4. 功能分支可以提交/推送供跨端集成；必须通过协调任务的最终审查及真实环境验收之后，再按串行指令合入远端main。Control测试不宣称修改Webhook、运行就绪或真实投递。
+
+## 12. 双接收模式的实现补充
+
+共享 wire 的唯一当前依据为 `api/schemas/channel/v1/` 的闭合 Schema、Go 验证器及 fixtures。
+本文前述原始八项规则继续用于历史 webhook-only 结果；新任务采用下列固定解释，不从
+读取时的 Account 最新 mode 重算旧事实。
+
+| 字段/行为 | 冻结规则与实现 |
+|---|---|
+| 任务身份 | Create 固定 receive_mode 与 diagnostic_policy=telegram-receive-modes-v1；mode 变化与 connection revision 变化都会使未完成任务失效 |
+| Claim | 请求声明 diagnostic_policy；Store 候选查询按 policy 隔离，事务锁内复核；旧请求只领旧任务 |
+| global 摘要 | 现有 PreflightConfigDigest 保持原算法，证明一次领取的全局 Gateway 配置 |
+| effective 摘要 | PreflightEffectiveConfigDigest 固定 policy/scope/epoch/mode/connection revision/API origin；LP 将无关入站 origin 置 NOT_APPLICABLE |
+| Grant / View | 已领取后具有 effective_config_digest；QUEUED 没有；LP 公开 expected_public_origin=null |
+| Complete | 显式回传 mode/policy/connection_revision/effective_config_digest/origin_status，先校验 wire 再匹配固定任务与租约；不信任客户端 overall |
+| 新租约 | LP 到期后重领允许 global origin 改变，但 effective 必须一致；原 claim receipt 原样保留；旧 lease 不再获得任何授权 |
+| 同租约 | global 不同而 effective 相同返回 CHANNEL_PREFLIGHT_RESULT_CONFLICT，事务回滚且保留原配置；effective 不同持久 STALE |
+| 持久解码 | 新私有 gateway_public_origin 仅用于重算 global 摘要；字段 omitempty 保留旧 record 的严格 round-trip；终态数据不重写 |
+
+LP 检查矩阵：
+
+1. credential_configuration 仅要求 BotToken；WebhookSecret configured 记录实际状态但不构成必需项。
+2. bot_identity 沿用 getMe 身份比对及有限远端错误；缺 Token 则 NOT_EXECUTED。
+3. public_origin 固定 NOT_APPLICABLE / PUBLIC_ORIGIN_NOT_APPLICABLE。
+4. webhook_registration 无 Webhook 为 WEBHOOK_NONE / PASS；有 Webhook 为
+   WEBHOOK_BLOCKS_LONG_POLLING / FAIL，relation=DIFFERENT，含义是与 LP 要求无 Webhook
+   的状态相异，不是根据 origin 推测该 Webhook 属于谁。远端错误/前置未执行继续有限分类。
+5. pending_updates 沿用 0 PASS、非0 WARN、未读取 SKIPPED。
+6. delivery_errors 固定 NOT_APPLICABLE / DELIVERY_ERRORS_NOT_APPLICABLE。
+7. recovery_materials 固定 NOT_APPLICABLE / RECOVERY_MATERIALS_NOT_APPLICABLE。
+8. delivery_verification 仍 UNKNOWN / DELIVERY_NOT_TESTED。
+
+N/A 三项的 details 精确为 `{ "applicability": "NOT_APPLICABLE" }`。仅聚合前六项中
+适用项：FAIL 优先，其次 UNKNOWN/SKIPPED、WARN、PASS。任何预检代码路径都不调用
+getUpdates、deleteWebhook、setWebhook，不清除外部 Webhook，也不启动接收；运行时模式
+协调由 Gateway 单独拥有，预检 PASS 不成为强制启用票据。
+
+代码验证保留 Application 的零运行写入断言、真实 PG 的旧记录/迁移与租约存储检查，
+以及 Session/mTLS HTTP 的权限、CAS、幂等、凭据精确使用和历史重放。联合 Gateway/Web
+运行证据由协调验收另记，不用 Control 的合成检查结果代替真实 Telegram 状态。

@@ -49,6 +49,13 @@ func (s *Store) SaveObservations(ctx context.Context, scope string, values []app
 			}
 			checked[key] = a
 		}
+		mode := o.ReceiveMode
+		if o.Provider == domain.Telegram && mode == "" {
+			mode = domain.Webhook
+		}
+		if mode != a.Config.ReceiveMode {
+			return &domain.Error{Code: domain.CredentialVersionConflict}
+		}
 		if a.Provider != o.Provider {
 			return application.ErrAccountNotFound
 		}
@@ -60,6 +67,14 @@ func (s *Store) SaveObservations(ctx context.Context, scope string, values []app
 		}
 	}
 	for _, o := range values {
+		var mode *string
+		if o.Provider == domain.Telegram {
+			v := o.ReceiveMode
+			if v == "" {
+				v = domain.Webhook
+			}
+			mode = &v
+		}
 		_, digest, err := domain.CanonicalJSON(o)
 		if err != nil {
 			return err
@@ -76,7 +91,7 @@ func (s *Store) SaveObservations(ctx context.Context, scope string, values []app
 			}
 			continue
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO channel_account_observations(tenant_id,account_id,scope_id,source_epoch,provider,connection_revision,instance_id,instance_epoch,report_sequence,state,reason_code,owner_epoch,observed_at,received_at,observation_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp(),$14) ON CONFLICT(tenant_id,account_id,instance_id,instance_epoch) DO UPDATE SET connection_revision=EXCLUDED.connection_revision,report_sequence=EXCLUDED.report_sequence,state=EXCLUDED.state,reason_code=EXCLUDED.reason_code,owner_epoch=EXCLUDED.owner_epoch,observed_at=EXCLUDED.observed_at,received_at=EXCLUDED.received_at,observation_digest=EXCLUDED.observation_digest WHERE channel_account_observations.report_sequence<EXCLUDED.report_sequence`, o.TenantID, o.AccountID, o.ScopeID, o.SourceEpoch, o.Provider, o.ConnectionRevision, o.InstanceID, o.InstanceEpoch, o.ReportSequence, o.State, o.ReasonCode, o.OwnerEpoch, o.ObservedAt, digest)
+		tag, err := tx.Exec(ctx, `INSERT INTO channel_account_observations(tenant_id,account_id,scope_id,source_epoch,provider,connection_revision,instance_id,instance_epoch,report_sequence,state,reason_code,owner_epoch,observed_at,received_at,observation_digest,receive_mode) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp(),$14,$15) ON CONFLICT(tenant_id,account_id,instance_id,instance_epoch) DO UPDATE SET connection_revision=EXCLUDED.connection_revision,report_sequence=EXCLUDED.report_sequence,state=EXCLUDED.state,reason_code=EXCLUDED.reason_code,owner_epoch=EXCLUDED.owner_epoch,observed_at=EXCLUDED.observed_at,received_at=EXCLUDED.received_at,observation_digest=EXCLUDED.observation_digest,receive_mode=EXCLUDED.receive_mode WHERE channel_account_observations.report_sequence<EXCLUDED.report_sequence`, o.TenantID, o.AccountID, o.ScopeID, o.SourceEpoch, o.Provider, o.ConnectionRevision, o.InstanceID, o.InstanceEpoch, o.ReportSequence, o.State, o.ReasonCode, o.OwnerEpoch, o.ObservedAt, digest, mode)
 		if err != nil {
 			return dbError(err)
 		}

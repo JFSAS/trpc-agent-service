@@ -86,8 +86,8 @@ func (r CredentialRecord) AAD() ([]byte, error) {
 	}
 	return json.Marshal([]any{"channel-account-v1", r.TenantID, r.AccountID, r.Provider, r.Meta.Purpose, r.Meta.ID, r.Meta.Version})
 }
-func ValidateCredentialSet(provider Provider, values []CredentialMeta, configured bool) error {
-	required := RequiredPurposes(provider)
+func ValidateCredentialSet(provider Provider, values []CredentialMeta, configured bool, mode ...string) error {
+	required := AllowedPurposes(provider)
 	if len(required) == 0 || len(values) != len(required) {
 		return failure(CredentialRequired, "/credentials")
 	}
@@ -97,7 +97,7 @@ func ValidateCredentialSet(provider Provider, values []CredentialMeta, configure
 		if !ValidPurpose(provider, v.Purpose) || seen[v.Purpose] || !ValidID(v.ID) || ids[v.ID] || !ValidVersion(v.Version) {
 			return failure(SourceIntegrity, "/credentials")
 		}
-		if configured && !v.Configured {
+		if configured && slices.Contains(RequiredPurposes(provider, mode...), v.Purpose) && !v.Configured {
 			return failure(CredentialRequired, "/credentials")
 		}
 		seen[v.Purpose] = true
@@ -176,6 +176,11 @@ func ConsumerPurposes(provider Provider, c Consumer) ([]string, error) {
 			return []string{TelegramWebhookSecret}, nil
 		}
 		return []string{TelegramBotToken}, nil
+	case "telegram_receiver":
+		if provider != Telegram || c.OwnerEpoch == nil || !ValidVersion(*c.OwnerEpoch) || c.RegistrationEpoch != nil {
+			break
+		}
+		return []string{TelegramBotToken}, nil
 	case "telegram_registration":
 		if provider != Telegram || c.OwnerEpoch != nil || (c.RegistrationEpoch != nil && !ValidVersion(*c.RegistrationEpoch)) {
 			break
@@ -206,6 +211,9 @@ func ValidateUses(provider Provider, c Consumer, uses []CredentialUse) error {
 func MatchCredentialUses(a Account, c Consumer, uses []CredentialUse, records []CredentialRecord) error {
 	if !a.Enabled {
 		return failure(AccountDisabled, "")
+	}
+	if (c.Kind == "telegram_registration" || c.Kind == "telegram_webhook") && a.Config.ReceiveMode != Webhook {
+		return failure(InputInvalid, "/consumer")
 	}
 	if err := ValidateUses(a.Provider, c, uses); err != nil {
 		return err

@@ -24,6 +24,7 @@ type PreflightRecord struct {
 	InstanceID              string                  `json:"instance_id"`
 	InstanceEpoch           string                  `json:"instance_epoch"`
 	ClaimTokenHash          string                  `json:"claim_token_hash"`
+	GatewayPublicOrigin     *string                 `json:"gateway_public_origin,omitempty"`
 	OriginStatus            string                  `json:"origin_status"`
 	CompleteDigest          string                  `json:"complete_digest"`
 	LastCheckedAt           time.Time               `json:"last_checked_at"`
@@ -59,7 +60,7 @@ type PreflightTransaction interface {
 type PreflightStore interface {
 	WithTransaction(context.Context, string, func(PreflightTransaction) error) error
 	Lookup(context.Context, string, string) (PreflightKey, bool, error)
-	Candidate(context.Context, string) (PreflightKey, bool, error)
+	Candidate(context.Context, string, ...string) (PreflightKey, bool, error)
 	ActiveAccount(context.Context, string, string, string) (PreflightKey, bool, error)
 	MaintenanceCandidates(context.Context, string, int) ([]PreflightKey, error)
 	Cleanup(context.Context) error

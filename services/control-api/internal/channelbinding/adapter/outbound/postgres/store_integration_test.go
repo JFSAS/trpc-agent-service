@@ -43,7 +43,7 @@ func (targetFixture) ReadExact(_ context.Context, tenant, actor string, s domain
 	}
 	return domain.PublishedTarget{TenantID: tenant, DeploymentID: s.DeploymentID, RevisionNumber: 1, DeploymentRevisionID: "dpr_" + s.DeploymentID, ManifestID: "rmf_" + s.DeploymentID, ManifestDigest: "sha256:" + strings.Repeat("a", 64)}, nil
 }
-func channelPG(t *testing.T) (*Store, *application.Service, *pgxpool.Pool) {
+func channelPG(t *testing.T, baselineOnly ...bool) (*Store, *application.Service, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("CONTROL_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -88,6 +88,15 @@ func channelPG(t *testing.T) (*Store, *application.Service, *pgxpool.Pool) {
 	if _, err = pool.Exec(ctx, string(raw)); err != nil {
 		t.Fatalf("apply Channel baseline: %v", err)
 	}
+	if len(baselineOnly) == 0 || !baselineOnly[0] {
+		upgrade, err := migrations.Files.ReadFile("0003_telegram_receive_modes.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(upgrade)); err != nil {
+			t.Fatal("apply receive modes upgrade", err)
+		}
+	}
 	if _, err = pool.Exec(ctx, `INSERT INTO user_accounts(id,username,normalized_username) VALUES('usr_owner','owner','owner'),('usr_other','other','other');
  INSERT INTO tenants(id,slug,name,created_at,updated_at) VALUES('tnt_a','a','A',now(),now()),('tnt_b','b','B',now(),now());
  INSERT INTO tenant_memberships(id,tenant_id,user_id,role,created_by,created_at) VALUES('mem_a','tnt_a','usr_owner','OWNER','usr_owner',now()),('mem_b','tnt_b','usr_other','OWNER','usr_other',now());`); err != nil {
@@ -113,7 +122,7 @@ func channelPG(t *testing.T) (*Store, *application.Service, *pgxpool.Pool) {
 }
 func accountInput() application.CreateAccountInput {
 	token, secret := "TEST_ONLY_CHANNEL_TOKEN", "TEST_ONLY_WEBHOOK_SECRET"
-	return application.CreateAccountInput{Provider: domain.Telegram, ProviderAccountID: "123", Name: "test", Credentials: map[string]domain.CredentialEdit{domain.TelegramBotToken: {Action: "replace", Value: &token}, domain.TelegramWebhookSecret: {Action: "replace", Value: &secret}}}
+	return application.CreateAccountInput{Config: &application.AccountConfigInput{ReceiveMode: domain.Webhook}, Provider: domain.Telegram, ProviderAccountID: "123", Name: "test", Credentials: map[string]domain.CredentialEdit{domain.TelegramBotToken: {Action: "replace", Value: &token}, domain.TelegramWebhookSecret: {Action: "replace", Value: &secret}}}
 }
 func createAccount(t *testing.T, s *application.Service) application.CommandResult {
 	t.Helper()

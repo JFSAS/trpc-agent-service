@@ -45,6 +45,7 @@ type ResolveResponse struct {
 	Values             []ResolvedValue `json:"values"`
 }
 type Observation struct {
+	ReceiveMode        string          `json:"receive_mode,omitempty"`
 	ScopeID            string          `json:"scope_id"`
 	SourceEpoch        string          `json:"source_epoch"`
 	TenantID           string          `json:"tenant_id"`
@@ -64,6 +65,7 @@ type ObservationsRequest struct {
 	Observations  []Observation `json:"observations"`
 }
 type ObservationView struct {
+	ReceiveMode        string    `json:"receive_mode,omitempty"`
 	ConnectionRevision int64     `json:"connection_revision"`
 	InstanceID         string    `json:"instance_id"`
 	InstanceEpoch      string    `json:"instance_epoch"`

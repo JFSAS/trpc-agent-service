@@ -120,6 +120,13 @@ func respond(c *gin.Context, status int, value any, err error) {
 		handleError(c, err)
 		return
 	}
+	if r, ok := value.(application.CommandResult); ok {
+		contract := "receive-modes-v1"
+		if r.Account != nil && r.Account.Provider == domain.Telegram && r.Account.Config.ReceiveMode == "" {
+			contract = "webhook-v1"
+		}
+		c.Header("X-Channel-Result-Contract", contract)
+	}
 	c.JSON(status, value)
 }
 func (h *Handler) createAccount(c *gin.Context) {
@@ -134,6 +141,14 @@ func (h *Handler) createAccount(c *gin.Context) {
 	input, ok := decode[application.CreateAccountInput](c, "account-create.schema.json", 64*1024)
 	if !ok {
 		return
+	}
+	values := c.Request.Header.Values("X-Channel-Create-Contract")
+	if len(values) > 0 {
+		if len(values) != 1 || values[0] != "webhook-v1" {
+			handleError(c, &domain.Error{Code: domain.InputInvalid, Field: "/X-Channel-Create-Contract"})
+			return
+		}
+		input.LegacyWebhook = true
 	}
 	r, err := h.commands.CreateAccount(c.Request.Context(), a, k, input)
 	respond(c, 201, r, err)
