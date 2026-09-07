@@ -89,7 +89,7 @@ func TestResolveForAttemptRequiresExplicitCurrentAuthorization(t *testing.T) {
 			case "no-verifier":
 				port = nil
 			case "revoked-lease":
-				verifier.err = errors.New("trusted attempt owner reports lease revoked")
+				verifier.err = application.ErrExecutionUnauthorized
 			case "expired":
 				verifier.auth.ExpiresAt = h.now
 			case "zero-epoch":
@@ -135,7 +135,7 @@ func TestResolveForAttemptRechecksCurrentLeaseWithSameToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer batch.Clear()
-	verifier.err = errors.New("trusted current lease no longer active")
+	verifier.err = application.ErrExecutionUnauthorized
 	if result, err := service.ResolveForAttempt(context.Background(), command); !errors.Is(err, application.ErrExecutionUnauthorized) || len(result.Credentials) != 0 {
 		t.Fatalf("unchanged token bypassed current lease verification: %v", err)
 	}

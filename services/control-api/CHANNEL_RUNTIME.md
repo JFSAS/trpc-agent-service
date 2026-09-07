@@ -25,7 +25,7 @@ JetStream Relay。这里的运行配置由平台维护，不是用户必须管�
     "instance_id": "gw-1",
     "scope_id": "gateway_pool",
     "audience": "control-channel-v1",
-    "consumers": ["telegram_registration", "telegram_webhook", "telegram_delivery"]
+    "consumers": ["telegram_receiver", "telegram_registration", "telegram_webhook", "telegram_delivery"]
   }]
 }
 ```

@@ -24,6 +24,7 @@ type Dependencies struct {
 	AuthenticateWorker gin.HandlerFunc
 	DB                 postgresadapter.DB
 	Routes             gin.IRouter
+	RuntimeRoutes      gin.IRouter
 	Authenticate       gin.HandlerFunc
 	TenantAccess       application.TenantAccess
 	OwnerAccess        application.OwnerAccess
@@ -65,7 +66,11 @@ func NewModule(deps Dependencies) (*Module, error) {
 	httpadapter.NewHandler(service).Register(protected)
 	if deps.AuthenticateWorker != nil {
 		// Apply before authentication so rejected requests are non-cacheable too.
-		runtimeProtected := deps.Routes.Group("", func(c *gin.Context) {
+		runtimeRoutes := deps.RuntimeRoutes
+		if runtimeRoutes == nil {
+			runtimeRoutes = deps.Routes
+		}
+		runtimeProtected := runtimeRoutes.Group("", func(c *gin.Context) {
 			c.Header("Cache-Control", "no-store")
 			c.Next()
 		}, deps.AuthenticateWorker)

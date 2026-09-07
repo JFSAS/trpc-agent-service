@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"net/url"
 	"slices"
 	"strings"
@@ -15,7 +16,7 @@ import (
 // content digest alone do not prove. It uses only the fixed manifest, never the
 // current Profile, platform configuration, or credential state.
 func validateManifestSemantics(content ManifestContent) error {
-	if content.PlatformContract.Version != PlatformContractVersionV1 ||
+	if (content.PlatformContract.Version != PlatformContractVersionV1 && content.PlatformContract.Version != deploymentv1.WorkerV1PlatformVersion) ||
 		content.Execution.Backend != "worker-process-v1" || content.AgentPlan.Nodes == nil ||
 		content.Resources.Models == nil || content.Resources.Tools == nil ||
 		content.Resources.Knowledge == nil || content.Resources.Storage == nil ||

@@ -58,16 +58,16 @@ func LoadTopology(path string) (Topology, error) {
 	return t, t.Validate()
 }
 func (t Topology) Validate() error {
-	if t.Version != 1 || len(t.Streams) != 2 {
-		return errors.New("topology version 1 requires two streams")
+	if t.Version != 1 || (len(t.Streams) < 2 || len(t.Streams) > 4) {
+		return errors.New("topology version 1 requires Route/Run and optional Manifest/Reply streams")
 	}
 	seen := map[string]bool{}
 	for _, s := range t.Streams {
-		wantRetention := map[string]string{RouteStream: "limits", RunStream: "workqueue"}[s.Name]
+		wantRetention := map[string]string{RouteStream: "limits", RunStream: "workqueue", ManifestStream: "limits", ReplyStream: "workqueue"}[s.Name]
 		if s.Retention != wantRetention {
 			return errors.New("invalid stream retention contract")
 		}
-		subject := map[string]string{RouteStream: RouteSubject, RunStream: RunSubject}[s.Name]
+		subject := map[string]string{RouteStream: RouteSubject, RunStream: RunSubject, ManifestStream: ManifestSubject, ReplyStream: ReplySubject}[s.Name]
 		if subject == "" || s.Subject != subject || seen[s.Name] || s.MaxBytes < 1<<20 || s.MaxBytes > 1<<40 || s.MaxMessageBytes < 16384 || s.MaxMessageBytes > 1<<20 || (s.Replicas != 1 && s.Replicas != 3 && s.Replicas != 5) {
 			return errors.New("invalid stream declaration")
 		}
@@ -76,9 +76,23 @@ func (t Topology) Validate() error {
 		if s.Name == RunStream && s.MaxMessageBytes < wire.MaxRunRequestedBytes {
 			return errors.New("Run stream must fit the execution wire size contract")
 		}
+		if (s.Name == ReplyStream && s.MaxMessageBytes < wire.MaxReplyIntentBytes) || (s.Name == ManifestStream && s.MaxMessageBytes < 1<<20) {
+			return errors.New("runtime stream must fit wire contract")
+		}
 		seen[s.Name] = true
 	}
+	if !seen[RouteStream] || !seen[RunStream] {
+		return errors.New("Route and Run streams are required")
+	}
 	return nil
+}
+func (t Topology) HasStream(name string) bool {
+	for _, s := range t.Streams {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
 }
 func (t Topology) configs() []jetstream.StreamConfig {
 	var out []jetstream.StreamConfig

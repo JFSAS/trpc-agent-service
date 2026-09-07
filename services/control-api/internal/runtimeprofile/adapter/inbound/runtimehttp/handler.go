@@ -85,6 +85,8 @@ func readBody(c *gin.Context) ([]byte, error) {
 
 func handleError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, application.ErrExecutionDependencyUnavailable):
+		writeError(c, http.StatusServiceUnavailable, "EXECUTION_DEPENDENCY_UNAVAILABLE", "execution authorization dependency unavailable")
 	case errors.Is(err, application.ErrExecutionUnauthorized):
 		writeError(c, http.StatusForbidden, "EXECUTION_UNAUTHORIZED", "execution authorization failed")
 	case errors.Is(err, domain.ErrCredentialInput):

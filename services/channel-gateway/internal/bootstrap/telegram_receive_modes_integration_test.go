@@ -68,7 +68,7 @@ func TestTelegramReceiveModesRealHTTPPGNATS(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer broker.Close()
-			for _, name := range []string{transport.RouteStream, transport.RunStream} {
+			for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 				if e = broker.JS.DeleteStream(ctx, name); e != nil && e != jetstream.ErrStreamNotFound {
 					t.Fatal(e)
 				}
@@ -77,7 +77,7 @@ func TestTelegramReceiveModesRealHTTPPGNATS(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer func() {
-				for _, name := range []string{transport.RouteStream, transport.RunStream} {
+				for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 					_ = broker.JS.DeleteStream(context.Background(), name)
 				}
 			}()
@@ -177,7 +177,11 @@ func TestTelegramReceiveModesRealHTTPPGNATS(t *testing.T) {
 			query := dsn.Query()
 			query.Set("search_path", pool.Config().ConnConfig.RuntimeParams["search_path"])
 			dsn.RawQuery = query.Encode()
-			app, e := New(ctx, Config{AccountSource: "control", Control: cfg, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: dsn.String(), NATSURL: natsURL, Topology: topology, telegramFactory: httpReceiverFactory{api.URL}})
+			database := fixtureDatabaseConfig(t, dsn.String())
+			app, e := newWithDatabaseTarget(ctx, Config{AccountSource: "control", Control: cfg,
+				Worker:     WorkerConfig{URL: cfg.URL, CAFile: cfg.CAFile, CertificateFile: cfg.CertificateFile, KeyFile: cfg.KeyFile},
+				InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL,
+				MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, telegramFactory: httpReceiverFactory{api.URL}}, database.target)
 			if e != nil {
 				t.Fatal(e)
 			}

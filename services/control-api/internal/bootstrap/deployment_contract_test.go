@@ -67,6 +67,7 @@ func TestNewRejectsContractBeforeOpeningDatabase(t *testing.T) {
 			// This DSN always fails parsing if the database open path is reached.
 			app, err := New(context.Background(), Config{
 				DatabaseURL:                      "postgres://%zz",
+				MigrationDatabaseURL:             "postgres://%zz",
 				DeploymentExpectedContractDigest: tc.expected,
 				DeploymentAllowedEndpointHosts:   tc.hosts,
 			})
@@ -84,6 +85,7 @@ func TestNewMatchingContractReachesDatabaseOpen(t *testing.T) {
 	}
 	app, err := New(context.Background(), Config{
 		DatabaseURL:                      "postgres://%zz",
+		MigrationDatabaseURL:             "postgres://%zz",
 		DeploymentExpectedContractDigest: contract.Digest,
 	})
 	if app != nil || err == nil || !strings.Contains(err.Error(), "parse") || strings.Contains(err.Error(), "contract") {

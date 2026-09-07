@@ -12,11 +12,11 @@ import (
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 )
 
-type Factory struct{}
+type Factory struct{ ServerURL string }
 type client struct{ api *protocol.Client }
 
-func (Factory) New(token string) (app.Remote, error) {
-	api, e := protocol.New(protocol.Options{Token: token})
+func (f Factory) New(token string) (app.Remote, error) {
+	api, e := protocol.New(protocol.Options{Token: token, BaseURL: f.ServerURL})
 	if e != nil {
 		return nil, c.ErrInvalid
 	}

@@ -27,18 +27,23 @@ import (
 	accountuse "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
 	catalogrefresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
 	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
+	replyevent "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/inbound/eventadapter"
+	replyconsumer "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/inbound/nats"
 	deliverypg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/postgres"
 	wecomdelivery "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/wecomadapter"
+	workerhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/workerhttp"
 	deliveryapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/application"
 	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
 	routeconsumer "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/inbound/nats"
 	routepg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/outbound/postgres"
 	routeapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/application"
-	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/migrations"
 	"golang.org/x/sync/errgroup"
 )
 
 type App struct {
+	workerProof               *workerhttp.Client
+	replyAcceptor             *deliveryapp.Acceptor
+	replyConsumer             *replyconsumer.Consumer
 	preflight                 *preflightRuntime
 	deliveryRunner            *deliveryapp.Runner
 	catalog                   *catalogrefresh.Service
@@ -63,29 +68,29 @@ type App struct {
 }
 
 func New(ctx context.Context, c Config) (*App, error) {
+	return newWithDatabaseTarget(ctx, c, gatewayDatabaseIdentity())
+}
+
+func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdentity) (*App, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	pool, err := pgxpool.New(ctx, c.DatabaseURL)
+	pool, err := openDatabaseForTarget(ctx, c, expected)
 	if err != nil {
-		return nil, errors.New("invalid Gateway database configuration")
-	}
-	cleanup := func() { pool.Close() }
-	if err = pool.Ping(ctx); err != nil {
-		cleanup()
-		return nil, errors.New("Gateway database unavailable")
-	}
-	if err = migrations.Apply(ctx, pool); err != nil {
-		cleanup()
 		return nil, err
 	}
+	cleanup := func() { pool.Close() }
 	n, err := transport.Connect(c.NATSURL, c.Topology, c.NATSAuth)
 	if err != nil {
 		cleanup()
 		return nil, err
 	}
 	var controlClient *controlhttp.Client
+	var workerProof *workerhttp.Client
 	fail := func(err error) (*App, error) {
+		if workerProof != nil {
+			workerProof.Close()
+		}
 		if controlClient != nil {
 			controlClient.Close()
 		}
@@ -183,11 +188,36 @@ func New(ctx context.Context, c Config) (*App, error) {
 		}
 	}
 	if catalog != nil {
+		workerProof, err = c.Worker.client()
+		if err != nil {
+			return fail(err)
+		}
+		app.workerProof = workerProof
+		app.replyAcceptor, err = deliveryapp.NewAcceptor(deliveryLedger, admissionDeliveryReader{ledger}, workerProof, deliveryapp.AcceptOptions{})
+		if err != nil {
+			return fail(err)
+		}
+		handler, e := replyevent.NewHandler(app.replyAcceptor)
+		if e != nil {
+			return fail(e)
+		}
+		replyStream, e := n.JS.Stream(ctx, transport.ReplyStream)
+		if e != nil {
+			return fail(e)
+		}
+		replyDurable, e := replyStream.Consumer(ctx, transport.ReplyConsumer)
+		if e != nil {
+			return fail(e)
+		}
+		app.replyConsumer, e = replyconsumer.New(replyDurable, replyStream, handler, deliveryLedger)
+		if e != nil {
+			return fail(e)
+		}
 		provider, e := wecomdelivery.NewProvider(connectionDeliverySource{app.connections})
 		if e != nil {
 			return fail(e)
 		}
-		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider}, deliveryapp.DispatchOptions{})
+		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{})
 		if e != nil {
 			return fail(e)
 		}
@@ -205,7 +235,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 		registry := &dynamicTelegram{handlers: map[string]http.Handler{}, use: use, acceptor: acceptor}
 		factory := c.telegramFactory
 		if factory == nil {
-			factory = registrationremote.Factory{}
+			factory = registrationremote.Factory{ServerURL: c.TelegramAPIURL}
 		}
 		app.telegram, err = telegramruntime.New(catalog, use, registry, receptionpg.New(pool, catalogStore), factory, telegramPollingIntake{acceptor}, strings.TrimSuffix(c.Control.PublicOrigin, "/"))
 		if err != nil {
@@ -235,6 +265,9 @@ func (a *App) Handler() http.Handler      { return a.server.Handler }
 func (a *App) AdminHandler() http.Handler { return a.admin.Handler }
 func (a *App) Close() {
 	a.closeOnce.Do(func() {
+		if a.workerProof != nil {
+			a.workerProof.Close()
+		}
 		if a.preflight != nil {
 			a.preflight.Close()
 		}
@@ -296,6 +329,9 @@ func (a *App) Run(ctx context.Context) error {
 	g.Go(serve(a.admin, admin))
 	g.Go(func() error { return a.relay.Run(runCtx) })
 	g.Go(func() error { return a.consumer.Run(runCtx) })
+	if a.replyConsumer != nil {
+		g.Go(func() error { return a.replyConsumer.Run(runCtx) })
+	}
 	if a.preflight != nil {
 		g.Go(func() error { return a.preflight.Run(runCtx) })
 	}
@@ -316,6 +352,9 @@ func (a *App) Run(ctx context.Context) error {
 		<-runCtx.Done()
 		a.stopping.Store(true)
 		a.admission.Stop()
+		if a.replyAcceptor != nil {
+			a.replyAcceptor.Stop()
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		shutdownGroup, _ := errgroup.WithContext(shutdownCtx)
