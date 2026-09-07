@@ -27,6 +27,10 @@ import (
 
 type runtimeFake struct{}
 
+func (runtimeFake) ResolveAccessPolicy(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyResolveResponse, error) {
+	return application.PolicyResolveResponse{}, nil
+}
+
 func (runtimeFake) ReadSnapshot(context.Context, application.WorkloadPrincipal) (domain.Snapshot, error) {
 	return domain.Snapshot{}, nil
 }

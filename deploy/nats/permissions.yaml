@@ -6,12 +6,15 @@ roles:
     subscribe: ["_INBOX.reconciler.>"]
   - user: control
     password_env: NATS_CONTROL_PASSWORD
-    publish: ["control.channel-route.v1", "control.runtime-manifest.published.v1"]
+    publish: ["control.channel-access-policy.v1", "control.channel-route.v1", "control.runtime-manifest.published.v1"]
     subscribe: ["_INBOX.control.>"]
   - user: gateway
+    # Match explicitly provisioned scopes; never use wildcard consumer grants.
+    policy_scopes: []
     password_env: NATS_GATEWAY_PASSWORD
     publish:
       - execution.run-requested.v1
+      - $JS.API.STREAM.INFO.CHANNEL_ACCESS_POLICIES_V1
       - $JS.API.STREAM.INFO.CHANNEL_ROUTES_V1
       - $JS.API.STREAM.INFO.RUN_REQUESTS_V1
       - $JS.API.STREAM.INFO.RUNTIME_MANIFESTS_V1

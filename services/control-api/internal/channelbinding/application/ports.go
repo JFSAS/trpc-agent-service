@@ -12,17 +12,19 @@ import (
 )
 
 var (
-	ErrPermissionDenied      = errors.New("CHANNEL_PERMISSION_DENIED")
-	ErrAccountNotFound       = errors.New("CHANNEL_ACCOUNT_NOT_FOUND")
-	ErrBindingNotFound       = errors.New("CHANNEL_BINDING_NOT_FOUND")
-	ErrAccountAlreadyBound   = errors.New("CHANNEL_ACCOUNT_ALREADY_BOUND")
-	ErrIdentityConflict      = errors.New("CHANNEL_ACCOUNT_IDENTITY_CONFLICT")
-	ErrIdempotencyConflict   = errors.New("CHANNEL_IDEMPOTENCY_CONFLICT")
-	ErrDependencyUnavailable = errors.New("CHANNEL_DEPENDENCY_UNAVAILABLE")
-	ErrTargetNotFound        = errors.New("CHANNEL_TARGET_NOT_FOUND")
-	ErrWorkloadDenied        = errors.New("CHANNEL_WORKLOAD_DENIED")
-	ErrEpochMismatch         = errors.New("CHANNEL_SOURCE_EPOCH_MISMATCH")
-	errPreparationChanged    = errors.New("channel preparation changed")
+	ErrPrincipalNotFound         = errors.New("CHANNEL_PRINCIPAL_NOT_FOUND")
+	ErrPrincipalIdentityConflict = errors.New("CHANNEL_PRINCIPAL_IDENTITY_CONFLICT")
+	ErrPermissionDenied          = errors.New("CHANNEL_PERMISSION_DENIED")
+	ErrAccountNotFound           = errors.New("CHANNEL_ACCOUNT_NOT_FOUND")
+	ErrBindingNotFound           = errors.New("CHANNEL_BINDING_NOT_FOUND")
+	ErrAccountAlreadyBound       = errors.New("CHANNEL_ACCOUNT_ALREADY_BOUND")
+	ErrIdentityConflict          = errors.New("CHANNEL_ACCOUNT_IDENTITY_CONFLICT")
+	ErrIdempotencyConflict       = errors.New("CHANNEL_IDEMPOTENCY_CONFLICT")
+	ErrDependencyUnavailable     = errors.New("CHANNEL_DEPENDENCY_UNAVAILABLE")
+	ErrTargetNotFound            = errors.New("CHANNEL_TARGET_NOT_FOUND")
+	ErrWorkloadDenied            = errors.New("CHANNEL_WORKLOAD_DENIED")
+	ErrEpochMismatch             = errors.New("CHANNEL_SOURCE_EPOCH_MISMATCH")
+	errPreparationChanged        = errors.New("channel preparation changed")
 )
 
 type Actor struct {
@@ -81,6 +83,9 @@ type WriteScope struct {
 // Account -> RouteState -> Binding. Save atomically persists route Outbox/floor,
 // advances catalog at most once, and enforces complete snapshot count/size bounds.
 type Transaction interface {
+	// Principal writes share owner authorization and command receipt transaction.
+	LoadPrincipal(context.Context, string, string) (domain.ExternalPrincipal, error)
+	SavePrincipal(context.Context, domain.ExternalPrincipal, int64) error
 	FindReceipt(context.Context, ReceiptKey) (Receipt, bool, error)
 	LoadAccount(context.Context, string) (Aggregate, error)
 	LoadBinding(context.Context, string) (Aggregate, error)
@@ -122,11 +127,12 @@ type AccountView struct {
 	Credentials []domain.CredentialStatus `json:"credentials"`
 }
 type CommandResult struct {
-	Account         *AccountView    `json:"account,omitempty"`
-	Binding         *domain.Binding `json:"binding,omitempty"`
-	RouteGeneration int64           `json:"route_generation"`
-	EventID         string          `json:"event_id,omitempty"`
-	Distribution    string          `json:"distribution"`
+	Principal       *domain.ExternalPrincipal `json:"principal,omitempty"`
+	Account         *AccountView              `json:"account,omitempty"`
+	Binding         *domain.Binding           `json:"binding,omitempty"`
+	RouteGeneration int64                     `json:"route_generation"`
+	EventID         string                    `json:"event_id,omitempty"`
+	Distribution    string                    `json:"distribution"`
 }
 
 func result(a Aggregate) CommandResult {

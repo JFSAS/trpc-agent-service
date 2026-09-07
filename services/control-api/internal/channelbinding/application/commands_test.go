@@ -18,10 +18,11 @@ import (
 )
 
 type memoryState struct {
-	accounts map[string]Aggregate
-	receipts map[ReceiptKey]Receipt
-	catalog  int64
-	events   []domain.RouteProjection
+	principals map[string]domain.ExternalPrincipal
+	accounts   map[string]Aggregate
+	receipts   map[ReceiptKey]Receipt
+	catalog    int64
+	events     []domain.RouteProjection
 }
 type memoryStore struct {
 	mu          sync.Mutex
@@ -53,6 +54,10 @@ func cloneAggregate(a Aggregate) Aggregate {
 }
 func cloneState(s memoryState) memoryState {
 	out := memoryState{accounts: map[string]Aggregate{}, receipts: map[ReceiptKey]Receipt{}, catalog: s.catalog, events: append([]domain.RouteProjection{}, s.events...)}
+	out.principals = map[string]domain.ExternalPrincipal{}
+	for k, p := range s.principals {
+		out.principals[k] = p
+	}
 	for k, a := range s.accounts {
 		out.accounts[k] = cloneAggregate(a)
 	}

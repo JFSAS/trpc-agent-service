@@ -18,10 +18,13 @@ type mutation func(context.Context, Transaction) (CommandResult, error)
 type preparation func(context.Context) (mutation, error)
 
 func (s *Service) authorize(ctx context.Context, actor Actor, owner bool) error {
+	return authorizeChannelActor(ctx, s.deps.TenantAccess, actor, owner)
+}
+func authorizeChannelActor(ctx context.Context, access TenantAccess, actor Actor, owner bool) error {
 	if !domain.ValidID(actor.TenantID) || !domain.ValidID(actor.UserID) {
 		return ErrPermissionDenied
 	}
-	allowed, err := s.deps.TenantAccess.IsActiveMember(ctx, actor.TenantID, actor.UserID)
+	allowed, err := access.IsActiveMember(ctx, actor.TenantID, actor.UserID)
 	if err != nil {
 		return ErrDependencyUnavailable
 	}
@@ -29,7 +32,7 @@ func (s *Service) authorize(ctx context.Context, actor Actor, owner bool) error 
 		return ErrPermissionDenied
 	}
 	if owner {
-		allowed, err = s.deps.TenantAccess.IsActiveOwner(ctx, actor.TenantID, actor.UserID)
+		allowed, err = access.IsActiveOwner(ctx, actor.TenantID, actor.UserID)
 		if err != nil {
 			return ErrDependencyUnavailable
 		}

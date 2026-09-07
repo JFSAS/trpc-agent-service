@@ -79,6 +79,7 @@ type ObservationView struct {
 }
 
 type RuntimeStore interface {
+	ReadAccessPolicy(context.Context, string, string, domain.PolicyRevisionReference) (PolicyResolveResponse, error)
 	ReadSnapshot(context.Context, string) (domain.Snapshot, error)
 	WithCredentials(context.Context, string, string, string, func(domain.Account, []domain.CredentialRecord, string) error) error
 	SaveObservations(context.Context, string, []Observation) error

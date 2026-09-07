@@ -9,6 +9,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/inbound/policynats"
 	"io"
 	"math/big"
 	"net"
@@ -116,6 +118,7 @@ func (f *remoteRuntimeFixture) Poll(context.Context, int64, int) ([]json.RawMess
 	return []json.RawMessage{}, nil
 }
 func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
+	policyEnabled := os.Getenv("GATEWAY_TEST_POLICY_BOOTSTRAP") == "1"
 	natsURL := os.Getenv("GATEWAY_TEST_NATS_URL")
 	if natsURL == "" {
 		t.Skip("dedicated NATS required")
@@ -130,12 +133,15 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	if policyEnabled {
+		topology.PolicyScopes = []string{"pool"}
+	}
 	broker, e := transport.Connect(natsURL, topology, transport.Auth{})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer broker.Close()
-	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream, wire.AccessPolicyStream} {
 		if e = broker.JS.DeleteStream(ctx, name); e != nil && e != jetstream.ErrStreamNotFound {
 			t.Fatal(e)
 		}
@@ -144,10 +150,11 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() {
-		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream, wire.AccessPolicyStream} {
 			_ = broker.JS.DeleteStream(context.Background(), name)
 		}
 	}()
+	policyDoc := bootstrapPolicyDocument(t)
 	var mu sync.Mutex
 	snapshot := controlSnapshot()
 	var unavailable bool
@@ -196,6 +203,12 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 			}
 			reports.Add(1)
 			w.WriteHeader(204)
+		case "/internal/v1/channel-access-policies:resolve":
+			w.Header().Set("Content-Type", "application/json")
+			if !policyEnabled {
+				t.Error("policy HTTP request while disabled")
+			}
+			json.NewEncoder(w).Encode(wire.AccessPolicyResolveResponse{SchemaVersion: 1, ScopeID: "pool", SourceEpoch: controlEpoch, Policy: policyDoc})
 		default:
 			t.Error("unexpected internal path")
 			w.WriteHeader(404)
@@ -207,7 +220,25 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	query.Set("search_path", pool.Config().ConnConfig.RuntimeParams["search_path"])
 	dsn.RawQuery = query.Encode()
 	database := fixtureDatabaseConfig(t, dsn.String())
-	config := Config{AccountSource: "control", Worker: WorkerConfig{URL: controlConfig.URL, CAFile: controlConfig.CAFile, CertificateFile: controlConfig.CertificateFile, KeyFile: controlConfig.KeyFile}, Control: controlConfig, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, telegramFactory: remote}
+	config := Config{PolicyProjectionEnabled: policyEnabled, AccountSource: "control", Worker: WorkerConfig{URL: controlConfig.URL, CAFile: controlConfig.CAFile, CertificateFile: controlConfig.CertificateFile, KeyFile: controlConfig.KeyFile}, Control: controlConfig, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, telegramFactory: remote}
+	if policyEnabled {
+		st, err := broker.JS.Stream(ctx, wire.AccessPolicyStream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.DeleteConsumer(ctx, policynats.DurableName(config.Control.ScopeID)); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := newPolicyProjection(ctx, config, pool, broker.JS); err == nil || r != nil {
+			t.Fatal("startup created missing durable", r, err)
+		}
+		if _, err := st.Consumer(ctx, policynats.DurableName(config.Control.ScopeID)); !errors.Is(err, jetstream.ErrConsumerNotFound) {
+			t.Fatal("startup mutated topology", err)
+		}
+		if err = broker.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	app, e := newWithDatabaseTarget(ctx, config, database.target)
 	if e != nil {
 		t.Fatal(e)
@@ -232,6 +263,24 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	eventually(t, func() bool { return app.catalog.Ready() && app.telegram.Ready() }, "Control snapshot and Telegram registration")
 	if app.deliveryRunner == nil {
 		t.Fatal("production delivery runner missing")
+	}
+	if policyEnabled {
+		if app.policy == nil {
+			t.Fatal("policy lifecycle not assembled")
+		}
+		event := wire.AccessPolicyEvent{SchemaVersion: 1, EventID: "policy-bootstrap", EventType: wire.AccessPolicyPublishedEvent, ScopeID: "pool", SourceEpoch: controlEpoch, TenantID: policyDoc.TenantID, AccountID: policyDoc.AccountID, Provider: policyDoc.Provider, PolicyID: policyDoc.PolicyID, PolicyRevision: policyDoc.Revision, PolicyDigest: policyDoc.Digest, OccurredAt: policyDoc.PublishedAt}
+		raw, _, err := event.CanonicalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = broker.JS.Publish(ctx, wire.AccessPolicySubject, raw); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool {
+			var seq int64
+			err := pool.QueryRow(ctx, `SELECT processed_sequence FROM gateway_policy_sources WHERE scope_id='pool'`).Scan(&seq)
+			return err == nil && seq == 1
+		}, "policy Bootstrap Run fetched and checkpointed")
 	}
 	// Registration precedes any route, Binding event or inbound message.
 	if remote.calls.Load() != 1 {

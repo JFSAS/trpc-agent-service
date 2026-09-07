@@ -12,6 +12,7 @@ import (
 	"time"
 
 	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
+	channelv1 "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"github.com/nats-io/nats.go/jetstream"
 	"gopkg.in/yaml.v3"
 )
@@ -25,8 +26,9 @@ type StreamSpec struct {
 	Replicas        int    `yaml:"replicas"`
 }
 type Topology struct {
-	Version int          `yaml:"version"`
-	Streams []StreamSpec `yaml:"streams"`
+	PolicyScopes []string     `yaml:"policy_scopes,omitempty"`
+	Version      int          `yaml:"version"`
+	Streams      []StreamSpec `yaml:"streams"`
 }
 
 func strictYAML(path string, out any) error {
@@ -58,18 +60,24 @@ func LoadTopology(path string) (Topology, error) {
 	return t, t.Validate()
 }
 func (t Topology) Validate() error {
-	if t.Version != 1 || (len(t.Streams) < 2 || len(t.Streams) > 4) {
-		return errors.New("topology version 1 requires Route/Run and optional Manifest/Reply streams")
+	if t.Version != 1 || (len(t.Streams) < 2 || len(t.Streams) > 5) {
+		return errors.New("topology version 1 requires Route/Run and optional Manifest/Reply/AccessPolicy streams")
+	}
+	if err := validatePolicyScopes(t.PolicyScopes); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for _, s := range t.Streams {
-		wantRetention := map[string]string{RouteStream: "limits", RunStream: "workqueue", ManifestStream: "limits", ReplyStream: "workqueue"}[s.Name]
+		wantRetention := map[string]string{channelv1.AccessPolicyStream: "limits", RouteStream: "limits", RunStream: "workqueue", ManifestStream: "limits", ReplyStream: "workqueue"}[s.Name]
 		if s.Retention != wantRetention {
 			return errors.New("invalid stream retention contract")
 		}
-		subject := map[string]string{RouteStream: RouteSubject, RunStream: RunSubject, ManifestStream: ManifestSubject, ReplyStream: ReplySubject}[s.Name]
+		subject := map[string]string{channelv1.AccessPolicyStream: channelv1.AccessPolicySubject, RouteStream: RouteSubject, RunStream: RunSubject, ManifestStream: ManifestSubject, ReplyStream: ReplySubject}[s.Name]
 		if subject == "" || s.Subject != subject || seen[s.Name] || s.MaxBytes < 1<<20 || s.MaxBytes > 1<<40 || s.MaxMessageBytes < 16384 || s.MaxMessageBytes > 1<<20 || (s.Replicas != 1 && s.Replicas != 3 && s.Replicas != 5) {
 			return errors.New("invalid stream declaration")
+		}
+		if len(t.PolicyScopes) > 0 && s.Name == channelv1.AccessPolicyStream && (s.MaxBytes != 64<<20 || s.MaxMessageBytes != channelv1.MaxAccessPolicyEventBytes) {
+			return errors.New("policy consumers require 64MiB/16KiB retained stream")
 		}
 		// Admission may persist any schema-valid RunRequested. A smaller broker
 		// limit would create permanently unpublishable Outbox work.
@@ -80,6 +88,9 @@ func (t Topology) Validate() error {
 			return errors.New("runtime stream must fit wire contract")
 		}
 		seen[s.Name] = true
+	}
+	if len(t.PolicyScopes) > 0 && !seen[channelv1.AccessPolicyStream] {
+		return errors.New("policy scopes require access-policy stream")
 	}
 	if !seen[RouteStream] || !seen[RunStream] {
 		return errors.New("Route and Run streams are required")
@@ -107,10 +118,11 @@ func (t Topology) configs() []jetstream.StreamConfig {
 }
 
 type Role struct {
-	User        string   `yaml:"user"`
-	PasswordEnv string   `yaml:"password_env"`
-	Publish     []string `yaml:"publish"`
-	Subscribe   []string `yaml:"subscribe"`
+	PolicyScopes []string `yaml:"policy_scopes,omitempty"`
+	User         string   `yaml:"user"`
+	PasswordEnv  string   `yaml:"password_env"`
+	Publish      []string `yaml:"publish"`
+	Subscribe    []string `yaml:"subscribe"`
 }
 type Permissions struct {
 	Version int    `yaml:"version"`
@@ -135,6 +147,16 @@ func RenderServerConfig(path string) ([]byte, error) {
 		if !regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`).MatchString(r.User) || seen[r.User] || !regexp.MustCompile(`^NATS_[A-Z0-9_]+_PASSWORD$`).MatchString(r.PasswordEnv) || len(r.Publish) == 0 || len(r.Subscribe) == 0 {
 			return nil, errors.New("invalid NATS role")
 		}
+		if err := validatePolicyScopes(r.PolicyScopes); err != nil {
+			return nil, err
+		}
+		if len(r.PolicyScopes) > 0 && r.User != "gateway" {
+			return nil, errors.New("policy scopes only grant Gateway read permissions")
+		}
+		for _, scope := range r.PolicyScopes {
+			name := channelv1.PolicyConsumerName(scope)
+			r.Publish = append(r.Publish, "$JS.API.CONSUMER.INFO."+channelv1.AccessPolicyStream+"."+name, "$JS.API.CONSUMER.MSG.NEXT."+channelv1.AccessPolicyStream+"."+name, "$JS.ACK."+channelv1.AccessPolicyStream+"."+name+".>")
+		}
 		seen[r.User] = true
 		b.WriteString(fmt.Sprintf("    { user: %q, password: $%s, permissions: {\n", r.User, r.PasswordEnv))
 		for _, list := range []struct {
@@ -157,4 +179,27 @@ func RenderServerConfig(path string) ([]byte, error) {
 	}
 	b.WriteString("  ]\n}\n")
 	return []byte(b.String()), nil
+}
+
+func validatePolicyScopes(scopes []string) error {
+	if len(scopes) > 64 {
+		return errors.New("policy scope declaration exceeds limit")
+	}
+	seen := map[string]bool{}
+	for _, scope := range scopes {
+		if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`).MatchString(scope) || seen[scope] {
+			return errors.New("invalid or duplicate policy scope")
+		}
+		seen[scope] = true
+	}
+	return nil
+}
+
+func (t Topology) HasPolicyScope(scope string) bool {
+	for _, s := range t.PolicyScopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }

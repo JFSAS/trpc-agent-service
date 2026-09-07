@@ -20,6 +20,7 @@ import (
 )
 
 type Runtime interface {
+	ResolveAccessPolicy(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyResolveResponse, error)
 	ReadSnapshot(context.Context, application.WorkloadPrincipal) (domain.Snapshot, error)
 	ResolveCredentials(context.Context, application.WorkloadPrincipal, string, string, application.ResolveRequest) (application.ResolveResponse, error)
 	ReportObservations(context.Context, application.WorkloadPrincipal, application.ObservationsRequest) error
@@ -48,7 +49,7 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		}
 		kinds := map[string]bool{}
 		for _, kind := range p.Consumers {
-			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight"}, kind) {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight", application.PolicyProjectionConsumer}, kind) {
 				return nil, application.ErrWorkloadDenied
 			}
 			kinds[kind] = true
@@ -58,6 +59,7 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		instances[p.InstanceID] = true
 	}
 	h.mux.HandleFunc("GET /internal/v1/channel-accounts/snapshot", h.snapshot)
+	h.mux.HandleFunc("POST /internal/v1/channel-access-policies:resolve", h.resolvePolicy)
 	h.mux.HandleFunc("POST /internal/v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials:resolve", h.resolve)
 	h.mux.HandleFunc("POST /internal/v1/channel-account-observations", h.observations)
 	if h.preflight != nil {
@@ -188,6 +190,8 @@ func handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, application.ErrWorkloadDenied):
 		status, code = 403, "CHANNEL_WORKLOAD_DENIED"
+	case errors.Is(err, application.ErrPolicyNotFound):
+		status, code = 404, "CHANNEL_POLICY_NOT_FOUND"
 	case errors.Is(err, application.ErrAccountNotFound):
 		status, code = 404, "CHANNEL_ACCOUNT_NOT_FOUND"
 	case errors.Is(err, application.ErrEpochMismatch):
@@ -208,4 +212,22 @@ func handleError(w http.ResponseWriter, err error) {
 		}
 	}
 	failure(w, status, code)
+}
+
+func (h *Handler) resolvePolicy(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	if !slices.Contains(p.Consumers, application.PolicyProjectionConsumer) {
+		handleError(w, application.ErrWorkloadDenied)
+		return
+	}
+	in, ok := decode[application.PolicyResolveRequest](w, r, "access-policy-resolve-request.schema.json", 16*1024)
+	if !ok {
+		return
+	}
+	out, err := h.service.ResolveAccessPolicy(r.Context(), p, in)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 200, out, domain.MaxAccessPolicyDocumentBytes+4096)
 }

@@ -48,6 +48,13 @@ func (a *App) Run(ctx context.Context) error {
 			_ = a.routeRelay.Run(runCtx)
 		}
 	}()
+	policyRelayDone := make(chan struct{})
+	go func() {
+		defer close(policyRelayDone)
+		if a.policyRelay != nil {
+			_ = a.policyRelay.Run(runCtx)
+		}
+	}()
 	manifestRelayDone := make(chan struct{})
 	go func() {
 		defer close(manifestRelayDone)
@@ -117,6 +124,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	select {
 	case <-relayDone:
+	case <-shutdownCtx.Done():
+		return errors.Join(first, shutdownCtx.Err())
+	}
+	select {
+	case <-policyRelayDone:
 	case <-shutdownCtx.Done():
 		return errors.Join(first, shutdownCtx.Err())
 	}

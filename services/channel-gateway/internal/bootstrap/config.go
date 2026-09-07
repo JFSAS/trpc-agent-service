@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
 	"io"
 	"net"
@@ -25,6 +26,7 @@ type Account struct {
 	Secret    string `json:"-"`
 }
 type Config struct {
+	PolicyProjectionEnabled                                               bool
 	WeComPreflightEnabled                                                 bool
 	TelegramPreflightEnabled                                              bool
 	telegramFactory                                                       telegramruntime.RemoteFactory
@@ -49,6 +51,14 @@ func envOr(key, fallback string) string {
 func LoadConfig() (Config, error) {
 	c := Config{HTTPAddress: envOr("GATEWAY_HTTP_ADDRESS", ":8090"), AdminAddress: envOr("GATEWAY_ADMIN_ADDRESS", ":8091"), DatabaseURL: os.Getenv("GATEWAY_DATABASE_URL"), MigrationDatabaseURL: os.Getenv("GATEWAY_MIGRATION_DATABASE_URL"), NATSURL: os.Getenv("GATEWAY_NATS_URL"), NATSAuth: transport.Auth{User: os.Getenv("GATEWAY_NATS_USER"), Password: os.Getenv("GATEWAY_NATS_PASSWORD"), InboxPrefix: "_INBOX.gateway", CAFile: os.Getenv("GATEWAY_NATS_CA_FILE")}}
 	c.AccountSource = envOr("GATEWAY_ACCOUNT_SOURCE", "control")
+	switch envOr("GATEWAY_POLICY_PROJECTION_ENABLED", "false") {
+	case "true":
+		c.PolicyProjectionEnabled = true
+	case "false":
+	default:
+		return Config{}, errors.New("invalid policy projection enablement")
+	}
+
 	c.Control = ControlConfig{URL: os.Getenv("GATEWAY_CONTROL_URL"), CAFile: os.Getenv("GATEWAY_CONTROL_CA_FILE"), CertificateFile: os.Getenv("GATEWAY_CONTROL_CERT_FILE"), KeyFile: os.Getenv("GATEWAY_CONTROL_KEY_FILE"), ScopeID: os.Getenv("GATEWAY_CONTROL_SCOPE_ID"), SourceEpoch: os.Getenv("GATEWAY_CONTROL_SOURCE_EPOCH"), PublicOrigin: os.Getenv("GATEWAY_PUBLIC_ORIGIN")}
 	c.Worker = WorkerConfig{URL: os.Getenv("GATEWAY_WORKER_URL"), CAFile: os.Getenv("GATEWAY_WORKER_CA_FILE"), CertificateFile: os.Getenv("GATEWAY_WORKER_CERT_FILE"), KeyFile: os.Getenv("GATEWAY_WORKER_KEY_FILE")}
 	c.WeComAccountsFile = os.Getenv("GATEWAY_WECOM_ACCOUNTS_FILE")
@@ -110,6 +120,9 @@ func LoadConfig() (Config, error) {
 	return c, nil
 }
 func (c Config) Validate() error {
+	if c.PolicyProjectionEnabled && (c.AccountSource != "control" || !c.Topology.HasStream(wire.AccessPolicyStream) || !c.Topology.HasPolicyScope(c.Control.ScopeID)) {
+		return errors.New("policy projection requires Control mode and access-policy stream")
+	}
 	if err := validateTelegramAPIURL(c.TelegramAPIURL); err != nil {
 		return err
 	}

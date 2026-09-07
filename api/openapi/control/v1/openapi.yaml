@@ -28,6 +28,14 @@ tags:
       value transport. Public manifest_view is an explicit projection without
       Credential IDs, purposes, audiences, values, or dynamic credential state.
 paths:
+  /v1/tenants/{tenant_id}/channel-policy-definitions/{kind}/{policy_id}/revisions/{revision}:
+    $ref: "./policy-definition-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-policy-definitions~1{kind}~1{policy_id}~1revisions~1{revision}"
+  /v1/tenants/{tenant_id}/channel-policy-definitions/{kind}/{policy_id}/revisions:
+    $ref: "./policy-definition-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-policy-definitions~1{kind}~1{policy_id}~1revisions"
+  /v1/tenants/{tenant_id}/channel-principals:
+    $ref: "./principal-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-principals"
+  /v1/tenants/{tenant_id}/channel-principals/{principal_id}/state:
+    $ref: "./principal-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-principals~1{principal_id}~1state"
   /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights:
     $ref: "./preflight-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts~1{account_id}~1preflights"
   /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}:

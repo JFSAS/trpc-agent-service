@@ -1,0 +1,20 @@
+{
+  "schema": "policy-definition-event.schema.json",
+  "valid": true,
+  "document": {
+    "schema_version": 1,
+    "event_id": "evt_policy_fixture",
+    "event_type": "channel.policy_definition.audit.v1",
+    "tenant_id": "tnt_fixture",
+    "policy_id": "pol_fixture",
+    "occurred_at": "2026-09-08T00:00:00Z",
+    "policy_kind": "session",
+    "revision": 1,
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_id": "usr_fixture",
+    "actor_kind": "CONTROL_USER",
+    "action": "channel.policy_definition.publish",
+    "decision": "PUBLISHED",
+    "reason_code": "OWNER_POLICY_PUBLICATION"
+  }
+}

@@ -232,3 +232,29 @@ WeCom `subscribe` 可能替换同 Bot 的其他客户端，不称为只读检查
 所有 Provider 共用原有每 principal/instance 每秒 2 次 claim 限流；不按 Provider 新增
 独立配额。普通 `wecom_connection` 与诊断 consumer 保持分离。此源码变更不修改现有
 运行配置；两个诊断 runner 的开关与有界连接实现由 Gateway 部署文档说明。
+
+## Immutable access-policy document resolution
+
+`POST /internal/v1/channel-access-policies:resolve` is registered only on the
+existing mTLS runtime listener. The verified SPIFFE workload mapping must carry
+`channel_policy_projection` in `consumers`; existing receiver/preflight grants do
+not imply this capability. No deployment mapping is automatically granted it.
+
+The closed request contains `schema_version: 1`, `account_id`, and an exact
+`reference: {id, revision, digest}`. Tenant and scope are never client-selected;
+the read joins the account's tenant/provider ownership with the trusted workload
+scope. A repeatable-read transaction checks the catalog epoch and validates the
+persisted immutable document and digest. It never substitutes the latest version.
+A missing/out-of-scope account or unavailable exact reference returns the same
+`CHANNEL_POLICY_NOT_FOUND` (404). Authentication/capability failures precede body
+parsing. Requests are uncompressed JSON, limited to 16 KiB; responses are bounded
+by the 1 MiB policy limit plus envelope overhead and carry `Cache-Control: no-store`.
+
+The standalone contract is `api/openapi/control/v1/policy-internal.yaml`; the public
+API does not expose this route. Shared closed schemas are under
+`api/schemas/channel/v1/access-policy-resolve-{request,response}.schema.json`.
+This is an immutable document fetch for projection construction, **not** a current
+principal/policy authorization snapshot or freshness proof. Admission must not
+query this endpoint per message or use a historical response to bypass revocation.
+Gateway consumers, snapshot/gap recovery, current-state fences and Worker checks
+remain separate implementation work.

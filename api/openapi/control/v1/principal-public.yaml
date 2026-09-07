@@ -1,0 +1,613 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Channel principal management",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/tenants/{tenant_id}/channel-principals": {
+      "parameters": [
+        {
+          "name": "tenant_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "not": {
+              "pattern": "[^A-Za-z0-9._:-]"
+            }
+          }
+        }
+      ],
+      "post": {
+        "operationId": "registerChannelPrincipal",
+        "tags": [
+          "Channel"
+        ],
+        "summary": "registerChannelPrincipal",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "description": "Requires an active unrestricted Session and tenant OWNER before body parsing; transaction rechecks OWNER. Body limit 16 KiB. No query parameters or Content-Encoding. Idempotency replay preserves original status and identity result. ACTIVE is an identity record, not a runtime access grant. NOT_EMITTED does not prove runtime revocation. Account and provider identity are resolved within the authenticated tenant; body tenant/provider/role overrides are rejected.",
+        "responses": {
+          "400": {
+            "description": "Closed input invalid",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "OWNER permission denied",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account or principal not found within tenant/account",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision, identity or idempotency conflict",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body limit exceeded",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Stored result integrity failure",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Identity fact only; idempotent replay uses same status.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "principal": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "identity": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "tenant_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                              "not": {
+                                "pattern": "[^A-Za-z0-9._:-]"
+                              }
+                            },
+                            "provider": {
+                              "enum": [
+                                "telegram",
+                                "wecom"
+                              ]
+                            },
+                            "account_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                              "not": {
+                                "pattern": "[^A-Za-z0-9._:-]"
+                              }
+                            },
+                            "external_user_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            }
+                          },
+                          "required": [
+                            "tenant_id",
+                            "provider",
+                            "account_id",
+                            "external_user_id"
+                          ]
+                        },
+                        "principal_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "state": {
+                          "enum": [
+                            "ACTIVE",
+                            "REVOKED"
+                          ]
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "created_by": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "identity",
+                        "principal_id",
+                        "state",
+                        "revision",
+                        "created_by",
+                        "created_at",
+                        "updated_at"
+                      ]
+                    },
+                    "distribution": {
+                      "type": "string",
+                      "const": "NOT_EMITTED"
+                    }
+                  },
+                  "required": [
+                    "principal",
+                    "distribution"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "not": {
+                      "pattern": "[^A-Za-z0-9._:-]"
+                    }
+                  },
+                  "external_user_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "account_id",
+                  "external_user_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/channel-principals/{principal_id}/state": {
+      "parameters": [
+        {
+          "name": "tenant_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "not": {
+              "pattern": "[^A-Za-z0-9._:-]"
+            }
+          }
+        },
+        {
+          "name": "principal_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "not": {
+              "pattern": "[^A-Za-z0-9._:-]"
+            }
+          }
+        }
+      ],
+      "post": {
+        "operationId": "setChannelPrincipalState",
+        "tags": [
+          "Channel"
+        ],
+        "summary": "setChannelPrincipalState",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "description": "Requires an active unrestricted Session and tenant OWNER before body parsing; transaction rechecks OWNER. Body limit 16 KiB. No query parameters or Content-Encoding. Idempotency replay preserves original status and identity result. ACTIVE is an identity record, not a runtime access grant. NOT_EMITTED does not prove runtime revocation. Account and provider identity are resolved within the authenticated tenant; body tenant/provider/role overrides are rejected.",
+        "responses": {
+          "400": {
+            "description": "Closed input invalid",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "OWNER permission denied",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account or principal not found within tenant/account",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision, identity or idempotency conflict",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body limit exceeded",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Stored result integrity failure",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Identity fact only; idempotent replay uses same status.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "principal": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "identity": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "tenant_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                              "not": {
+                                "pattern": "[^A-Za-z0-9._:-]"
+                              }
+                            },
+                            "provider": {
+                              "enum": [
+                                "telegram",
+                                "wecom"
+                              ]
+                            },
+                            "account_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                              "not": {
+                                "pattern": "[^A-Za-z0-9._:-]"
+                              }
+                            },
+                            "external_user_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            }
+                          },
+                          "required": [
+                            "tenant_id",
+                            "provider",
+                            "account_id",
+                            "external_user_id"
+                          ]
+                        },
+                        "principal_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "state": {
+                          "enum": [
+                            "ACTIVE",
+                            "REVOKED"
+                          ]
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "created_by": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "identity",
+                        "principal_id",
+                        "state",
+                        "revision",
+                        "created_by",
+                        "created_at",
+                        "updated_at"
+                      ]
+                    },
+                    "distribution": {
+                      "type": "string",
+                      "const": "NOT_EMITTED"
+                    }
+                  },
+                  "required": [
+                    "principal",
+                    "distribution"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "not": {
+                      "pattern": "[^A-Za-z0-9._:-]"
+                    }
+                  },
+                  "expected_principal_revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "state": {
+                    "enum": [
+                      "ACTIVE",
+                      "REVOKED"
+                    ]
+                  }
+                },
+                "required": [
+                  "account_id",
+                  "expected_principal_revision",
+                  "state"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "control_session"
+      }
+    }
+  }
+}

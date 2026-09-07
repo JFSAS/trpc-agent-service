@@ -93,3 +93,75 @@ func TestAppRunInternalFailureStopsPublicListener(t *testing.T) {
 		t.Fatal("listener orphaned")
 	}
 }
+
+type policyLifecycleStub struct {
+	started, stopped chan struct{}
+	release          <-chan struct{}
+}
+
+func (p *policyLifecycleStub) Run(ctx context.Context) error {
+	close(p.started)
+	<-ctx.Done()
+	if p.release != nil {
+		<-p.release
+	}
+	close(p.stopped)
+	return nil
+}
+func TestPolicyRelayLifecycleStartsAndDrainsOnCancellation(t *testing.T) {
+	policy := &policyLifecycleStub{started: make(chan struct{}), stopped: make(chan struct{})}
+	app := &App{server: newLifecycleServerStub(), policyRelay: policy, shutdownTimeout: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	select {
+	case <-policy.started:
+	case <-time.After(time.Second):
+		t.Fatal("policy relay not started")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown not bounded")
+	}
+	select {
+	case <-policy.stopped:
+	default:
+		t.Fatal("App returned before policy relay drained")
+	}
+}
+func TestPolicyRelayStopsOnListenerFailure(t *testing.T) {
+	policy := &policyLifecycleStub{started: make(chan struct{}), stopped: make(chan struct{})}
+	failure := errors.New("listener failure")
+	app := &App{server: &lifecycleServerStub{serveErr: failure}, policyRelay: policy, shutdownTimeout: time.Second}
+	if err := app.Run(context.Background()); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	select {
+	case <-policy.stopped:
+	default:
+		t.Fatal("policy relay orphaned after listener failure")
+	}
+}
+func TestPolicyRelayShutdownDeadline(t *testing.T) {
+	release := make(chan struct{})
+	policy := &policyLifecycleStub{started: make(chan struct{}), stopped: make(chan struct{}), release: release}
+	app := &App{server: newLifecycleServerStub(), policyRelay: policy, shutdownTimeout: 20 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := app.Run(ctx)
+	close(release)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("policy shutdown deadline not applied", err)
+	}
+	select {
+	case <-policy.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("test relay did not exit")
+	}
+}

@@ -127,3 +127,30 @@ export GATEWAY_TELEGRAM_PREFLIGHT_ENABLED=false
 Connector 进程或 NATS subject；Helm 仍在最终 workload 集成阶段。
 
 最新模式化预检协议、迁移顺序和测试见 [双模式开发记录](../../docs/architecture-next/channel-gateway/telegram-receive-modes-implementation.md)。
+
+## Policy history projection lifecycle
+
+`GATEWAY_POLICY_PROJECTION_ENABLED=false` is the default. Explicit enablement
+requires Control account mode and the access-policy stream in the configured
+NATS topology. This switch runs historical policy projection only; it does not
+activate external-principal authorization or alter Admission policy readiness.
+
+Bootstrap constructs a separate bounded policy mTLS client using the existing
+Control CA/certificate references, the PG history/checkpoint store and the scoped
+policy consumer. It obtains the existing stream and deterministic scope durable,
+then verifies the retained source, durable configuration and persisted source/
+checkpoint before starting background work. A missing durable or incompatible
+source fails startup; runtime never acquires topology write privileges.
+
+The policy loop joins App.Run's errgroup. Source/read/persistence failures stop
+that run and trigger normal Gateway shutdown. Cancellation propagates to the loop;
+App.Close releases its HTTP transport after the run drains. Failed initialization
+also closes the newly constructed transport. No independent workload is added.
+
+Before enabling, the deployment must separately provision the scope-derived
+NATS durable and exact INFO/NEXT/ACK ACL, and Control's verified workload mapping
+must grant channel_policy_projection. The NATS declarations now accept explicit policy_scopes for normal reconcile and
+exact ACL generation; their lists remain empty until configured. Bootstrap requires
+its Control scope in the topology. The Compose/example flag remains false.
+Full current-state snapshots, recovery and Principal/Admission/Worker authorization
+remain required; a running history consumer is not proof that requests are authorized.

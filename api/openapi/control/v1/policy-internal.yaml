@@ -1,0 +1,497 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Channel access policy internal document resolution",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/internal/v1/channel-access-policies:resolve": {
+      "post": {
+        "operationId": "resolveChannelAccessPolicy",
+        "security": [
+          {
+            "workloadMTLS": []
+          }
+        ],
+        "description": "Separate internal listener. Verified URI SAN mapping and explicit channel_policy_projection consumer capability required before body parsing. Scope, epoch and account tenant are server-derived; no client tenant, role or scope override. Exact ID/revision/digest, no latest. No query or compression. All responses no-store.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "schema_version",
+                  "account_id",
+                  "reference"
+                ],
+                "properties": {
+                  "schema_version": {
+                    "type": "integer",
+                    "const": 1
+                  },
+                  "account_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "not": {
+                      "pattern": "[^A-Za-z0-9._:-]"
+                    }
+                  },
+                  "reference": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "revision",
+                      "digest"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                        "not": {
+                          "pattern": "[^A-Za-z0-9._:-]"
+                        }
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$",
+                        "minLength": 71,
+                        "maxLength": 71
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Verified client certificate required"
+          },
+          "403": {
+            "description": "Workload mapping or policy_projection capability denied"
+          },
+          "404": {
+            "description": "Exact policy reference absent in account scope"
+          },
+          "409": {
+            "description": "Source epoch mismatch"
+          },
+          "413": {
+            "description": "Body exceeds 16KiB"
+          },
+          "500": {
+            "description": "Policy integrity failure"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          },
+          "200": {
+            "description": "One immutable policy document; not current authorization/freshness snapshot. no-store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "type": "integer"
+                    },
+                    "scope_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "source_epoch": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "policy": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "schema_version": {
+                          "const": 1,
+                          "type": "integer"
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "account_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "provider": {
+                          "enum": [
+                            "telegram",
+                            "wecom"
+                          ]
+                        },
+                        "policy_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "body": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "access_mode": {
+                              "enum": [
+                                "DENY_ALL",
+                                "ALLOWLIST",
+                                "PUBLIC_LIMITED"
+                              ]
+                            },
+                            "allowed_principal_ids": {
+                              "type": "array",
+                              "maxItems": 4096,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                                "not": {
+                                  "pattern": "[^A-Za-z0-9._:-]"
+                                }
+                              }
+                            },
+                            "allowed_conversation_ids": {
+                              "type": "array",
+                              "maxItems": 4096,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              }
+                            },
+                            "allowed_operations": {
+                              "type": "array",
+                              "maxItems": 3,
+                              "uniqueItems": true,
+                              "items": {
+                                "enum": [
+                                  "message.send",
+                                  "session.new",
+                                  "run.cancel_own"
+                                ]
+                              }
+                            },
+                            "session_policy": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                                      "not": {
+                                        "pattern": "[^A-Za-z0-9._:-]"
+                                      }
+                                    },
+                                    "revision": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "digest": {
+                                      "type": "string",
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "minLength": 71,
+                                      "maxLength": 71
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "revision",
+                                    "digest"
+                                  ]
+                                },
+                                {
+                                  "const": {
+                                    "id": "",
+                                    "revision": 0,
+                                    "digest": ""
+                                  }
+                                }
+                              ]
+                            },
+                            "tenant_quota_ref": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                                      "not": {
+                                        "pattern": "[^A-Za-z0-9._:-]"
+                                      }
+                                    },
+                                    "revision": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "digest": {
+                                      "type": "string",
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "minLength": 71,
+                                      "maxLength": 71
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "revision",
+                                    "digest"
+                                  ]
+                                },
+                                {
+                                  "const": {
+                                    "id": "",
+                                    "revision": 0,
+                                    "digest": ""
+                                  }
+                                }
+                              ]
+                            },
+                            "authorization_max_age_ms": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 30000
+                            }
+                          },
+                          "required": [
+                            "access_mode",
+                            "allowed_principal_ids",
+                            "allowed_conversation_ids",
+                            "allowed_operations",
+                            "session_policy",
+                            "tenant_quota_ref",
+                            "authorization_max_age_ms"
+                          ],
+                          "allOf": [
+                            {
+                              "if": {
+                                "properties": {
+                                  "access_mode": {
+                                    "const": "DENY_ALL"
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "allowed_principal_ids": {
+                                    "maxItems": 0
+                                  },
+                                  "allowed_conversation_ids": {
+                                    "maxItems": 0
+                                  },
+                                  "allowed_operations": {
+                                    "maxItems": 0
+                                  },
+                                  "session_policy": {
+                                    "const": {
+                                      "id": "",
+                                      "revision": 0,
+                                      "digest": ""
+                                    }
+                                  },
+                                  "tenant_quota_ref": {
+                                    "const": {
+                                      "id": "",
+                                      "revision": 0,
+                                      "digest": ""
+                                    }
+                                  }
+                                }
+                              },
+                              "else": {
+                                "properties": {
+                                  "session_policy": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                                        "not": {
+                                          "pattern": "[^A-Za-z0-9._:-]"
+                                        }
+                                      },
+                                      "revision": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "digest": {
+                                        "type": "string",
+                                        "pattern": "^sha256:[0-9a-f]{64}$",
+                                        "minLength": 71,
+                                        "maxLength": 71
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "revision",
+                                      "digest"
+                                    ]
+                                  },
+                                  "tenant_quota_ref": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                                        "not": {
+                                          "pattern": "[^A-Za-z0-9._:-]"
+                                        }
+                                      },
+                                      "revision": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "digest": {
+                                        "type": "string",
+                                        "pattern": "^sha256:[0-9a-f]{64}$",
+                                        "minLength": 71,
+                                        "maxLength": 71
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "revision",
+                                      "digest"
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "if": {
+                                "properties": {
+                                  "access_mode": {
+                                    "const": "PUBLIC_LIMITED"
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "allowed_principal_ids": {
+                                    "maxItems": 0
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "published_by": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "published_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "digest": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$",
+                          "minLength": 71,
+                          "maxLength": 71
+                        }
+                      },
+                      "required": [
+                        "schema_version",
+                        "tenant_id",
+                        "account_id",
+                        "provider",
+                        "policy_id",
+                        "revision",
+                        "body",
+                        "published_by",
+                        "published_at",
+                        "digest"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "scope_id",
+                    "source_epoch",
+                    "policy"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "workloadMTLS": {
+        "type": "mutualTLS"
+      }
+    }
+  }
+}

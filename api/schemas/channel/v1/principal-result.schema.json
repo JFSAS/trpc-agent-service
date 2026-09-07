@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jfsas.dev/schemas/channel/v1/principal-result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9._:-]"
+              }
+            },
+            "provider": {
+              "enum": [
+                "telegram",
+                "wecom"
+              ]
+            },
+            "account_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9._:-]"
+              }
+            },
+            "external_user_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "tenant_id",
+            "provider",
+            "account_id",
+            "external_user_id"
+          ]
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9._:-]"
+          }
+        },
+        "state": {
+          "enum": [
+            "ACTIVE",
+            "REVOKED"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "created_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9._:-]"
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "identity",
+        "principal_id",
+        "state",
+        "revision",
+        "created_by",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "distribution": {
+      "type": "string",
+      "const": "NOT_EMITTED"
+    }
+  },
+  "required": [
+    "principal",
+    "distribution"
+  ]
+}

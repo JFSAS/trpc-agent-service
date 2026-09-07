@@ -53,3 +53,38 @@ checks plus `wecom_long_connection_v1`, `long_connection`, and an explicit true
 connection-probe confirmation. The Provider branch rejects SQL NULL rather than
 silently accepting missing metadata. No table, operational record or earlier SQL
 file is rewritten. Apply this additive migration before accepting WeCom probes.
+
+`0005_channel_principals.sql` adds the F01 account-scoped external principal
+identity table. Tenant/account/provider references and external identity
+uniqueness are enforced together; revocation retains the mapping. ACTIVE is an
+identity state, not permission to invoke an Agent. This persistence foundation
+does not register principal HTTP routes, publish policies, or enable admission;
+those are separate pending optimization slices.
+
+0005 同时扩展 Channel 命令回执的 operation 闭合集合，允许
+`RegisterChannelPrincipal` 与 `SetChannelPrincipalState`。主体写入与成功回执在
+同一 OWNER 事务内提交；本迁移仍不发布策略或改变运行时接纳行为。
+
+`0006_channel_access_policies.sql` adds one account-scoped policy head, append-only
+revision documents and a normalized principal membership relation. Deferred
+constraints require a real head revision and an exact body/member set at commit;
+triggers reject revision/member mutation and non-monotonic head updates.
+The policy storage adapter writes revision, head, member rows and reference-only
+publication/audit records in `control_outbox` within one OWNER transaction.
+These new outbox types are not consumed by the existing route relay. The policy
+publisher's Session/Quota/tool-owner resolution, command API and new relay/schema
+integration remain pending; applying this migration does not enable authorization.
+
+0006 also registers `PublishChannelAccessPolicy` in the closed command receipt
+operation set. `PolicyPublisher` now writes its compact success receipt inside
+the revision/outbox transaction. Its mandatory owner validator has no permissive
+production default; owner adapters and public/bootstrap wiring remain pending.
+
+`0007_channel_policy_definitions.sql` stores Control-owned immutable Session/Quota
+policy definitions with exact tenant/kind/id/revision keys. The owner reader
+checks the entire document digest after JSONB retrieval. History is append-only.
+The same migration adds immutable, tenant/kind/id-scoped MAC command receipts.
+The owner publisher now commits definition, publication/audit outboxes and receipt
+atomically under OWNER and revision checks. Management API, production bootstrap
+and event relay remain pending. These are policy configuration records, not
+Worker Session facts or runtime quota consumption.

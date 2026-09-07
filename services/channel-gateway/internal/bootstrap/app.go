@@ -41,6 +41,7 @@ import (
 )
 
 type App struct {
+	policy                    *policyProjectionRuntime
 	workerProof               *workerhttp.Client
 	replyAcceptor             *deliveryapp.Acceptor
 	replyConsumer             *replyconsumer.Consumer
@@ -86,8 +87,12 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		return nil, err
 	}
 	var controlClient *controlhttp.Client
+	var policy *policyProjectionRuntime
 	var workerProof *workerhttp.Client
 	fail := func(err error) (*App, error) {
+		if policy != nil {
+			policy.Close()
+		}
 		if workerProof != nil {
 			workerProof.Close()
 		}
@@ -160,7 +165,11 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	app := &App{catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+	policy, err = newPolicyProjection(ctx, c, pool, n.JS)
+	if err != nil {
+		return fail(err)
+	}
+	app := &App{policy: policy, catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
 	if err := app.consumer.Initialize(ctx); err != nil {
 		return fail(err)
 	}
@@ -265,6 +274,9 @@ func (a *App) Handler() http.Handler      { return a.server.Handler }
 func (a *App) AdminHandler() http.Handler { return a.admin.Handler }
 func (a *App) Close() {
 	a.closeOnce.Do(func() {
+		if a.policy != nil {
+			a.policy.Close()
+		}
 		if a.workerProof != nil {
 			a.workerProof.Close()
 		}
@@ -329,6 +341,9 @@ func (a *App) Run(ctx context.Context) error {
 	g.Go(serve(a.admin, admin))
 	g.Go(func() error { return a.relay.Run(runCtx) })
 	g.Go(func() error { return a.consumer.Run(runCtx) })
+	if a.policy != nil {
+		g.Go(func() error { return a.policy.Run(runCtx) })
+	}
 	if a.replyConsumer != nil {
 		g.Go(func() error { return a.replyConsumer.Run(runCtx) })
 	}

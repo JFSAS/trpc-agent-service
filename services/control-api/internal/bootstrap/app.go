@@ -15,6 +15,7 @@ import (
 	channelnats "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/nats"
 	channelpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/postgres"
 	channelapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelpolicy"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
 	deploymenthttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/inbound/runtimehttp"
 	deploymentnats "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/nats"
@@ -34,9 +35,12 @@ type serverLifecycle interface {
 	Shutdown(context.Context) error
 }
 
+type backgroundLifecycle interface{ Run(context.Context) error }
+
 // App owns the modules and process lifecycle assembled for Control API.
 type App struct {
 	routeRelay      *channelapp.RouteRelay
+	policyRelay     backgroundLifecycle
 	manifestRelay   *deploymentapp.ManifestRelay
 	manifestNATS    *nats.Conn
 	runtimeServer   serverLifecycle
@@ -169,6 +173,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 	var internalServer serverLifecycle
 	var nc *nats.Conn
 	var relay *channelapp.RouteRelay
+	var policyRelay backgroundLifecycle
 	if config.Channel != nil {
 		tlsConfig, err := config.Channel.tlsConfig()
 		if err != nil {
@@ -184,6 +189,14 @@ func New(ctx context.Context, config Config) (*App, error) {
 		if err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("assemble channel: %w", err)
+		}
+		if _, err = channelpolicy.NewModule(channelpolicy.Dependencies{
+			DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
+			Access:                channelTenantAccess{members: activeTenantMemberLookup{tenants: tenantModule.Service}},
+			TransactionAuthorizer: channelTransactionAuthorizer{}, Signer: config.Channel.cipher,
+		}); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("assemble channel policy: %w", err)
 		}
 		if err = channelModule.Initialize(ctx); err != nil {
 			pool.Close()
@@ -201,6 +214,12 @@ func New(ctx context.Context, config Config) (*App, error) {
 			return nil, err
 		}
 		relay, err = channelModule.NewRouteRelay(publisher)
+		if err != nil {
+			nc.Close()
+			pool.Close()
+			return nil, err
+		}
+		policyRelay, err = channelModule.NewAccessPolicyRelay(publisher)
 		if err != nil {
 			nc.Close()
 			pool.Close()
@@ -252,7 +271,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 		runtimeServer = httpserver.NewTLS(config.Runtime.InternalAddress, runtimeRouter, tc)
 	}
 	return &App{
-		routeRelay: relay, natsConnection: nc,
+		routeRelay: relay, policyRelay: policyRelay, natsConnection: nc,
 		manifestRelay: manifestRelay, manifestNATS: manifestNATS, runtimeServer: runtimeServer,
 		database:        pool,
 		server:          httpserver.New(config.HTTPAddress, router),

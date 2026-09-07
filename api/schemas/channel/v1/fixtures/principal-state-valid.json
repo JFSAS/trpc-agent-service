@@ -1,0 +1,9 @@
+{
+  "schema": "principal-state.schema.json",
+  "valid": true,
+  "document": {
+    "account_id": "cha_test",
+    "expected_principal_revision": 1,
+    "state": "REVOKED"
+  }
+}

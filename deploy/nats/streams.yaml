@@ -1,5 +1,13 @@
 version: 1
+# Explicit Gateway scopes; empty means no policy consumer is provisioned.
+policy_scopes: []
 streams:
+  - name: CHANNEL_ACCESS_POLICIES_V1
+    subject: control.channel-access-policy.v1
+    retention: limits
+    max_bytes: 67108864
+    max_message_bytes: 16384
+    replicas: 1
   - name: CHANNEL_ROUTES_V1
     subject: control.channel-route.v1
     retention: limits
