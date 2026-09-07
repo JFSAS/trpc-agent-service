@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Control Telegram preflight private workload API",
+    "title": "Control Channel preflight private workload API",
     "version": "1.0.0",
-    "description": "Separate mTLS listener only. URI SAN maps principal/instance/scope with audience control-channel-v1 and diagnostic kind telegram_preflight. The existing enabled-only runtime consumers are unchanged. Only exact BotToken can be resolved under a valid claim; never webhook_secret. Plaintext is confined to the no-store mTLS resolved response."
+    "description": "Separate mTLS preflight listener. Claim diagnostic_policy selects exactly one provider and its consumer: telegram_preflight for legacy/telegram-receive-modes-v1; wecom_preflight for wecom_long_connection_v1. Resolve and Complete recheck the persisted task provider and claim. WeCom resolves only the exact wecom.bot_secret after explicit owner consent; Telegram resolves only telegram.bot_token. No normal enabled-account runtime authority is granted. Credentials appear only in the no-store mTLS resolve response."
   },
   "paths": {
     "/internal/v1/channel-preflights:claim": {
@@ -657,7 +657,7 @@
     "securitySchemes": {
       "workloadMTLS": {
         "type": "mutualTLS",
-        "description": "Verified client certificate URI SAN maps a configured principal; audience control-channel-v1; explicit telegram_preflight diagnostic kind. Not a browser header or Session."
+        "description": "Verified URI SAN maps principal/instance/scope and control-channel-v1 audience; explicit provider-specific telegram_preflight or wecom_preflight consumer is required."
       }
     }
   }

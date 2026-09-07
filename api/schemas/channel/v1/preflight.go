@@ -19,9 +19,11 @@ import (
 // Preflight DTOs are independent of normal runtime credential consumers. They
 // authorize no execution and never contain a webhook secret or raw provider URL.
 type PreflightCreateRequest struct {
+	ExpectedBotSecretVersion   int64 `json:"expected_bot_secret_version,omitempty"`
+	AllowConnectionProbe       bool  `json:"allow_connection_probe,omitempty"`
 	ExpectedAccountRevision    int64 `json:"expected_account_revision"`
 	ExpectedConnectionRevision int64 `json:"expected_connection_revision"`
-	ExpectedBotTokenVersion    int64 `json:"expected_bot_token_version"`
+	ExpectedBotTokenVersion    int64 `json:"expected_bot_token_version,omitempty"`
 }
 type PreflightCreated struct {
 	PreflightID   string    `json:"preflight_id"`
@@ -32,6 +34,8 @@ type PreflightCreated struct {
 	StatusURL     string    `json:"status_url"`
 }
 type PreflightView struct {
+	BotSecretVersion       int64            `json:"bot_secret_version,omitempty"`
+	AllowConnectionProbe   bool             `json:"allow_connection_probe,omitempty"`
 	ReceiveMode            string           `json:"receive_mode,omitempty"`
 	DiagnosticPolicy       string           `json:"diagnostic_policy,omitempty"`
 	EffectiveConfigDigest  string           `json:"effective_config_digest,omitempty"`
@@ -43,7 +47,7 @@ type PreflightView struct {
 	RequestedBy            string           `json:"requested_by"`
 	AccountRevision        int64            `json:"account_revision"`
 	ConnectionRevision     int64            `json:"connection_revision"`
-	BotTokenVersion        int64            `json:"bot_token_version"`
+	BotTokenVersion        int64            `json:"bot_token_version,omitempty"`
 	State                  string           `json:"state"`
 	Outcome                string           `json:"outcome"`
 	ReasonCode             string           `json:"reason_code"`
@@ -79,6 +83,7 @@ type PreflightCredential struct {
 	Configured        bool   `json:"configured"`
 }
 type PreflightGrant struct {
+	AllowConnectionProbe    bool                `json:"allow_connection_probe,omitempty"`
 	ReceiveMode             string              `json:"receive_mode,omitempty"`
 	DiagnosticPolicy        string              `json:"diagnostic_policy,omitempty"`
 	EffectiveConfigDigest   string              `json:"effective_config_digest,omitempty"`
@@ -362,7 +367,7 @@ func validatePreflightSemantics(name string, raw []byte) error {
 		if json.Unmarshal(raw, &claim) != nil {
 			return ErrInvalidDocument
 		}
-		d, err := PreflightConfigDigest(claim.ScopeID, claim.SourceEpoch, claim.ExpectedPublicOrigin, claim.OriginStatus)
+		d, err := PreflightConfigDigestForPolicy(claim.DiagnosticPolicy, claim.ScopeID, claim.SourceEpoch, claim.ExpectedPublicOrigin, claim.OriginStatus)
 		if err != nil || d != claim.GatewayConfigDigest {
 			return ErrInvalidDocument
 		}
@@ -378,7 +383,7 @@ func validatePreflightSemantics(name string, raw []byte) error {
 		if result.DiagnosticPolicy != "" {
 			status = result.OriginStatus
 		}
-		d, err := PreflightConfigDigest(result.ScopeID, result.SourceEpoch, result.ExpectedPublicOrigin, status)
+		d, err := PreflightConfigDigestForPolicy(result.DiagnosticPolicy, result.ScopeID, result.SourceEpoch, result.ExpectedPublicOrigin, status)
 		if err != nil || d != result.GatewayConfigDigest {
 			return ErrInvalidDocument
 		}
@@ -393,7 +398,7 @@ func validatePreflightSemantics(name string, raw []byte) error {
 		if json.Unmarshal(raw, &view) != nil {
 			return ErrInvalidDocument
 		}
-		if view.ReceiveMode == "long_polling" && view.ExpectedPublicOrigin != nil {
+		if (view.ReceiveMode == "long_polling" || view.ReceiveMode == PreflightWeComMode) && view.ExpectedPublicOrigin != nil {
 			return ErrInvalidDocument
 		}
 		if view.ExpectedPublicOrigin != nil {
@@ -407,13 +412,13 @@ func validatePreflightSemantics(name string, raw []byte) error {
 			if err != nil || outcome != view.Outcome {
 				return ErrInvalidDocument
 			}
-			if (view.ExpectedPublicOrigin != nil) != (view.Checks[2].Code == "PUBLIC_ORIGIN_STATIC_VALID") {
+			if view.Provider == "telegram" && (view.ExpectedPublicOrigin != nil) != (view.Checks[2].Code == "PUBLIC_ORIGIN_STATIC_VALID") {
 				return ErrInvalidDocument
 			}
 		}
 	case "preflight-grant.schema.json":
 		var grant PreflightGrant
-		if json.Unmarshal(raw, &grant) != nil || grant.WebhookPath != "/v1/telegram/"+grant.AccountID {
+		if json.Unmarshal(raw, &grant) != nil || grant.Provider == "telegram" && grant.WebhookPath != "/v1/telegram/"+grant.AccountID {
 			return ErrInvalidDocument
 		}
 	case "preflight-created.schema.json":

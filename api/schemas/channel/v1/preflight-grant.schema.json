@@ -32,16 +32,16 @@
       "$ref": "common.schema.json#/$defs/id"
     },
     "provider": {
-      "const": "telegram"
+      "enum": [
+        "telegram",
+        "wecom"
+      ]
     },
     "provider_account_id": {
       "type": "string",
       "minLength": 1,
       "maxLength": 1024,
-      "pattern": "^[1-9][0-9]*$",
-      "not": {
-        "pattern": "[^0-9]"
-      }
+      "pattern": "^[^\\s]+$"
     },
     "account_revision": {
       "$ref": "common.schema.json#/$defs/version"
@@ -51,16 +51,17 @@
     },
     "webhook_path": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256,
-      "pattern": "^/v1/telegram/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+      "maxLength": 256
     },
     "credentials": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "purpose": {
-          "const": "telegram.bot_token"
+          "enum": [
+            "telegram.bot_token",
+            "wecom.bot_secret"
+          ]
         },
         "credential_id": {
           "$ref": "common.schema.json#/$defs/id"
@@ -103,16 +104,23 @@
       "$ref": "common.schema.json#/$defs/digest"
     },
     "diagnostic_policy": {
-      "const": "telegram-receive-modes-v1"
+      "enum": [
+        "telegram-receive-modes-v1",
+        "wecom_long_connection_v1"
+      ]
     },
     "receive_mode": {
       "enum": [
         "long_polling",
-        "webhook"
+        "webhook",
+        "long_connection"
       ]
     },
     "effective_config_digest": {
       "$ref": "common.schema.json#/$defs/digest"
+    },
+    "allow_connection_probe": {
+      "const": true
     }
   },
   "required": [
@@ -165,6 +173,135 @@
             {
               "required": [
                 "effective_config_digest"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
+          }
+        },
+        "required": [
+          "diagnostic_policy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receive_mode": {
+            "const": "long_connection"
+          },
+          "expected_public_origin": {
+            "const": null
+          },
+          "origin_status": {
+            "const": "PUBLIC_ORIGIN_NOT_APPLICABLE"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "receive_mode": {
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
+          },
+          "origin_status": {
+            "enum": [
+              "PUBLIC_ORIGIN_STATIC_VALID",
+              "PUBLIC_ORIGIN_INVALID",
+              "PUBLIC_ORIGIN_NOT_PUBLIC"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "wecom"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "properties": {
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
+          },
+          "receive_mode": {
+            "const": "long_connection"
+          },
+          "allow_connection_probe": {
+            "const": true
+          },
+          "webhook_path": {
+            "const": ""
+          },
+          "webhook_secret_configured": {
+            "const": false
+          },
+          "credentials": {
+            "properties": {
+              "purpose": {
+                "const": "wecom.bot_secret"
+              }
+            }
+          }
+        },
+        "required": [
+          "diagnostic_policy",
+          "receive_mode",
+          "allow_connection_probe"
+        ]
+      },
+      "else": {
+        "properties": {
+          "provider_account_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[1-9][0-9]*$",
+            "not": {
+              "pattern": "[^0-9]"
+            }
+          },
+          "diagnostic_policy": {
+            "const": "telegram-receive-modes-v1"
+          },
+          "receive_mode": {
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
+          },
+          "webhook_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^/v1/telegram/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "credentials": {
+            "properties": {
+              "purpose": {
+                "const": "telegram.bot_token"
+              }
+            }
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "allow_connection_probe"
               ]
             }
           ]
