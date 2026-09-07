@@ -45,7 +45,7 @@ type runnerControl struct {
 func (c runnerControl) Claim(ctx context.Context, r ClaimRequest) (*Grant, error) {
 	return c.claim(ctx, r)
 }
-func (c runnerControl) ResolveBotToken(context.Context, Grant) (Secret, error) {
+func (c runnerControl) ResolveCredential(context.Context, Grant) (Secret, error) {
 	return Secret{}, ErrDenied
 }
 func (c runnerControl) Complete(ctx context.Context, g Grant, r Result) error {

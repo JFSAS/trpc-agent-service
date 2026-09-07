@@ -21,7 +21,7 @@ type PreflightRuntime interface {
 }
 
 func preflightAllowed(w http.ResponseWriter, r *http.Request) bool {
-	if !slices.Contains(principal(r).Consumers, "telegram_preflight") {
+	if !slices.Contains(principal(r).Consumers, "telegram_preflight") && !slices.Contains(principal(r).Consumers, "wecom_preflight") {
 		failure(w, http.StatusForbidden, "CHANNEL_WORKLOAD_DENIED")
 		return false
 	}

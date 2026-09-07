@@ -35,7 +35,10 @@ func (cl *PreflightClient) Close() { cl.client.Close() }
 // Control owns diagnostic wire DTOs and schemas. Application grants remain
 // independent of that transport contract and never marshal as runtime permits.
 func (cl *PreflightClient) validateClaim(r p.ClaimRequest) error {
-	if (r.DiagnosticPolicy != "" && r.DiagnosticPolicy != wire.PreflightReceiveModesPolicy) || cl == nil || cl.client == nil || p.ValidateConfig(r.Config) != nil || r.Config.ScopeID != cl.client.scope || r.Config.SourceEpoch != cl.client.epoch || !c.ValidEpoch(r.InstanceEpoch) || !c.ValidEpoch(r.RequestID) {
+	if (r.DiagnosticPolicy != "" && r.DiagnosticPolicy != wire.PreflightReceiveModesPolicy && r.DiagnosticPolicy != "wecom_long_connection_v1") || cl == nil || cl.client == nil || p.ValidateConfig(r.Config) != nil || r.Config.ScopeID != cl.client.scope || r.Config.SourceEpoch != cl.client.epoch || !c.ValidEpoch(r.InstanceEpoch) || !c.ValidEpoch(r.RequestID) {
+		return p.ErrInvalid
+	}
+	if (r.DiagnosticPolicy == "wecom_long_connection_v1") != (r.Config.Policy == "wecom_long_connection_v1") {
 		return p.ErrInvalid
 	}
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(r.Token.Reveal())
@@ -63,7 +66,7 @@ func (cl *PreflightClient) Claim(ctx context.Context, r p.ClaimRequest) (*p.Gran
 	if err := wire.Decode("preflight-grant.schema.json", raw, &w); err != nil {
 		return nil, preflightWireError(err)
 	}
-	g := p.Grant{ReceiveMode: w.ReceiveMode, DiagnosticPolicy: w.DiagnosticPolicy, EffectiveConfigDigest: w.EffectiveConfigDigest, PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
+	g := p.Grant{AllowConnectionProbe: w.AllowConnectionProbe, ReceiveMode: w.ReceiveMode, DiagnosticPolicy: w.DiagnosticPolicy, EffectiveConfigDigest: w.EffectiveConfigDigest, PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
 	if err := p.ValidateGrant(g, r.Config); err != nil {
 		return nil, err
 	}
@@ -79,7 +82,7 @@ func (cl *PreflightClient) validateGrant(g p.Grant) error {
 func leaseRequest(g p.Grant) wire.PreflightResolveRequest {
 	return wire.PreflightResolveRequest{SchemaVersion: 1, ScopeID: g.ScopeID, SourceEpoch: g.SourceEpoch, InstanceEpoch: g.Request.InstanceEpoch, LeaseEpoch: g.LeaseEpoch, ClaimToken: g.Request.Token.Reveal()}
 }
-func (cl *PreflightClient) ResolveBotToken(ctx context.Context, g p.Grant) (p.Secret, error) {
+func (cl *PreflightClient) ResolveCredential(ctx context.Context, g p.Grant) (p.Secret, error) {
 	if err := cl.validateGrant(g); err != nil {
 		return p.Secret{}, err
 	}
@@ -98,7 +101,7 @@ func (cl *PreflightClient) ResolveBotToken(ctx context.Context, g p.Grant) (p.Se
 	if err := wire.Decode("preflight-resolved.schema.json", raw, &w); err != nil {
 		return p.Secret{}, preflightWireError(err)
 	}
-	if w.PreflightID != g.PreflightID || w.ConnectionRevision != g.ConnectionRevision || w.Purpose != "telegram.bot_token" || w.Purpose != g.Credential.Purpose || w.CredentialID != g.Credential.ID || w.CredentialVersion != g.Credential.Version || !w.LeaseExpiresAt.Equal(g.LeaseExpiresAt) || w.Value == "" || len(w.Value) > 16<<10 {
+	if w.PreflightID != g.PreflightID || w.ConnectionRevision != g.ConnectionRevision || w.Purpose != g.Credential.Purpose || w.CredentialID != g.Credential.ID || w.CredentialVersion != g.Credential.Version || !w.LeaseExpiresAt.Equal(g.LeaseExpiresAt) || w.Value == "" || len(w.Value) > 16<<10 {
 		return p.Secret{}, p.ErrInvalid
 	}
 	if ctx.Err() != nil {
@@ -277,6 +280,15 @@ func validatePreflightResult(g p.Grant, r p.Result) error {
 	}
 	// This is a projection of already schema-validated details, not another wire
 	// definition. Compare to the exact trusted credential metadata of this claim.
+	if g.Provider == "wecom" {
+		var d struct {
+			Configured bool `json:"bot_secret_configured"`
+		}
+		if json.Unmarshal(checks[0].Details, &d) != nil || d.Configured != g.Credential.Configured {
+			return p.ErrInvalid
+		}
+		return nil
+	}
 	var credentials struct {
 		Bot     bool `json:"bot_token_configured"`
 		Webhook bool `json:"webhook_secret_configured"`

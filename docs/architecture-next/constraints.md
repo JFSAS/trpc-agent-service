@@ -115,9 +115,11 @@ Channel Binding 管理。
 - `api/`：OpenAPI、AgentSpec Schema 和版本化事件定义。
 - `gen/`：由 `api/` 生成的协议代码。
 
-2026-09-04 按 Channel Gateway 设计修正，明确允许一个有限的公开技术库入口：
-`platform/im/wecom`，用于可直接 import 的企微外部协议 Client，编译进使用它的 Go Workload，
-不形成独立服务。后续公开技术包必须分别说明职责和依赖，不把本条解释为任意共享实现的许可。
+Channel Gateway 明确允许两个有界公开技术库入口，均编译进使用它的 Go Workload，
+不形成独立服务：`platform/im/wecom` 拥有企微外部协议 Client；2026-09-07 按
+[Telegram 双模式设计](channel-gateway/telegram-receive-modes-plan.md)补入
+`platform/im/telegram`，补足第三方 SDK 未提供的单次有界轮询和接收配置方法。
+后续公开技术包必须分别说明职责和依赖，不把本条解释为任意共享实现的许可。
 
 公开技术库必须满足：
 
@@ -130,7 +132,8 @@ Channel Binding 管理。
 - 沿用根 Go Module，不增加子 `go.mod`、Dockerfile、数据库迁移或部署单元。
   `platform` / `platform/im` 只是目录命名空间，不建立可堆放业务的同名大包。
 - 业务模块的 Adapter 使用库；Domain/Application 继续依赖自己的 Port，不依赖 SDK。
-  Telegram 直接引用已选第三方 Go SDK，不为对称性再建透明转发的公开 wrapper。
+  Telegram 发送及 DTO 继续直接引用已选第三方 Go SDK；公开协议包只承担双模式设计
+  明确要求的有界调用，不包办持久 cursor、receiver owner 或业务重试，不为对称性建立透明转发 wrapper。
 
 `api/`、`gen/`、`platform/` 均禁止放置共享 Repository、业务 Service、领域实体或全局
 `contract/common/types`。外部 Provider DTO 和跨 Workload 协议 DTO 都不得直接充当领域实体

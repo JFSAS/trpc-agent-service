@@ -11,7 +11,7 @@ race 测试：subscribe/auth、应用 `ping`/ACK、原生文本与事件、文�
 状态通知、取消和有界关闭。测试只使用合成 BotID/Secret 与本机服务端。
 
 Gateway 已在库外装配 Connection Supervisor、owner lease/epoch 与 Admission；
-实际工作树应用和联合镜像验收已完成，证据见[实施状态 §9.5](../../../docs/architecture-next/channel-gateway/implementation-status.md#95-实际工作树联合验收)，Delivery 仍未接线。库自身不包含 PG/NATS、Tenant/Binding、
+实际工作树应用和联合镜像验收已完成，证据见[实施状态 §9.5](../../../docs/architecture-next/channel-gateway/implementation-status.md#95-实际工作树联合验收)，当前代码已有 Delivery adapter；真实企微投递仍需单独验收。库自身不包含 PG/NATS、Tenant/Binding、
 平台 SecretRef 读取、持久 Inbox、业务重试或跨进程限流。真实企微账号的私聊、群 @、Final、抢占与断线窗口验收仍是后续工作；
 本地协议测试不是完整 Agent E2E，也不是第三方服务端行为的线上认证。
 
@@ -19,6 +19,19 @@ P1 的多次 stream/progress、欢迎语、卡片、主动推送与 P2 的媒体
 P0 的一次文字 Final 使用协议的 `msgtype: "stream"`、`finish: true`，不代表已经支持
 多次流式更新。协议证据与 SDK 差异见
 [协议核验说明](../../../docs/architecture-next/channel-gateway/wecom-protocol-implementation-notes.md)。
+
+## 接入认证探测（2026-09-07）
+
+新增 `ProbeAuthentication(ctx, config, opts...)`：在调用者显式确认后，建立一次真实
+订阅、等待精确匹配的认证 ACK 并释放连接。最多 10 秒、无自动重连、不发送业务回复。
+它不是 Telegram getMe 式只读检查，可能替换同 Bot 的其他连接。
+
+`AuthenticationError` 保留确定性和稳定代码，并继续支持 `errors.Is(err, ErrAuth)`；
+明确拒绝与 ACK 超时分别报告，后者不当作 Secret 无效。返回结果不携带 Secret、远端
+错误原文或用户数据。认证成功不证明收到消息或 Agent 回复。
+
+Gateway 和本机 `services/channel-gateway/cmd/wecom-smoke` 共用此探测；产品三侧契约见
+[WeCom 预检 V1](../../../docs/architecture-next/channel-gateway/wecom-preflight-v1.md)。
 
 ## 公开 API
 
@@ -219,3 +232,11 @@ sticky drain timeout、unsupported 事件、错误 BotID/JSON/读上限、取消
 
 真实账号行为仍以后续明确验收结果为准；Gateway 集成与部署状态见
 [Gateway 实现状态](../../../docs/architecture-next/channel-gateway/implementation-status.md)。
+
+### 官方端点握手兼容
+
+2026-09-07 真实验证发现官方端点对 `Sec-WebSocket-*` 的 HTTP/1 拼写敏感。
+client 内部克隆 HTTP client/request 后保留官方 SDK 拼写，修复默认 Go 拼写下的
+HTTP 404；不改变调用方 transport 所配置的代理、TLS、超时或重定向策略。
+`TestHandshakePreservesProviderHeaderSpelling` 直接检查线上的 HTTP/1 请求字节。
+认证及 marker 收发的本轮证据见 Gateway 的 `wecom-preflight-v1.md`。

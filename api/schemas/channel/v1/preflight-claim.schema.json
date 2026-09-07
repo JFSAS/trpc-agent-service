@@ -53,14 +53,18 @@
       "enum": [
         "PUBLIC_ORIGIN_STATIC_VALID",
         "PUBLIC_ORIGIN_INVALID",
-        "PUBLIC_ORIGIN_NOT_PUBLIC"
+        "PUBLIC_ORIGIN_NOT_PUBLIC",
+        "PUBLIC_ORIGIN_NOT_APPLICABLE"
       ]
     },
     "limit": {
       "const": 1
     },
     "diagnostic_policy": {
-      "const": "telegram-receive-modes-v1"
+      "enum": [
+        "telegram-receive-modes-v1",
+        "wecom_long_connection_v1"
+      ]
     }
   },
   "required": [
@@ -96,6 +100,39 @@
               ]
             }
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
+          }
+        },
+        "required": [
+          "diagnostic_policy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "origin_status": {
+            "const": "PUBLIC_ORIGIN_NOT_APPLICABLE"
+          },
+          "expected_public_origin": {
+            "const": null
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "origin_status": {
+            "enum": [
+              "PUBLIC_ORIGIN_STATIC_VALID",
+              "PUBLIC_ORIGIN_INVALID",
+              "PUBLIC_ORIGIN_NOT_PUBLIC"
+            ]
+          }
         }
       }
     }

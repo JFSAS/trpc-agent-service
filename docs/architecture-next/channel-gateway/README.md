@@ -25,13 +25,15 @@ CGR-35/36 已补源码、本轮最终验收已通过；CGR-37 与有效发送截
 
 ## 1. 一句话结论
 
-**目标：Gateway 使用 Go；Telegram 直接 import 第三方 Go SDK；企业微信自研
+**目标：Gateway 使用 Go；Telegram 直接 import 第三方 Go SDK，并用公开 Go 协议包补足
+单次有界轮询；企业微信自研
 `platform/im/wecom` 公开协议库并直接 import。两种渠道运行在同一个 Gateway Workload，
 PostgreSQL 保存事实，NATS JetStream 负责传输，Agent 执行仍在 Worker。**
 
 Connector 是库的角色，不自动形成部署单元。公开包不放在 Gateway 的 `internal/` 下，
 但平台专属 Adapter、租户路由、Admission、Delivery，以及有状态 Provider 的跨副本租约
-继续留在服务内部；V1 只有企业微信长连接需要独占 owner。
+继续留在服务内部；企微长连接与 Telegram 物理 Bot receiver 均需要 owner，分布式
+Webhook HTTP 收件不要求独占 owner。
 
 ## 2. 技术栈与当前状态
 
@@ -39,9 +41,9 @@ Connector 是库的角色，不自动形成部署单元。公开包不放在 Gat
 | --- | --- | --- |
 | 语言 / module | 统一 Go；根 module，toolchain `go1.25.14` | 根 go.mod 为 Go 1.25.0、toolchain 1.25.14 |
 | HTTP | 第一切片使用标准库 net/http，自有入站 ACK 与独立管理 listener | 代码已有 Webhook、livez/readyz；Control 既有 Gin 保持不变 |
-| PostgreSQL | pgx/v5；事实、幂等、投影、Outbox | 当前 10 个 Gateway 自有迁移；0006 为 Delivery/ReplyOrigin，0007 为运行索引，0008–0010 为账户目录、发送资格绑定和 Telegram 注册；历史验收见实施状态 |
+| PostgreSQL | pgx/v5；事实、幂等、投影、Outbox | 当前 12 个 Gateway 自有迁移；0001–0010 后保留两份已发布的 0011（Telegram receive modes 与 Reply transport），按完整文件名记账；不改历史 SQL |
 | 异步传输 | NATS JetStream | 代码已有版本化事件、Relay、拓扑校验及独立授权配置；Control publisher 与真实 Telegram 入站已联合核验；Worker 执行仍单独推进 |
-| Telegram | `github.com/go-telegram/bot v1.25.0` 直接导入 | 根 module 已加入依赖，入站 Adapter 使用 models；出站 Sender 模块已有实现；Control 托管凭据、动态注册及有界 Runner 已接线，ReplyIntent 输入仍待交付 |
+| Telegram | `github.com/go-telegram/bot v1.25.0` 直接导入 | 根 module 已加入依赖，入站 Adapter 使用 models；发送、双模式接收及 ReplyIntent 消费已实现；真实消息与 Worker 回路按独立验收记录确认 |
 | 企业微信 | 公开包 `platform/im/wecom`；P0 WebSocket + JSON，媒体后续 | 公开 P0 已有历史验证；本轮实现已接 Connection、企微入站及 bootstrap，Delivery 与真实账号另验收 |
 | WebSocket 库 | `github.com/coder/websocket v1.8.15` | P0 固定官方稳定 Release；不手写 RFC6455，见[协议核验](wecom-protocol-implementation-notes.md) |
 | 可观测性 | OTel traces/metrics + 结构化日志 | 沿用现有设计；尚未接入 Gateway |
@@ -144,9 +146,11 @@ Adapter 依赖 Application/Domain，bootstrap 装配；公开库只由 Adapter/�
 用于隔离事实、事务和失败语义，不对应四个微服务。先看 Module §0.1 的需求归属表；输入输出、依赖方向以及 Telegram/企微
 两条完整流程、代码/人员分工、跨模块事务 seam 和故障归属见[四个业务 Module](module-boundaries.md)。
 
-Telegram 直接导入 `github.com/go-telegram/bot` 与其 `models` 子包；没有必要再创建一个只转发
-SDK 方法的 `platform/im/telegram`。Gateway 专属 Adapter 仍有价值：它转换 ReplyIntent、
-结果和错误，并实现持久接纳语义；它不是另造一层公共 SDK。
+Telegram 发送及 DTO 直接导入 `github.com/go-telegram/bot` 与其 `models` 子包；
+`platform/im/telegram` 按[双模式设计](telegram-receive-modes-plan.md)提供 SDK 未暴露的
+单次有界 `getUpdates` 等协议能力，而不是透明转发 SDK 或拥有后台 polling 循环。
+Gateway 专属 Adapter 转换 ReplyIntent、结果和错误；Connection 拥有持久 cursor、
+receiver owner 和启停协调，Admission 继续固定持久接纳事实。
 
 ## 5. 关键 Interface 与两条持久链路
 

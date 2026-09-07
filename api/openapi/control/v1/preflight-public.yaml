@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Control Telegram preflight API",
+    "title": "Control Channel preflight API",
     "version": "1.0.0",
-    "description": "Two Session-authenticated operations for read-only diagnostics on saved disabled Telegram accounts. No Binding, Deployment, READY or Worker prerequisite. No registration mutation or message delivery."
+    "description": "Saved disabled-account diagnostics. Telegram remains read-only; WeCom requires explicit allow_connection_probe consent for a real short-lived subscribe that may replace another client. No account enable, business messages, Run, Binding, Deployment or Worker prerequisite. Authentication is not delivery verification."
   },
   "paths": {
     "/v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights": {
@@ -41,7 +41,7 @@
             "cookieAuth": []
           }
         ],
-        "description": "ACTIVE unrestricted Session and ACTIVE tenant OWNER required, rechecked transactionally before idempotency replay. Three exact CAS versions; same key/actor/canonical body replays identical 202 and fixed receipt before current CAS, enabled and rate checks. Disabled saved Telegram accounts only; missing BotToken is diagnosed asynchronously. Limits: account 3/min and 1 active, tenant 30/min and 20 active. Task deadline 120 seconds; retention/idempotency 24 hours. No token/URL/Binding/Deployment inputs. Unknown query, Content-Encoding, unknown/duplicate/case-varied fields and trailing JSON are rejected.",
+        "description": "OWNER and disabled account required. Telegram uses expected_bot_token_version; WeCom uses expected_bot_secret_version, and allow_connection_probe must be explicitly true. Account, connection and selected credential versions are checked atomically. Missing WeCom consent returns 422 CHANNEL_PREFLIGHT_CONNECTION_PROBE_CONFIRMATION_REQUIRED. Consent is part of idempotency input. A WeCom subscribe is an active connection probe, not a read-only API, and may replace another client of the same Bot. Gateway drops any diagnostic business frames and sends no messages.",
         "responses": {
           "400": {
             "description": "Stable sanitized diagnostic; no-store.",
@@ -144,7 +144,7 @@
             }
           },
           "422": {
-            "description": "Stable sanitized diagnostic; no-store.",
+            "description": "Provider unsupported or explicit WeCom connection-probe confirmation required.",
             "headers": {
               "Cache-Control": {
                 "schema": {
@@ -250,6 +250,16 @@
             "application/json": {
               "schema": {
                 "$ref": "../../../schemas/channel/v1/preflight-create.schema.json"
+              },
+              "examples": {
+                "wecom": {
+                  "value": {
+                    "expected_account_revision": 1,
+                    "expected_connection_revision": 1,
+                    "expected_bot_secret_version": 1,
+                    "allow_connection_probe": true
+                  }
+                }
               }
             }
           }

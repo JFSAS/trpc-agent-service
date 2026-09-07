@@ -16,6 +16,9 @@ const PreflightReceiveModesPolicy = "telegram-receive-modes-v1"
 // allowing an unrelated inbound origin to invalidate long-polling diagnostics.
 // Account/task identity and lease authorization are separately fixed by grant.
 func PreflightEffectiveConfigDigest(scope, epoch, mode string, connectionRevision int64, origin *string, originStatus string) (string, error) {
+	if mode == PreflightWeComMode {
+		return preflightWeComEffectiveDigest(scope, epoch, connectionRevision, origin, originStatus)
+	}
 	if connectionRevision < 1 || connectionRevision > 9007199254740991 || (mode != "long_polling" && mode != "webhook") {
 		return "", ErrInvalidDocument
 	}
@@ -50,6 +53,9 @@ func PreflightEffectiveConfigDigest(scope, epoch, mode string, connectionRevisio
 // ValidatePreflightChecksForMode keeps old persisted results on the original
 // webhook-only rules. NOT_APPLICABLE is allowed only at fixed polling positions.
 func ValidatePreflightChecksForMode(policy, mode string, checks []PreflightCheck) (string, error) {
+	if policy == PreflightWeComPolicy {
+		return validateWeComPreflightChecks(mode, checks)
+	}
 	if policy == "" {
 		if mode != "" {
 			return "", ErrInvalidDocument

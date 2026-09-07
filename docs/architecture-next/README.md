@@ -46,6 +46,8 @@
 - [Telegram接入预检V1](control-api/telegram-preflight-v1.md)：冻结的2公开/3私有协议、短时任务、
   精确BotToken解析、固定配置指纹与8项去秘密诊断；Control代码及真实PG/Session/mTLS回归已实现，
   Gateway/Web/真实Telegram联合验收由协调任务记录，不等同于启用、注册或消息投递。
+- [WeCom 接入预检](control-api/wecom-preflight-v1.md)：显式连接探测确认、独立 Provider policy/consumer、
+  精确 Bot Secret 解析与三项闭合诊断；沿用现有端点/事务，真实连接和消息验收独立记录。
 - [Gateway Control 接入与验收](channel-gateway/control-integration-v1.md)：可信快照/凭据 Adapter、
   动态 Telegram、启动装配与运行观测已实现；真实 Telegram 入站到 RunRequested 已验收。
   此历史入口仅证明入站；Worker/Reply 新增实现及联合验收见 [Worker 状态](agent-worker/implementation-status.md)。

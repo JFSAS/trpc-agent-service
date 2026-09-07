@@ -141,4 +141,18 @@ func TestPreflightLoadConfigExplicitSwitch(t *testing.T) {
 			}
 		})
 	}
+	t.Setenv("GATEWAY_TELEGRAM_PREFLIGHT_ENABLED", "false")
+	for _, tc := range []struct {
+		value          string
+		enabled, valid bool
+	}{{"", true, true}, {"true", true, true}, {"false", false, true}, {"enabled", false, false}} {
+		t.Run("wecom_"+tc.value, func(t *testing.T) {
+			t.Setenv("GATEWAY_WECOM_PREFLIGHT_ENABLED", tc.value)
+			cfg, err := LoadConfig()
+			if (err == nil) != tc.valid || err == nil && cfg.WeComPreflightEnabled != tc.enabled {
+				t.Fatal("WeCom preflight switch incorrect")
+			}
+		})
+	}
+
 }

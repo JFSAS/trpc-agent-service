@@ -208,3 +208,27 @@ claim 能领取。grants/claimed views/completions 携带 effective_config_diges
 receive_modes_integration_test.go，以及真实 Session/mTLS 的 integration 测试。
 测试覆盖迁移回填、重复 Bot 原子失败、旧回执恢复、缺可选 Secret、mode CAS、consumer
 精确取值、owner Observation、policy 隔离、LP 重领与同租约冲突、终态幂等及运行表零写入。
+
+
+## 7. WeCom 显式连接预检
+
+同一组 2 公开 / 3 私有端点支持已保存且停用的 WeCom 账户。部署先应用增量
+`0004_wecom_preflights.sql`，将完成检查数约束区分为 Telegram 8 项 / WeCom 3 项，
+0001–0003 原字节保持不变，不新建表。OWNER 显式提交
+`expected_account_revision`、`expected_connection_revision`、`expected_bot_secret_version`
+和 `allow_connection_probe:true`。缺省/false 确认位返回
+`422 CHANNEL_PREFLIGHT_CONNECTION_PROBE_CONFIRMATION_REQUIRED`，不创建任务或回执。
+
+WeCom `subscribe` 可能替换同 Bot 的其他客户端，不称为只读检查；Gateway 完成短时认证后
+断开、丢弃收到的业务帧，不启用账户、不发消息或创建 Run。结果只有配置、连接认证、
+未测试投递三项；总 PASS 不等于消息或 Agent 回复成功。
+
+在现有 Control workload 的 `consumers` 配置中显式追加 `wecom_preflight` 才允许领取
+`diagnostic_policy=wecom_long_connection_v1`；Telegram 权限不因此扩大。Resolve/Complete
+还会根据持久任务 Provider 检查授权，并固定 `wecom.bot_secret` 的 ID/版本。
+配置示例、完整 DTO/检查矩阵和回退边界见
+[WeCom 接入预检](../../docs/architecture-next/control-api/wecom-preflight-v1.md)。
+
+所有 Provider 共用原有每 principal/instance 每秒 2 次 claim 限流；不按 Provider 新增
+独立配额。普通 `wecom_connection` 与诊断 consumer 保持分离。此源码变更不修改现有
+运行配置；两个诊断 runner 的开关与有界连接实现由 Gateway 部署文档说明。

@@ -48,7 +48,7 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		}
 		kinds := map[string]bool{}
 		for _, kind := range p.Consumers {
-			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight"}, kind) {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight"}, kind) {
 				return nil, application.ErrWorkloadDenied
 			}
 			kinds[kind] = true

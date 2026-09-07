@@ -25,6 +25,7 @@ type Account struct {
 	Secret    string `json:"-"`
 }
 type Config struct {
+	WeComPreflightEnabled                                                 bool
 	TelegramPreflightEnabled                                              bool
 	telegramFactory                                                       telegramruntime.RemoteFactory
 	AccountSource                                                         string
@@ -64,6 +65,13 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if c.AccountSource == "control" {
+		switch envOr("GATEWAY_WECOM_PREFLIGHT_ENABLED", "true") {
+		case "true":
+			c.WeComPreflightEnabled = true
+		case "false":
+		default:
+			return Config{}, errors.New("invalid WeCom preflight enablement")
+		}
 		switch envOr("GATEWAY_TELEGRAM_PREFLIGHT_ENABLED", "true") {
 		case "true":
 			c.TelegramPreflightEnabled = true

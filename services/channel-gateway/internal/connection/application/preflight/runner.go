@@ -24,6 +24,7 @@ const (
 // Runner has one claim scheduler for this instance and four bounded execution
 // slots. It does not consult runtime account permits, catalog readiness or NATS.
 type Runner struct {
+	policy        string
 	control       Control
 	config        ConfigSnapshot
 	instanceEpoch string
@@ -31,7 +32,7 @@ type Runner struct {
 }
 
 func NewRunner(control Control, probe TelegramProbe, cfg ConfigSnapshot, instanceEpoch string) (*Runner, error) {
-	if control == nil || probe == nil || ValidateConfig(cfg) != nil || !catalog.ValidEpoch(instanceEpoch) {
+	if control == nil || probe == nil || ValidateConfig(cfg) != nil || cfg.Policy != "" || !catalog.ValidEpoch(instanceEpoch) {
 		return nil, ErrInvalid
 	}
 	// Capture pointer fields too: an external configuration mutation must not
@@ -41,7 +42,7 @@ func NewRunner(control Control, probe TelegramProbe, cfg ConfigSnapshot, instanc
 		cfg.PublicOrigin = &value
 	}
 	service := &Service{Control: control, Probe: probe}
-	return &Runner{control: control, config: cfg, instanceEpoch: instanceEpoch, execute: service.Execute}, nil
+	return &Runner{policy: wire.PreflightReceiveModesPolicy, control: control, config: cfg, instanceEpoch: instanceEpoch, execute: service.Execute}, nil
 }
 func (r *Runner) Run(ctx context.Context) error {
 	if ctx == nil || r == nil || r.control == nil || r.execute == nil {
@@ -124,7 +125,7 @@ func (r *Runner) newClaim() (ClaimRequest, error) {
 	id[6] = (id[6] & 0x0f) | 0x40
 	id[8] = (id[8] & 0x3f) | 0x80
 	requestID := fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:])
-	return ClaimRequest{DiagnosticPolicy: wire.PreflightReceiveModesPolicy, Config: r.config, InstanceEpoch: r.instanceEpoch, RequestID: requestID, Token: NewSecret(base64.RawURLEncoding.EncodeToString(token[:]))}, nil
+	return ClaimRequest{DiagnosticPolicy: r.policy, Config: r.config, InstanceEpoch: r.instanceEpoch, RequestID: requestID, Token: NewSecret(base64.RawURLEncoding.EncodeToString(token[:]))}, nil
 }
 func executionDeadlines(t0 time.Time, g Grant) (work, report time.Time) {
 	remaining := min(g.LeaseExpiresAt.Sub(g.ServerTime), g.JobDeadlineAt.Sub(g.ServerTime))
@@ -184,4 +185,12 @@ func minTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+func NewWeComRunner(control Control, probe WeComProbe, cfg ConfigSnapshot, instanceEpoch string) (*Runner, error) {
+	if control == nil || probe == nil || ValidateConfig(cfg) != nil || cfg.Policy != "wecom_long_connection_v1" || !catalog.ValidEpoch(instanceEpoch) {
+		return nil, ErrInvalid
+	}
+	service := &WeComService{Control: control, Probe: probe}
+	return &Runner{policy: cfg.Policy, control: control, config: cfg, instanceEpoch: instanceEpoch, execute: service.Execute}, nil
 }

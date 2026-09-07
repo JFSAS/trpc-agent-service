@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,9 +48,13 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 	if binary == "" || dsn == "" || natsFile == "" {
 		t.Skip("GATEWAY_CONTROL_PREFLIGHT_BINARY, GATEWAY_TEST_DATABASE_URL and GATEWAY_CONTROL_PREFLIGHT_NATS_FILE are required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	budget := 90 * time.Second
+	if os.Getenv("GATEWAY_PREFLIGHT_BROWSER_HANDOFF") != "" {
+		budget = 20 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	t.Cleanup(cancel)
-	database, pool := jointPreflightDatabase(t, ctx, dsn)
+	database, migrationDatabase, pool := jointPreflightDatabase(t, ctx, dsn)
 	dir := t.TempDir()
 	serverCert, serverKey, caFile, clientCert, roots := jointPreflightCertificates(t, dir)
 	publicAddress, publicReserve := jointPreflightAddress(t)
@@ -59,8 +64,8 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 	scope, epoch := "joint_preflight_pool", "44444444-4444-4444-8444-444444444444"
 	keys := jointPreflightJSONFile(t, dir, "keys.json", map[string]any{"active_key_id": "joint-key", "keys": map[string]any{"joint-key": map[string]string{"encryption_key": jointPreflightRandomKey(t), "mac_key": jointPreflightRandomKey(t)}}})
 	config := jointPreflightJSONFile(t, dir, "channel.json", map[string]any{
-		"scope_id": scope, "source_epoch": epoch, "internal_address": internalAddress, "tls_cert_file": serverCert, "tls_key_file": serverKey, "client_ca_file": caFile, "credential_keys_file": keys, "route_nats_file": natsFile, "max_tenant_accounts": 10,
-		"workloads": []any{map[string]any{"principal_id": "spiffe://trpc-agent-service/gateway/joint-preflight", "instance_id": "joint-preflight", "scope_id": scope, "audience": "control-channel-v1", "consumers": []string{"telegram_preflight", "telegram_registration"}}},
+		"scope_id": scope, "source_epoch": epoch, "internal_address": internalAddress, "tls_cert_file": serverCert, "tls_key_file": serverKey, "client_ca_file": caFile, "credential_keys_file": keys, "route_nats_file": natsFile, "max_tenant_accounts": 20,
+		"workloads": []any{map[string]any{"principal_id": "spiffe://trpc-agent-service/gateway/joint-preflight", "instance_id": "joint-preflight", "scope_id": scope, "audience": "control-channel-v1", "consumers": []string{"telegram_preflight", "telegram_registration", "wecom_preflight"}}},
 	})
 	env := jointPreflightProcessEnv()
 	digestCommand := exec.CommandContext(ctx, binary, "-print-deployment-contract-digest")
@@ -70,7 +75,7 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 		t.Fatal("prepare isolated Control execution contract digest failed")
 	}
 	const initialPassword = "Joint-bootstrap-Temporary-1234"
-	env = append(env, "CONTROL_DATABASE_URL="+database, "CONTROL_PROFILE_CREDENTIAL_KEY="+jointPreflightRandomKey(t), "CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST="+strings.TrimSpace(string(rawDigest)), "CONTROL_HTTP_ADDRESS="+publicAddress, "CONTROL_CHANNEL_CONFIG_FILE="+config, "CONTROL_SESSION_COOKIE_SECURE=false", "CONTROL_BOOTSTRAP_MODE=auto", "CONTROL_BOOTSTRAP_USERNAME=joint-admin", "CONTROL_BOOTSTRAP_PASSWORD="+initialPassword)
+	env = append(env, "CONTROL_DATABASE_URL="+database, "CONTROL_MIGRATION_DATABASE_URL="+migrationDatabase, "CONTROL_PROFILE_CREDENTIAL_KEY="+jointPreflightRandomKey(t), "CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST="+strings.TrimSpace(string(rawDigest)), "CONTROL_HTTP_ADDRESS="+publicAddress, "CONTROL_CHANNEL_CONFIG_FILE="+config, "CONTROL_SESSION_COOKIE_SECURE=false", "CONTROL_BOOTSTRAP_MODE=auto", "CONTROL_BOOTSTRAP_USERNAME=joint-admin", "CONTROL_BOOTSTRAP_PASSWORD="+initialPassword)
 	_ = publicReserve.Close()
 	_ = internalReserve.Close()
 	logs := jointPreflightStartControl(t, ctx, binary, env, "http://"+publicAddress)
@@ -187,7 +192,7 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 			if grant.PreflightID != created.PreflightID || grant.AccountID != account.Account.ID || grant.Credential.Version != tokenVersion || grant.ReceiveMode != tc.mode || grant.DiagnosticPolicy != wire.PreflightReceiveModesPolicy || grant.EffectiveConfigDigest == "" {
 				t.Fatal("claim did not preserve exact task/account/version")
 			}
-			resolved, err := gateway.ResolveBotToken(ctx, *grant)
+			resolved, err := gateway.ResolveCredential(ctx, *grant)
 			if err != nil || resolved.Reveal() != token {
 				t.Fatal("real exact BotToken resolve failed", err)
 			}
@@ -237,6 +242,7 @@ func TestPreflightGatewayClientAgainstControlBinary(t *testing.T) {
 			t.Logf("real Control process + PostgreSQL + mTLS: %s COMPLETED, eight checks, same-complete replay, eight runtime tables unchanged", tc.name)
 		})
 	}
+	jointWeComPreflight(t, ctx, public, base, tenant.ID, scope, epoch, gateway, pool, logs)
 }
 
 type jointPreflightProbe struct {
@@ -275,38 +281,58 @@ func (q *jointPreflightProbe) Inspect(ctx context.Context, r p.ProbeRequest) (p.
 	return result, nil
 }
 
-func jointPreflightDatabase(t *testing.T, ctx context.Context, dsn string) (string, *pgxpool.Pool) {
+// The production process binds fixed control schema/roles. Provision a separate
+// database plus new nonadministrative roles in an explicitly isolated PG17+
+// test cluster; never relax the production database ownership checks.
+func jointPreflightDatabase(t *testing.T, ctx context.Context, dsn string) (string, string, *pgxpool.Pool) {
 	t.Helper()
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		t.Fatal("connect isolated test PostgreSQL failed")
+		t.Fatal("open test admin")
 	}
 	t.Cleanup(admin.Close)
-	schema := "gateway_preflight_joint_" + hex.EncodeToString(jointPreflightRandomBytes(t, 8))
-	quoted := pgx.Identifier{schema}.Sanitize()
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
-		t.Fatalf("create dedicated Control schema failed: %s", jointPreflightErrorClass(err))
+	database := "wecom_joint_" + hex.EncodeToString(jointPreflightRandomBytes(t, 8))
+	runtimePassword := hex.EncodeToString(jointPreflightRandomBytes(t, 24))
+	migrationPassword := hex.EncodeToString(jointPreflightRandomBytes(t, 24))
+	for _, role := range []struct{ name, password string }{{"control_migrator", migrationPassword}, {"control_runtime", runtimePassword}} {
+		if _, err := admin.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role.name}.Sanitize()+" LOGIN PASSWORD '"+role.password+"' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"); err != nil {
+			t.Fatal("joint test needs its own PG cluster without existing Control roles", jointPreflightErrorClass(err))
+		}
+		name := role.name
+		t.Cleanup(func() {
+			if _, err := admin.Exec(context.Background(), "DROP ROLE "+pgx.Identifier{name}.Sanitize()); err != nil {
+				t.Error("drop test role", jointPreflightErrorClass(err))
+			}
+		})
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{database}.Sanitize()); err != nil {
+		t.Fatal("create test database")
 	}
 	t.Cleanup(func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		defer stop()
-		if _, err := admin.Exec(cleanup, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
-			t.Error("clean dedicated Control schema failed")
+		if _, err := admin.Exec(context.Background(), "DROP DATABASE "+pgx.Identifier{database}.Sanitize()+" WITH (FORCE)"); err != nil {
+			t.Error("drop test database")
 		}
 	})
 	parsed, err := url.Parse(dsn)
-	if err != nil || parsed.Scheme == "" {
-		t.Fatal("integration requires a PostgreSQL URL")
+	if err != nil {
+		t.Fatal("test DSN")
 	}
+	parsed.Path = "/" + database
 	query := parsed.Query()
-	query.Set("search_path", schema)
+	query.Set("search_path", "control")
 	parsed.RawQuery = query.Encode()
 	pool, err := pgxpool.New(ctx, parsed.String())
 	if err != nil {
-		t.Fatal("connect schema-isolated PostgreSQL failed")
+		t.Fatal("open isolated database")
 	}
 	t.Cleanup(pool.Close)
-	return parsed.String(), pool
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA control AUTHORIZATION control_migrator; REVOKE ALL ON SCHEMA control FROM PUBLIC; GRANT USAGE ON SCHEMA control TO control_runtime; REVOKE CREATE ON SCHEMA public FROM PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE control_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE control_migrator IN SCHEMA control GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO control_runtime; ALTER DEFAULT PRIVILEGES FOR ROLE control_migrator IN SCHEMA control GRANT USAGE, SELECT ON SEQUENCES TO control_runtime"); err != nil {
+		t.Fatal("provision isolated database roles", jointPreflightErrorClass(err))
+	}
+	parsed.User = url.UserPassword("control_runtime", runtimePassword)
+	runtimeURL := parsed.String()
+	parsed.User = url.UserPassword("control_migrator", migrationPassword)
+	return runtimeURL, parsed.String(), pool
 }
 func jointPreflightRuntimeHashes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) map[string]string {
 	t.Helper()
@@ -348,6 +374,21 @@ func (l *jointPreflightLogs) contains(value string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return bytes.Contains(l.body.Bytes(), []byte(value))
+}
+
+// Emit only the startup error, never request or debug logs. URI credentials and
+// long opaque key/token material are redacted even in isolated test failures.
+func (l *jointPreflightLogs) failureSummary() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, line := range strings.Split(l.body.String(), "\n") {
+		if _, msg, ok := strings.Cut(line, "control-api stopped with error: "); ok {
+			msg = regexp.MustCompile(`(?:postgres(?:ql)?|nats|https?)://[^\s]+`).ReplaceAllString(msg, "[REDACTED_URL]")
+			msg = regexp.MustCompile(`[A-Za-z0-9_+/=-]{32,}`).ReplaceAllString(msg, "[REDACTED_OPAQUE]")
+			return msg
+		}
+	}
+	return "no stable startup error"
 }
 func (l *jointPreflightLogs) digest() string {
 	l.mu.Lock()
@@ -393,7 +434,7 @@ func jointPreflightStartControl(t *testing.T, ctx context.Context, binary string
 	for time.Now().Before(deadline) {
 		select {
 		case <-done:
-			t.Fatalf("Control exited before health: %v; log SHA-256 %s", processErr, logs.digest())
+			t.Fatalf("Control exited before health: %v; log SHA-256 %s; %s", processErr, logs.digest(), logs.failureSummary())
 		default:
 		}
 		request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/healthz", nil)

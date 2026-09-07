@@ -14,16 +14,16 @@
       "$ref": "common.schema.json#/$defs/id"
     },
     "provider": {
-      "const": "telegram"
+      "enum": [
+        "telegram",
+        "wecom"
+      ]
     },
     "provider_account_id": {
       "type": "string",
       "minLength": 1,
       "maxLength": 1024,
-      "pattern": "^[1-9][0-9]*$",
-      "not": {
-        "pattern": "[^0-9]"
-      }
+      "pattern": "^[^\\s]+$"
     },
     "requested_by": {
       "$ref": "common.schema.json#/$defs/id"
@@ -175,16 +175,26 @@
       ]
     },
     "diagnostic_policy": {
-      "const": "telegram-receive-modes-v1"
+      "enum": [
+        "telegram-receive-modes-v1",
+        "wecom_long_connection_v1"
+      ]
     },
     "receive_mode": {
       "enum": [
         "long_polling",
-        "webhook"
+        "webhook",
+        "long_connection"
       ]
     },
     "effective_config_digest": {
       "$ref": "common.schema.json#/$defs/digest"
+    },
+    "allow_connection_probe": {
+      "const": true
+    },
+    "bot_secret_version": {
+      "$ref": "common.schema.json#/$defs/version"
     }
   },
   "required": [
@@ -196,7 +206,6 @@
     "requested_by",
     "account_revision",
     "connection_revision",
-    "bot_token_version",
     "state",
     "outcome",
     "reason_code",
@@ -420,6 +429,127 @@
             {
               "required": [
                 "effective_config_digest"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
+          }
+        },
+        "required": [
+          "diagnostic_policy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receive_mode": {
+            "const": "long_connection"
+          },
+          "expected_public_origin": {
+            "const": null
+          },
+          "origin_status": {
+            "const": "PUBLIC_ORIGIN_NOT_APPLICABLE"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "receive_mode": {
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
+          },
+          "origin_status": {
+            "enum": [
+              "PUBLIC_ORIGIN_STATIC_VALID",
+              "PUBLIC_ORIGIN_INVALID",
+              "PUBLIC_ORIGIN_NOT_PUBLIC"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "wecom"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "properties": {
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
+          },
+          "receive_mode": {
+            "const": "long_connection"
+          },
+          "allow_connection_probe": {
+            "const": true
+          }
+        },
+        "required": [
+          "diagnostic_policy",
+          "receive_mode",
+          "allow_connection_probe",
+          "bot_secret_version"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "bot_token_version"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "properties": {
+          "provider_account_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[1-9][0-9]*$",
+            "not": {
+              "pattern": "[^0-9]"
+            }
+          },
+          "diagnostic_policy": {
+            "const": "telegram-receive-modes-v1"
+          },
+          "receive_mode": {
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
+          }
+        },
+        "required": [
+          "bot_token_version"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "bot_secret_version"
+              ]
+            },
+            {
+              "required": [
+                "allow_connection_probe"
               ]
             }
           ]

@@ -79,7 +79,14 @@ func scanPreflight(row pgx.Row) (application.PreflightRecord, bool, error) {
 
 func validatePreflightRecord(r application.PreflightRecord) error {
 	v := r.View
-	if !domain.ValidID(r.ScopeID) || !domain.ValidEpoch(r.SourceEpoch) || !domain.ValidID(r.CredentialID) || r.WebhookPath != "/v1/telegram/"+v.AccountID || v.ConnectionRevision > v.AccountRevision || v.BotTokenVersion > v.ConnectionRevision || v.RequestedAt.IsZero() || !v.JobDeadlineAt.Equal(v.RequestedAt.Add(120*time.Second)) || r.LastCheckedAt.Before(v.RequestedAt) {
+	if !domain.ValidID(r.ScopeID) || !domain.ValidEpoch(r.SourceEpoch) || !domain.ValidID(r.CredentialID) || v.ConnectionRevision > v.AccountRevision || v.CredentialVersion() > v.ConnectionRevision || v.RequestedAt.IsZero() || !v.JobDeadlineAt.Equal(v.RequestedAt.Add(120*time.Second)) || r.LastCheckedAt.Before(v.RequestedAt) {
+		return integrity()
+	}
+	if v.Provider == "wecom" {
+		if !v.AllowConnectionProbe || r.WebhookPath != "" || r.WebhookSecretConfigured || r.BotTokenConfigured {
+			return integrity()
+		}
+	} else if r.WebhookPath != "/v1/telegram/"+v.AccountID || v.AllowConnectionProbe || r.BotSecretConfigured {
 		return integrity()
 	}
 	raw, err := json.Marshal(v)
@@ -107,7 +114,7 @@ func validatePreflightRecord(r application.PreflightRecord) error {
 		} else if r.GatewayPublicOrigin != nil {
 			return integrity()
 		}
-		digest, err := channelv1.PreflightConfigDigest(r.ScopeID, r.SourceEpoch, origin, r.OriginStatus)
+		digest, err := channelv1.PreflightConfigDigestForPolicy(v.DiagnosticPolicy, r.ScopeID, r.SourceEpoch, origin, r.OriginStatus)
 		if err != nil || digest != *v.GatewayConfigDigest {
 			return integrity()
 		}
@@ -137,7 +144,7 @@ func preflightActive(state string) bool { return state == "QUEUED" || state == "
 
 func validatePreflightChange(old, next application.PreflightRecord) error {
 	a, b := old.View, next.View
-	if a.ReceiveMode != b.ReceiveMode || a.DiagnosticPolicy != b.DiagnosticPolicy || old.ScopeID != next.ScopeID || old.SourceEpoch != next.SourceEpoch || old.CredentialID != next.CredentialID || old.BotTokenConfigured != next.BotTokenConfigured || old.WebhookSecretConfigured != next.WebhookSecretConfigured || old.WebhookPath != next.WebhookPath || a.PreflightID != b.PreflightID || a.TenantID != b.TenantID || a.AccountID != b.AccountID || a.RequestedBy != b.RequestedBy || a.Provider != b.Provider || a.ProviderAccountID != b.ProviderAccountID || a.AccountRevision != b.AccountRevision || a.ConnectionRevision != b.ConnectionRevision || a.BotTokenVersion != b.BotTokenVersion || !a.RequestedAt.Equal(b.RequestedAt) || !a.JobDeadlineAt.Equal(b.JobDeadlineAt) || next.LastCheckedAt.Before(old.LastCheckedAt) {
+	if a.AllowConnectionProbe != b.AllowConnectionProbe || a.BotSecretVersion != b.BotSecretVersion || old.BotSecretConfigured != next.BotSecretConfigured || a.ReceiveMode != b.ReceiveMode || a.DiagnosticPolicy != b.DiagnosticPolicy || old.ScopeID != next.ScopeID || old.SourceEpoch != next.SourceEpoch || old.CredentialID != next.CredentialID || old.BotTokenConfigured != next.BotTokenConfigured || old.WebhookSecretConfigured != next.WebhookSecretConfigured || old.WebhookPath != next.WebhookPath || a.PreflightID != b.PreflightID || a.TenantID != b.TenantID || a.AccountID != b.AccountID || a.RequestedBy != b.RequestedBy || a.Provider != b.Provider || a.ProviderAccountID != b.ProviderAccountID || a.AccountRevision != b.AccountRevision || a.ConnectionRevision != b.ConnectionRevision || a.BotTokenVersion != b.BotTokenVersion || !a.RequestedAt.Equal(b.RequestedAt) || !a.JobDeadlineAt.Equal(b.JobDeadlineAt) || next.LastCheckedAt.Before(old.LastCheckedAt) {
 		return integrity()
 	}
 	if !preflightActive(a.State) {

@@ -64,6 +64,10 @@ func TestChannelWorkloadConsumersAreClosedAndDiagnosticIsExplicit(t *testing.T) 
 		change func([]channelWorkloadConfig) []channelWorkloadConfig
 		valid  bool
 	}{
+		{"wecom diagnostics only", func(v []channelWorkloadConfig) []channelWorkloadConfig {
+			v[0].Consumers = []string{"wecom_preflight"}
+			return v
+		}, true},
 		{"diagnostics only", func(v []channelWorkloadConfig) []channelWorkloadConfig { return v }, true},
 		{"runtime plus diagnostics", func(v []channelWorkloadConfig) []channelWorkloadConfig {
 			v[0].Consumers = []string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_preflight"}

@@ -198,6 +198,18 @@ deployed baseline. See [runtime operations](CHANNEL_RUNTIME.md#5-telegram-只读
 and the [frozen contract](../../docs/architecture-next/control-api/telegram-preflight-v1.md).
 Control integration tests do not stand in for Gateway/Telegram/Web acceptance.
 
+The same preflight endpoints now also accept WeCom accounts with explicit
+`allow_connection_probe: true` and `expected_bot_secret_version`. This is a real
+short-lived subscription probe, not a read-only API: it may replace another Bot
+client. The independent `wecom_preflight` workload consumer resolves only the
+fixed Bot Secret, while `wecom_long_connection_v1` selects three closed checks.
+A PASS never claims message delivery or an Agent reply. The Telegram wire and
+historical results remain compatible; no new endpoint or table is added.
+`0004_wecom_preflights.sql` preserves older SQL and makes the completion-count
+constraint provider-specific (Telegram eight checks, confirmed WeCom three).
+See [WeCom Control contract](../../docs/architecture-next/control-api/wecom-preflight-v1.md)
+and [workload configuration](CHANNEL_RUNTIME.md#7-wecom-显式连接预检).
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |

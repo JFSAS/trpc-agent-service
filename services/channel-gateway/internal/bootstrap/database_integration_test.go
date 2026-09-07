@@ -6,14 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/migrations"
 )
 
 // This test requires a provisioned, disposable V1 database. Unlike historical
@@ -41,9 +44,19 @@ func TestGatewayV1DatabaseRoleContract(t *testing.T) {
 			if target.schema != "gateway" {
 				t.Fatalf("expected gateway schema, got %q", target.schema)
 			}
-			var migrations int
-			if err := pool.QueryRow(ctx, "SELECT count(*) FROM gateway_schema_migrations").Scan(&migrations); err != nil || migrations != 11 {
-				t.Fatalf("migration ledger readable: count=%d err=%v", migrations, err)
+			// Published sibling migrations retain full filenames as identities.
+			// Compare the complete embedded set, not a stale single-branch count.
+			expected, err := fs.Glob(migrations.Files, "*.sql")
+			if err != nil || len(expected) == 0 {
+				t.Fatal("read embedded migration names")
+			}
+			rows, err := pool.Query(ctx, "SELECT version FROM gateway_schema_migrations ORDER BY version")
+			if err != nil {
+				t.Fatal("read migration ledger")
+			}
+			actual, err := pgx.CollectRows(rows, pgx.RowTo[string])
+			if err != nil || !slices.Equal(actual, expected) {
+				t.Fatalf("migration ledger readable: got %v, want %v, err=%v", actual, expected, err)
 			}
 			// A false predicate makes the privilege probes non-mutating even if a
 			// broken deployment accidentally grants these statements permission.

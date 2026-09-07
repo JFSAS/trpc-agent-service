@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gowebpki/jcs"
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 )
 
@@ -35,6 +36,17 @@ func NewConfig(scope, epoch, rawOrigin string) (ConfigSnapshot, error) {
 // ValidateConfig requires an already canonical, internally consistent snapshot.
 // It does not turn an arbitrary claimed digest into a trusted configuration.
 func ValidateConfig(cfg ConfigSnapshot) error {
+	if cfg.Policy == "wecom_long_connection_v1" {
+		digest, err := wire.PreflightConfigDigestForPolicy(cfg.Policy, cfg.ScopeID, cfg.SourceEpoch, cfg.PublicOrigin, cfg.OriginStatus)
+		if err != nil || digest != cfg.Digest {
+			return ErrInvalid
+		}
+		return nil
+	}
+	if cfg.Policy != "" {
+		return ErrInvalid
+	}
+
 	if !accountcatalog.ValidID(cfg.ScopeID) || !accountcatalog.ValidEpoch(cfg.SourceEpoch) {
 		return ErrInvalid
 	}
@@ -180,4 +192,15 @@ func publicLiteral(addr netip.Addr) bool {
 		}
 	}
 	return true
+}
+
+// NewWeComConfig has no inbound/public-origin dependency or caller-controlled endpoint.
+func NewWeComConfig(scope, epoch string) (ConfigSnapshot, error) {
+	cfg := ConfigSnapshot{Policy: "wecom_long_connection_v1", ScopeID: scope, SourceEpoch: epoch, OriginStatus: "PUBLIC_ORIGIN_NOT_APPLICABLE"}
+	var err error
+	cfg.Digest, err = wire.PreflightConfigDigestForPolicy(cfg.Policy, scope, epoch, nil, cfg.OriginStatus)
+	if err != nil {
+		return ConfigSnapshot{}, ErrInvalid
+	}
+	return cfg, nil
 }

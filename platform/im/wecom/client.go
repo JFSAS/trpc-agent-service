@@ -23,6 +23,7 @@ type Client struct {
 	done     chan struct{}
 	current  *session
 	snapshot StateSnapshot
+	authAck  *CommandAck // matched ACK for this generation, independent of socket liveness
 	states   chan StateSnapshot
 	events   chan queuedEvent
 	notices  chan queuedEvent
@@ -72,6 +73,7 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 			return nil, ErrInvalidConfig
 		}
 	}
+	options.httpClient = handshakeClient(options.httpClient)
 	c := &Client{cfg: cfg, opts: options, done: make(chan struct{}), states: make(chan StateSnapshot, cfg.StateBuffer), events: make(chan queuedEvent, cfg.EventBuffer), notices: make(chan queuedEvent, 1)}
 	c.setStateLocked(StateIdle, 0, "")
 	return c, nil
@@ -181,12 +183,18 @@ func (c *Client) Run(ctx context.Context, handler Handler) (result error) {
 			s := &session{client: c, conn: conn, ctx: sessionCtx, cancel: sessionCancel, gen: gen, pending: make(map[string]*pending), used: make(map[string]ErrorCode), writer: make(chan struct{}, 1), readDone: make(chan struct{})}
 			c.mu.Lock()
 			c.current = s
+			c.authAck = nil
 			c.setStateLocked(StateAuthenticating, gen, "")
 			c.mu.Unlock()
 			go s.read()
-			_, authErr := c.command(runCtx, s, requestID("aibot_subscribe"), "auth", map[string]any{"cmd": "aibot_subscribe", "body": map[string]string{"bot_id": c.cfg.BotID, "secret": c.cfg.Secret}})
+			authAck, authErr := c.command(runCtx, s, requestID("aibot_subscribe"), "auth", map[string]any{"cmd": "aibot_subscribe", "body": map[string]string{"bot_id": c.cfg.BotID, "secret": c.cfg.Secret}})
 			if authErr != nil {
-				s.fail(ErrAuth)
+				failure := &AuthenticationError{Certainty: Unknown, Code: CodeAckTimeout, ProviderCode: authAck.ErrCode}
+				var commandFailure *CommandError
+				if errors.As(authErr, &commandFailure) {
+					failure.Certainty, failure.Code = commandFailure.Certainty, commandFailure.Code
+				}
+				s.fail(failure)
 			}
 			heartbeatDone := make(chan struct{})
 			if authErr == nil {
@@ -201,6 +209,11 @@ func (c *Client) Run(ctx context.Context, handler Handler) (result error) {
 			c.mu.Lock()
 			result = s.err
 			c.current = nil
+			// An explicit rejection is terminal authentication evidence. A later
+			// socket close must not turn it into a retryable disconnect.
+			if c.authAck != nil && c.authAck.ErrCode != 0 {
+				result = &AuthenticationError{Certainty: Rejected, Code: CodeRejected, ProviderCode: c.authAck.ErrCode}
+			}
 			c.mu.Unlock()
 		}
 		if runCtx.Err() != nil {

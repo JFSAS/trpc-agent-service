@@ -119,7 +119,7 @@ func preflightError(c *gin.Context, err error) {
 		case "CHANNEL_PREFLIGHT_NOT_FOUND":
 			writeError(c, 404, d.Code, d.Field)
 			return
-		case "CHANNEL_PREFLIGHT_PROVIDER_UNSUPPORTED":
+		case "CHANNEL_PREFLIGHT_PROVIDER_UNSUPPORTED", "CHANNEL_PREFLIGHT_CONNECTION_PROBE_CONFIRMATION_REQUIRED":
 			writeError(c, 422, d.Code, d.Field)
 			return
 		case "CHANNEL_PREFLIGHT_RATE_LIMITED":

@@ -42,3 +42,14 @@ databases apply this file once through the normal embedded migration runner.
 The diagnostic wire protocol remains V1; a numbered SQL migration is not a
 new product/API version. Rollback testing uses an isolated database/schema copy,
 not table removal from an existing deployment.
+
+
+`0003_telegram_receive_modes.sql` preserves old Telegram accounts as explicit
+webhook and introduces exact physical-Bot uniqueness and mode-aware observations.
+
+`0004_wecom_preflights.sql` replaces only the completed-check-count constraint on
+`channel_preflights`: Telegram keeps eight checks, while WeCom requires three
+checks plus `wecom_long_connection_v1`, `long_connection`, and an explicit true
+connection-probe confirmation. The Provider branch rejects SQL NULL rather than
+silently accepting missing metadata. No table, operational record or earlier SQL
+file is rewritten. Apply this additive migration before accepting WeCom probes.

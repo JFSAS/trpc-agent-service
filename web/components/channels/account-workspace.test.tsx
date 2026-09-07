@@ -47,11 +47,13 @@ describe("Channel workspace command semantics", () => {
     expect(await screen.findByTestId("preflight-panel")).toBeInTheDocument();
     expect(mocks.setAccountEnabled).not.toHaveBeenCalled(); expect(mocks.setBindingEnabled).not.toHaveBeenCalled();
   });
-  it("does not show the Telegram preflight action for WeCom", async () => {
+  it("opens the distinct WeCom diagnostic without changing account or routing", async () => {
     current.account.provider = "wecom"; current.account.config = { bot_id: "wecom-bot" }; await open();
     expect(screen.queryByRole("button", { name: "查看接入预检" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "连接诊断" }));
-    expect(screen.queryByTestId("preflight-panel")).not.toBeInTheDocument();
+    expect(screen.getByText(/可能替换同一 Bot 的其他客户端/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看企微接入诊断" }));
+    expect(screen.getByTestId("preflight-panel")).toBeInTheDocument();
+    expect(mocks.setAccountEnabled).not.toHaveBeenCalled(); expect(mocks.setBindingEnabled).not.toHaveBeenCalled();
   });
   it("shows the saved deployment name with its fixed revision and keeps its ID in technical details", async () => {
     current.binding!.target.deployment_id = "dpl_long_technical_identity";

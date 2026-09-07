@@ -55,22 +55,22 @@
       "maxLength": 35
     },
     "checks": {
-      "anyOf": [
-        {
-          "$ref": "preflight-checks.schema.json#/$defs/webhook"
-        },
-        {
-          "$ref": "preflight-checks.schema.json#/$defs/long_polling"
-        }
-      ]
+      "type": "array",
+      "items": {},
+      "minItems": 3,
+      "maxItems": 8
     },
     "diagnostic_policy": {
-      "const": "telegram-receive-modes-v1"
+      "enum": [
+        "telegram-receive-modes-v1",
+        "wecom_long_connection_v1"
+      ]
     },
     "receive_mode": {
       "enum": [
         "long_polling",
-        "webhook"
+        "webhook",
+        "long_connection"
       ]
     },
     "effective_config_digest": {
@@ -83,7 +83,8 @@
       "enum": [
         "PUBLIC_ORIGIN_STATIC_VALID",
         "PUBLIC_ORIGIN_INVALID",
-        "PUBLIC_ORIGIN_NOT_PUBLIC"
+        "PUBLIC_ORIGIN_NOT_PUBLIC",
+        "PUBLIC_ORIGIN_NOT_APPLICABLE"
       ]
     }
   },
@@ -150,25 +151,86 @@
     {
       "if": {
         "properties": {
-          "receive_mode": {
-            "const": "long_polling"
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
           }
         },
         "required": [
-          "receive_mode"
+          "diagnostic_policy"
         ]
       },
       "then": {
         "properties": {
           "checks": {
-            "$ref": "preflight-checks.schema.json#/$defs/long_polling"
+            "$ref": "preflight-checks.schema.json#/$defs/long_connection"
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "properties": {
+            "receive_mode": {
+              "const": "long_polling"
+            }
+          },
+          "required": [
+            "receive_mode"
+          ]
+        },
+        "then": {
+          "properties": {
+            "checks": {
+              "$ref": "preflight-checks.schema.json#/$defs/long_polling"
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "checks": {
+              "$ref": "preflight-checks.schema.json#/$defs/webhook"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "diagnostic_policy": {
+            "const": "wecom_long_connection_v1"
+          }
+        },
+        "required": [
+          "diagnostic_policy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receive_mode": {
+            "const": "long_connection"
+          },
+          "expected_public_origin": {
+            "const": null
+          },
+          "origin_status": {
+            "const": "PUBLIC_ORIGIN_NOT_APPLICABLE"
           }
         }
       },
       "else": {
         "properties": {
-          "checks": {
-            "$ref": "preflight-checks.schema.json#/$defs/webhook"
+          "receive_mode": {
+            "enum": [
+              "long_polling",
+              "webhook"
+            ]
+          },
+          "origin_status": {
+            "enum": [
+              "PUBLIC_ORIGIN_STATIC_VALID",
+              "PUBLIC_ORIGIN_INVALID",
+              "PUBLIC_ORIGIN_NOT_PUBLIC"
+            ]
           }
         }
       }

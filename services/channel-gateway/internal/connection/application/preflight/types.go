@@ -28,6 +28,7 @@ func (s Secret) GoString() string             { return "[REDACTED]" }
 func (s Secret) MarshalJSON() ([]byte, error) { return []byte(`"[REDACTED]"`), nil }
 
 type ConfigSnapshot struct {
+	Policy                                     string
 	ScopeID, SourceEpoch, Digest, OriginStatus string
 	PublicOrigin                               *string
 }
@@ -43,6 +44,7 @@ type Credential struct {
 	Configured  bool
 }
 type Grant struct {
+	AllowConnectionProbe                                   bool
 	ReceiveMode, DiagnosticPolicy, EffectiveConfigDigest   string
 	PreflightID, ScopeID, SourceEpoch, TenantID, AccountID string
 	Provider, ProviderAccountID, WebhookPath               string
@@ -85,9 +87,18 @@ type ProbeRequest struct {
 }
 type Control interface {
 	Claim(context.Context, ClaimRequest) (*Grant, error)
-	ResolveBotToken(context.Context, Grant) (Secret, error)
+	ResolveCredential(context.Context, Grant) (Secret, error)
 	Complete(context.Context, Grant, Result) error
 }
 type TelegramProbe interface {
 	Inspect(context.Context, ProbeRequest) (ProbeResult, error)
+}
+
+// WeComProbe creates one explicitly authorized subscription, then releases it.
+type WeComProbe interface {
+	InspectConnection(context.Context, Secret, string) (ConnectionProbeResult, error)
+}
+type ConnectionProbeResult struct {
+	Code          string
+	Authenticated *bool
 }

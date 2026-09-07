@@ -39,7 +39,7 @@ func (*serviceControl) Claim(context.Context, ClaimRequest) (*Grant, error) {
 func (*serviceControl) Complete(context.Context, Grant, Result) error {
 	panic("service must not complete")
 }
-func (c *serviceControl) ResolveBotToken(ctx context.Context, g Grant) (Secret, error) {
+func (c *serviceControl) ResolveCredential(ctx context.Context, g Grant) (Secret, error) {
 	c.calls++
 	if c.resolve != nil {
 		return c.resolve(ctx, g)

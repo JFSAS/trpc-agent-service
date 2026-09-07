@@ -170,6 +170,7 @@ func TestPreflightPublicErrorMappingNeverLeaksDependencyText(t *testing.T) {
 		{"missing preflight", &domain.Error{Code: "CHANNEL_PREFLIGHT_NOT_FOUND"}, 404, "CHANNEL_PREFLIGHT_NOT_FOUND"},
 		{"rate", &domain.Error{Code: "CHANNEL_PREFLIGHT_RATE_LIMITED"}, 429, "CHANNEL_PREFLIGHT_RATE_LIMITED"},
 		{"provider", &domain.Error{Code: "CHANNEL_PREFLIGHT_PROVIDER_UNSUPPORTED"}, 422, "CHANNEL_PREFLIGHT_PROVIDER_UNSUPPORTED"},
+		{"connection consent", &domain.Error{Code: "CHANNEL_PREFLIGHT_CONNECTION_PROBE_CONFIRMATION_REQUIRED"}, 422, "CHANNEL_PREFLIGHT_CONNECTION_PROBE_CONFIRMATION_REQUIRED"},
 		{"revision", &domain.Error{Code: domain.RevisionConflict}, 409, domain.RevisionConflict},
 		{"dependency", errors.New("SECRET_PROVIDER_RAW_ERROR"), 503, "CHANNEL_DEPENDENCY_UNAVAILABLE"},
 	} {
@@ -229,5 +230,14 @@ func TestPreflightVisibleAccountPermissionFailureRemainsForbidden(t *testing.T) 
 	response := preflightRequest(preflightRouter(service, &identityapp.IdentityContext{UserID: "usr_member"}, reader), "POST", preflightPublicBase, preflightCreateBody)
 	if response.Code != 403 || service.creates != 1 || reader.calls != 1 {
 		t.Fatalf("status=%d calls=%d visibility=%d", response.Code, service.creates, reader.calls)
+	}
+}
+
+func TestWeComPreflightCreateTransportsExplicitConsentAndSecretVersion(t *testing.T) {
+	s := &preflightServiceFake{}
+	r := preflightRouter(s, &identityapp.IdentityContext{UserID: "usr_owner"})
+	w := preflightRequest(r, http.MethodPost, preflightPublicBase, `{"expected_account_revision":7,"expected_connection_revision":4,"expected_bot_secret_version":2,"allow_connection_probe":true}`)
+	if w.Code != 202 || !s.input.AllowConnectionProbe || s.input.ExpectedBotSecretVersion != 2 || s.input.ExpectedBotTokenVersion != 0 {
+		t.Fatal("WeCom DTO", w.Code)
 	}
 }

@@ -1718,6 +1718,391 @@
           ]
         }
       ]
+    },
+    "long_connection": {
+      "type": "array",
+      "items": {},
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "credential_configuration"
+                },
+                "status": {
+                  "const": "PASS"
+                },
+                "code": {
+                  "const": "CREDENTIALS_CONFIGURED"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "bot_secret_configured": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "bot_secret_configured"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "credential_configuration"
+                },
+                "status": {
+                  "const": "FAIL"
+                },
+                "code": {
+                  "const": "BOT_SECRET_MISSING"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "bot_secret_configured": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "bot_secret_configured"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "PASS"
+                },
+                "code": {
+                  "const": "WECOM_AUTHENTICATED"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "FAIL"
+                },
+                "code": {
+                  "const": "WECOM_AUTH_REJECTED"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "SKIPPED"
+                },
+                "code": {
+                  "const": "NOT_EXECUTED"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": null
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "UNKNOWN"
+                },
+                "code": {
+                  "const": "PROVIDER_NETWORK"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": null
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "UNKNOWN"
+                },
+                "code": {
+                  "const": "PROVIDER_TIMEOUT"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": null
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "UNKNOWN"
+                },
+                "code": {
+                  "const": "PROVIDER_RESPONSE_INVALID"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": null
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "UNKNOWN"
+                },
+                "code": {
+                  "const": "PROVIDER_UNAVAILABLE"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": null
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "connection_authentication"
+                },
+                "status": {
+                  "const": "UNKNOWN"
+                },
+                "code": {
+                  "const": "WECOM_CONNECTION_REPLACED"
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "authenticated": {
+                      "const": null
+                    }
+                  },
+                  "required": [
+                    "authenticated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "const": "delivery_verification"
+                },
+                "status": {
+                  "const": "UNKNOWN"
+                },
+                "code": {
+                  "enum": [
+                    "DELIVERY_NOT_TESTED"
+                  ]
+                },
+                "details": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "verification": {
+                      "const": "NOT_TESTED"
+                    }
+                  },
+                  "required": [
+                    "verification"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "code",
+                "details"
+              ]
+            }
+          ]
+        }
+      ]
     }
   },
   "oneOf": [
@@ -1746,6 +2131,22 @@
         },
         "checks": {
           "$ref": "#/$defs/long_polling"
+        }
+      },
+      "required": [
+        "receive_mode",
+        "checks"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receive_mode": {
+          "const": "long_connection"
+        },
+        "checks": {
+          "$ref": "#/$defs/long_connection"
         }
       },
       "required": [

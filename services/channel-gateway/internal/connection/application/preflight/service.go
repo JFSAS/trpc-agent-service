@@ -30,7 +30,7 @@ func ValidateGrant(g Grant, cfg ConfigSnapshot) error {
 			return ErrInvalid
 		}
 	} else {
-		if g.DiagnosticPolicy != wire.PreflightReceiveModesPolicy {
+		if g.DiagnosticPolicy != wire.PreflightReceiveModesPolicy && g.DiagnosticPolicy != "wecom_long_connection_v1" {
 			return ErrInvalid
 		}
 		effective, e := wire.PreflightEffectiveConfigDigest(g.ScopeID, g.SourceEpoch, g.ReceiveMode, g.ConnectionRevision, cfg.PublicOrigin, cfg.OriginStatus)
@@ -45,10 +45,17 @@ func ValidateGrant(g Grant, cfg ConfigSnapshot) error {
 	if g.ScopeID != cfg.ScopeID || g.SourceEpoch != cfg.SourceEpoch || g.ConfigDigest != cfg.Digest || !sameConfig(g.Request.Config, cfg) {
 		return ErrConflict
 	}
-	if !accountcatalog.ValidID(g.PreflightID) || !accountcatalog.ValidID(g.TenantID) || !accountcatalog.ValidID(g.AccountID) || g.Provider != "telegram" || !positiveDecimal(g.ProviderAccountID) || g.WebhookPath != "/v1/telegram/"+g.AccountID || !accountcatalog.ValidRevision(g.AccountRevision) || !accountcatalog.ValidRevision(g.ConnectionRevision) || g.ConnectionRevision > g.AccountRevision || g.LeaseEpoch < 1 || g.LeaseEpoch > 2 {
+	if !accountcatalog.ValidID(g.PreflightID) || !accountcatalog.ValidID(g.TenantID) || !accountcatalog.ValidID(g.AccountID) || !accountcatalog.ValidRevision(g.AccountRevision) || !accountcatalog.ValidRevision(g.ConnectionRevision) || g.ConnectionRevision > g.AccountRevision || g.LeaseEpoch < 1 || g.LeaseEpoch > 2 {
 		return ErrInvalid
 	}
-	if g.Credential.Purpose != "telegram.bot_token" || !accountcatalog.ValidID(g.Credential.ID) || !accountcatalog.ValidRevision(g.Credential.Version) || !accountcatalog.ValidEpoch(g.Request.InstanceEpoch) || !accountcatalog.ValidEpoch(g.Request.RequestID) {
+	if !accountcatalog.ValidID(g.Credential.ID) || !accountcatalog.ValidRevision(g.Credential.Version) || !accountcatalog.ValidEpoch(g.Request.InstanceEpoch) || !accountcatalog.ValidEpoch(g.Request.RequestID) {
+		return ErrInvalid
+	}
+	if g.Provider == "wecom" {
+		if cfg.Policy != "wecom_long_connection_v1" || g.DiagnosticPolicy != cfg.Policy || g.ReceiveMode != "long_connection" || !g.AllowConnectionProbe || g.WebhookPath != "" || g.WebhookSecretConfigured || g.Credential.Purpose != "wecom.bot_secret" || !validWeComIdentity(g.ProviderAccountID) {
+			return ErrInvalid
+		}
+	} else if g.Provider != "telegram" || cfg.Policy != "" || g.DiagnosticPolicy == "wecom_long_connection_v1" || g.AllowConnectionProbe || !positiveDecimal(g.ProviderAccountID) || g.WebhookPath != "/v1/telegram/"+g.AccountID || g.Credential.Purpose != "telegram.bot_token" {
 		return ErrInvalid
 	}
 	token, err := base64.RawURLEncoding.DecodeString(g.Request.Token.Reveal())
@@ -72,6 +79,9 @@ func (s Service) Execute(ctx context.Context, g Grant, cfg ConfigSnapshot) (Resu
 	if ctx == nil {
 		return Result{}, ErrInvalid
 	}
+	if g.Provider != "telegram" {
+		return Result{}, ErrInvalid
+	}
 	if err := ValidateGrant(g, cfg); err != nil {
 		return Result{}, err
 	}
@@ -85,7 +95,7 @@ func (s Service) Execute(ctx context.Context, g Grant, cfg ConfigSnapshot) (Resu
 		if s.Control == nil || s.Probe == nil {
 			return Result{}, ErrInvalid
 		}
-		token, err := s.Control.ResolveBotToken(ctx, g)
+		token, err := s.Control.ResolveCredential(ctx, g)
 		if err != nil {
 			return Result{}, stableError(err)
 		}
@@ -116,7 +126,7 @@ func (s Service) Execute(ctx context.Context, g Grant, cfg ConfigSnapshot) (Resu
 }
 
 func sameConfig(a, b ConfigSnapshot) bool {
-	return a.ScopeID == b.ScopeID && a.SourceEpoch == b.SourceEpoch && a.Digest == b.Digest && a.OriginStatus == b.OriginStatus && (a.PublicOrigin == nil && b.PublicOrigin == nil || a.PublicOrigin != nil && b.PublicOrigin != nil && *a.PublicOrigin == *b.PublicOrigin)
+	return a.Policy == b.Policy && a.ScopeID == b.ScopeID && a.SourceEpoch == b.SourceEpoch && a.Digest == b.Digest && a.OriginStatus == b.OriginStatus && (a.PublicOrigin == nil && b.PublicOrigin == nil || a.PublicOrigin != nil && b.PublicOrigin != nil && *a.PublicOrigin == *b.PublicOrigin)
 }
 
 func cloneConfig(cfg ConfigSnapshot) ConfigSnapshot {

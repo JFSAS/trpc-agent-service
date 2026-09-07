@@ -107,7 +107,7 @@ func TestPreflightMutualTLSClaimResolveCompleteExactWire(t *testing.T) {
 	if err != nil || g == nil || g.Request.Token.Reveal() != req.Token.Reveal() || g.Credential.Version != 2 {
 		t.Fatal("claim", err)
 	}
-	token, err := cl.ResolveBotToken(context.Background(), *g)
+	token, err := cl.ResolveCredential(context.Background(), *g)
 	if err != nil || token.Reveal() != "synthetic-token-do-not-log" || strings.Contains(fmt.Sprintf("%#v", token), "synthetic") {
 		t.Fatal("resolve", err)
 	}
@@ -226,7 +226,7 @@ func TestPreflightResolveExactVersionLeaseAndRequiredFields(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			cl := preflightTLSFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { preflightHeaders(w); _, _ = io.WriteString(w, body) }))
-			token, err := cl.ResolveBotToken(context.Background(), g)
+			token, err := cl.ResolveCredential(context.Background(), g)
 			if token.Reveal() != "" || !errors.Is(err, p.ErrInvalid) || strings.Contains(err.Error(), "synthetic") {
 				t.Fatal("accepted mismatched or unsafe resolve", err)
 			}
@@ -235,7 +235,7 @@ func TestPreflightResolveExactVersionLeaseAndRequiredFields(t *testing.T) {
 	var calls atomic.Int32
 	cl := preflightTLSFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	g.Credential.Configured = false
-	if _, err := cl.ResolveBotToken(context.Background(), g); !errors.Is(err, p.ErrInvalid) || calls.Load() != 0 {
+	if _, err := cl.ResolveCredential(context.Background(), g); !errors.Is(err, p.ErrInvalid) || calls.Load() != 0 {
 		t.Fatal("missing credential reached transport")
 	}
 }

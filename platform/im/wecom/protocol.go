@@ -104,8 +104,12 @@ func (s *session) read() {
 				if code != 0 {
 					result.err = commandError(Rejected, CodeRejected)
 				}
-				if p.kind == "auth" && code == 0 {
-					c.setStateLocked(StateReady, s.gen, "")
+				if p.kind == "auth" {
+					ack := result.ack
+					c.authAck = &ack
+					if code == 0 {
+						c.setStateLocked(StateReady, s.gen, "")
+					}
 				}
 				c.completeLocked(s, p, result)
 			}

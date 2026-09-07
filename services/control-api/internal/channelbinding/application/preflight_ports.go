@@ -11,6 +11,7 @@ import (
 
 // PreflightRecord contains private task metadata, never plaintext credentials.
 type PreflightRecord struct {
+	BotSecretConfigured     bool                    `json:"bot_secret_configured,omitempty"`
 	View                    channelv1.PreflightView `json:"view"`
 	ScopeID                 string                  `json:"scope_id"`
 	SourceEpoch             string                  `json:"source_epoch"`
@@ -72,4 +73,13 @@ type PreflightDependencies struct {
 	Cipher               CredentialCipher
 	ScopeID, SourceEpoch string
 	NewID                func(string) (string, error)
+}
+
+// CredentialConfigured keeps legacy Telegram records byte-compatible while
+// storing WeCom configuration under its own purpose-specific metadata.
+func (r PreflightRecord) CredentialConfigured() bool {
+	if r.View.Provider == "wecom" {
+		return r.BotSecretConfigured
+	}
+	return r.BotTokenConfigured
 }

@@ -88,8 +88,11 @@ func (s *PreflightService) publicAccount(ctx context.Context, actor Actor, accou
 	}
 	return nil
 }
-func (s *PreflightService) authorize(p WorkloadPrincipal, scope, epoch string) error {
-	if p.PrincipalID == "" || p.Audience != WorkloadAudience || p.ScopeID != s.deps.ScopeID || scope != p.ScopeID || !domain.ValidID(p.InstanceID) || !slices.Contains(p.Consumers, "telegram_preflight") {
+func (s *PreflightService) authorize(p WorkloadPrincipal, scope, epoch string, consumer ...string) error {
+	if p.PrincipalID == "" || p.Audience != WorkloadAudience || p.ScopeID != s.deps.ScopeID || scope != p.ScopeID || !domain.ValidID(p.InstanceID) || (!slices.Contains(p.Consumers, "telegram_preflight") && !slices.Contains(p.Consumers, "wecom_preflight")) {
+		return ErrWorkloadDenied
+	}
+	if len(consumer) == 1 && !slices.Contains(p.Consumers, consumer[0]) {
 		return ErrWorkloadDenied
 	}
 	if epoch != s.deps.SourceEpoch {
@@ -99,7 +102,7 @@ func (s *PreflightService) authorize(p WorkloadPrincipal, scope, epoch string) e
 }
 func preflightToken(a PreflightAccount) domain.CredentialRecord {
 	for _, c := range a.Credentials {
-		if c.Meta.Purpose == domain.TelegramBotToken {
+		if c.Meta.Purpose == preflightPurpose(a.Account.Provider) {
 			return c
 		}
 	}
@@ -130,13 +133,13 @@ func preflightMismatch(r PreflightRecord, a PreflightAccount, epoch string, chec
 		return "CHANNEL_PREFLIGHT_TENANT_INACTIVE"
 	case checkRequester && !a.RequesterOwner:
 		return "CHANNEL_PREFLIGHT_REQUESTER_REVOKED"
-	case r.View.DiagnosticPolicy != "" && r.View.ReceiveMode != a.Account.Config.ReceiveMode:
+	case r.View.DiagnosticPolicy != "" && r.View.ReceiveMode != preflightMode(a.Account):
 		return "CHANNEL_PREFLIGHT_ACCOUNT_CHANGED"
 	case a.Account.Enabled || string(a.Account.Provider) != r.View.Provider || a.Account.ProviderAccountID != r.View.ProviderAccountID || a.Account.ConnectionRevision != r.View.ConnectionRevision:
 		return "CHANNEL_PREFLIGHT_ACCOUNT_CHANGED"
 	}
 	token := preflightToken(a)
-	if token.Meta.ID != r.CredentialID || token.Meta.Version != r.View.BotTokenVersion || token.Meta.Configured != r.BotTokenConfigured || preflightWebhookConfigured(a) != r.WebhookSecretConfigured {
+	if token.Meta.ID != r.CredentialID || token.Meta.Version != r.View.CredentialVersion() || token.Meta.Configured != r.CredentialConfigured() || preflightWebhookConfigured(a) != r.WebhookSecretConfigured {
 		return "CHANNEL_PREFLIGHT_ACCOUNT_CHANGED"
 	}
 	return ""
@@ -184,6 +187,9 @@ func preflightUsable(r PreflightRecord, now time.Time) error {
 	return nil
 }
 func preflightOwner(r PreflightRecord, p WorkloadPrincipal, instanceEpoch string, lease int64, token string) error {
+	if !slices.Contains(p.Consumers, preflightConsumer(r.View.Provider)) {
+		return ErrWorkloadDenied
+	}
 	hash := preflightHash([]byte(token))
 	if r.PrincipalID != p.PrincipalID || r.InstanceID != p.InstanceID || r.InstanceEpoch != instanceEpoch || r.LeaseEpoch != lease || subtle.ConstantTimeCompare([]byte(r.ClaimTokenHash), []byte(hash)) != 1 {
 		return preflightError("CLAIM_CONFLICT")
@@ -259,7 +265,7 @@ func (s *PreflightService) createOnce(ctx context.Context, actor Actor, account,
 		if tx.SourceEpoch() != s.deps.SourceEpoch {
 			return ErrEpochMismatch
 		}
-		if a.Account.Provider != domain.Telegram {
+		if a.Account.Provider != domain.Telegram && a.Account.Provider != domain.WeCom {
 			return preflightError("PROVIDER_UNSUPPORTED")
 		}
 		if a.Account.Enabled {
@@ -269,8 +275,20 @@ func (s *PreflightService) createOnce(ctx context.Context, actor Actor, account,
 			return &domain.Error{Code: domain.RevisionConflict}
 		}
 		token := preflightToken(a)
-		if token.Meta.Version != input.ExpectedBotTokenVersion {
+		expectedVersion := input.ExpectedBotTokenVersion
+		if a.Account.Provider == domain.WeCom {
+			if input.ExpectedBotTokenVersion != 0 || input.ExpectedBotSecretVersion == 0 {
+				return invalid("/expected_bot_secret_version")
+			}
+			expectedVersion = input.ExpectedBotSecretVersion
+		} else if input.ExpectedBotSecretVersion != 0 || input.AllowConnectionProbe {
+			return invalid("/allow_connection_probe")
+		}
+		if token.Meta.Version != expectedVersion {
 			return &domain.Error{Code: domain.CredentialVersionConflict}
+		}
+		if a.Account.Provider == domain.WeCom && !input.AllowConnectionProbe {
+			return preflightError("CONNECTION_PROBE_CONFIRMATION_REQUIRED")
 		}
 		active, err := tx.Active(ctx, actor.TenantID, account)
 		if err != nil {
@@ -308,7 +326,12 @@ func (s *PreflightService) createOnce(ctx context.Context, actor Actor, account,
 		if err != nil {
 			return ErrDependencyUnavailable
 		}
-		r := PreflightRecord{ScopeID: s.deps.ScopeID, SourceEpoch: tx.SourceEpoch(), CredentialID: token.Meta.ID, BotTokenConfigured: token.Meta.Configured, WebhookSecretConfigured: preflightWebhookConfigured(a), WebhookPath: a.Account.Config.WebhookPath, LastCheckedAt: now, View: channelv1.PreflightView{ReceiveMode: a.Account.Config.ReceiveMode, DiagnosticPolicy: channelv1.PreflightReceiveModesPolicy, PreflightID: id, TenantID: actor.TenantID, AccountID: account, Provider: string(a.Account.Provider), ProviderAccountID: a.Account.ProviderAccountID, RequestedBy: actor.UserID, AccountRevision: a.Account.Revision, ConnectionRevision: a.Account.ConnectionRevision, BotTokenVersion: token.Meta.Version, State: "QUEUED", Outcome: "UNKNOWN", ReasonCode: "CHANNEL_PREFLIGHT_QUEUED", Freshness: "NOT_CHECKED", RequestedAt: now, JobDeadlineAt: now.Add(preflightLifetime), Checks: []channelv1.PreflightCheck{}}}
+		r := PreflightRecord{ScopeID: s.deps.ScopeID, SourceEpoch: tx.SourceEpoch(), CredentialID: token.Meta.ID, BotTokenConfigured: token.Meta.Configured, WebhookSecretConfigured: preflightWebhookConfigured(a), WebhookPath: a.Account.Config.WebhookPath, LastCheckedAt: now, View: channelv1.PreflightView{ReceiveMode: preflightMode(a.Account), DiagnosticPolicy: preflightPolicy(a.Account.Provider), PreflightID: id, TenantID: actor.TenantID, AccountID: account, Provider: string(a.Account.Provider), ProviderAccountID: a.Account.ProviderAccountID, RequestedBy: actor.UserID, AccountRevision: a.Account.Revision, ConnectionRevision: a.Account.ConnectionRevision, BotTokenVersion: token.Meta.Version, State: "QUEUED", Outcome: "UNKNOWN", ReasonCode: "CHANNEL_PREFLIGHT_QUEUED", Freshness: "NOT_CHECKED", RequestedAt: now, JobDeadlineAt: now.Add(preflightLifetime), Checks: []channelv1.PreflightCheck{}}}
+		if a.Account.Provider == domain.WeCom {
+			r.View.BotSecretVersion, r.View.BotTokenVersion = token.Meta.Version, 0
+			r.View.AllowConnectionProbe = true
+			r.BotSecretConfigured, r.BotTokenConfigured = token.Meta.Configured, false
+		}
 		if err = tx.Save(ctx, r); err != nil {
 			return err
 		}
@@ -384,10 +407,10 @@ func (s *PreflightService) Get(ctx context.Context, actor Actor, account, id str
 
 func preflightGrant(r PreflightRecord, now time.Time) channelv1.PreflightGrant {
 	v := r.View
-	return channelv1.PreflightGrant{ReceiveMode: v.ReceiveMode, DiagnosticPolicy: v.DiagnosticPolicy, EffectiveConfigDigest: v.EffectiveConfigDigest, SchemaVersion: 1, ServerTime: now, PreflightID: v.PreflightID, ScopeID: r.ScopeID, SourceEpoch: r.SourceEpoch, TenantID: v.TenantID, AccountID: v.AccountID, Provider: v.Provider, ProviderAccountID: v.ProviderAccountID, AccountRevision: v.AccountRevision, ConnectionRevision: v.ConnectionRevision, WebhookPath: r.WebhookPath, Credentials: channelv1.PreflightCredential{Purpose: domain.TelegramBotToken, CredentialID: r.CredentialID, CredentialVersion: v.BotTokenVersion, Configured: r.BotTokenConfigured}, WebhookSecretConfigured: r.WebhookSecretConfigured, LeaseEpoch: r.LeaseEpoch, LeaseExpiresAt: *r.LeaseExpiresAt, JobDeadlineAt: v.JobDeadlineAt, GatewayConfigDigest: *v.GatewayConfigDigest}
+	return channelv1.PreflightGrant{AllowConnectionProbe: v.AllowConnectionProbe, ReceiveMode: v.ReceiveMode, DiagnosticPolicy: v.DiagnosticPolicy, EffectiveConfigDigest: v.EffectiveConfigDigest, SchemaVersion: 1, ServerTime: now, PreflightID: v.PreflightID, ScopeID: r.ScopeID, SourceEpoch: r.SourceEpoch, TenantID: v.TenantID, AccountID: v.AccountID, Provider: v.Provider, ProviderAccountID: v.ProviderAccountID, AccountRevision: v.AccountRevision, ConnectionRevision: v.ConnectionRevision, WebhookPath: r.WebhookPath, Credentials: channelv1.PreflightCredential{Purpose: preflightPurpose(domain.Provider(v.Provider)), CredentialID: r.CredentialID, CredentialVersion: v.CredentialVersion(), Configured: r.CredentialConfigured()}, WebhookSecretConfigured: r.WebhookSecretConfigured, LeaseEpoch: r.LeaseEpoch, LeaseExpiresAt: *r.LeaseExpiresAt, JobDeadlineAt: v.JobDeadlineAt, GatewayConfigDigest: *v.GatewayConfigDigest}
 }
 func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input channelv1.PreflightClaimRequest) (*channelv1.PreflightGrant, error) {
-	if err := s.authorize(p, input.ScopeID, input.SourceEpoch); err != nil {
+	if err := s.authorize(p, input.ScopeID, input.SourceEpoch, preflightClaimConsumer(input.DiagnosticPolicy)); err != nil {
 		return nil, err
 	}
 	if err := preflightWire("preflight-claim.schema.json", input); err != nil {
@@ -481,7 +504,7 @@ func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input
 		if err != nil {
 			return err
 		}
-		if !ok || r.View.DiagnosticPolicy != input.DiagnosticPolicy {
+		if !ok || r.View.DiagnosticPolicy != input.DiagnosticPolicy || !slices.Contains(p.Consumers, preflightConsumer(r.View.Provider)) {
 			return saveEmpty()
 		}
 		now, err = tx.Now(ctx)
@@ -616,7 +639,7 @@ func (s *PreflightService) Resolve(ctx context.Context, p WorkloadPrincipal, id 
 			return nil
 		}
 		c := preflightToken(a)
-		if !r.BotTokenConfigured || !c.Meta.Configured {
+		if !r.CredentialConfigured() || !c.Meta.Configured {
 			return &domain.Error{Code: domain.CredentialRequired}
 		}
 		aad, err := c.AAD()
@@ -629,7 +652,7 @@ func (s *PreflightService) Resolve(ctx context.Context, p WorkloadPrincipal, id 
 		}
 		defer clear(plaintext)
 		value := string(plaintext)
-		if err = (domain.CredentialEdit{Action: "replace", Value: &value}).Validate(domain.Telegram, domain.TelegramBotToken); err != nil {
+		if err = (domain.CredentialEdit{Action: "replace", Value: &value}).Validate(domain.Provider(r.View.Provider), preflightPurpose(domain.Provider(r.View.Provider))); err != nil {
 			return &domain.Error{Code: domain.SourceIntegrity}
 		}
 		// Re-read the database clock after potentially delayed decryption. Holding the
@@ -641,7 +664,7 @@ func (s *PreflightService) Resolve(ctx context.Context, p WorkloadPrincipal, id 
 		if err = preflightUsable(r, now); err != nil {
 			return err
 		}
-		response = channelv1.PreflightResolveResponse{SchemaVersion: 1, PreflightID: id, ConnectionRevision: r.View.ConnectionRevision, Purpose: domain.TelegramBotToken, CredentialID: r.CredentialID, CredentialVersion: r.View.BotTokenVersion, Value: value, LeaseExpiresAt: *r.LeaseExpiresAt}
+		response = channelv1.PreflightResolveResponse{SchemaVersion: 1, PreflightID: id, ConnectionRevision: r.View.ConnectionRevision, Purpose: preflightPurpose(domain.Provider(r.View.Provider)), CredentialID: r.CredentialID, CredentialVersion: r.View.CredentialVersion(), Value: value, LeaseExpiresAt: *r.LeaseExpiresAt}
 		return nil
 	})
 	if err != nil {
@@ -715,7 +738,7 @@ func (s *PreflightService) Complete(ctx context.Context, p WorkloadPrincipal, id
 		if input.DiagnosticPolicy != "" {
 			originStatus = input.OriginStatus
 		}
-		computed, err := channelv1.PreflightConfigDigest(input.ScopeID, input.SourceEpoch, input.ExpectedPublicOrigin, originStatus)
+		computed, err := channelv1.PreflightConfigDigestForPolicy(input.DiagnosticPolicy, input.ScopeID, input.SourceEpoch, input.ExpectedPublicOrigin, originStatus)
 		if err != nil || computed != input.GatewayConfigDigest {
 			return invalid("/gateway_config_digest")
 		}
@@ -742,7 +765,14 @@ func (s *PreflightService) Complete(ctx context.Context, p WorkloadPrincipal, id
 			BotTokenConfigured      bool `json:"bot_token_configured"`
 			WebhookSecretConfigured bool `json:"webhook_secret_configured"`
 		}
-		if json.Unmarshal(input.Checks[0].Details, &configured) != nil || configured.BotTokenConfigured != r.BotTokenConfigured || configured.WebhookSecretConfigured != r.WebhookSecretConfigured || originStatus != r.OriginStatus {
+		if r.View.Provider == "wecom" {
+			var wecom struct {
+				BotSecretConfigured bool `json:"bot_secret_configured"`
+			}
+			if json.Unmarshal(input.Checks[0].Details, &wecom) != nil || wecom.BotSecretConfigured != r.BotSecretConfigured || originStatus != r.OriginStatus {
+				return preflightError("RESULT_CONFLICT")
+			}
+		} else if json.Unmarshal(input.Checks[0].Details, &configured) != nil || configured.BotTokenConfigured != r.BotTokenConfigured || configured.WebhookSecretConfigured != r.WebhookSecretConfigured || originStatus != r.OriginStatus {
 			return preflightError("RESULT_CONFLICT")
 		}
 		outcome, err := channelv1.ValidatePreflightChecksForMode(input.DiagnosticPolicy, input.ReceiveMode, input.Checks)
@@ -800,4 +830,35 @@ func (s *PreflightService) Maintain(ctx context.Context) error {
 		result = errors.Join(result, s.maintainOne(ctx, k))
 	}
 	return errors.Join(result, s.deps.Store.Cleanup(ctx))
+}
+
+func preflightPurpose(provider domain.Provider) string {
+	if provider == domain.WeCom {
+		return domain.WeComBotSecret
+	}
+	return domain.TelegramBotToken
+}
+func preflightMode(account domain.Account) string {
+	if account.Provider == domain.WeCom {
+		return channelv1.PreflightWeComMode
+	}
+	return account.Config.ReceiveMode
+}
+func preflightPolicy(provider domain.Provider) string {
+	if provider == domain.WeCom {
+		return channelv1.PreflightWeComPolicy
+	}
+	return channelv1.PreflightReceiveModesPolicy
+}
+func preflightConsumer(provider string) string {
+	if provider == "wecom" {
+		return "wecom_preflight"
+	}
+	return "telegram_preflight"
+}
+func preflightClaimConsumer(policy string) string {
+	if policy == channelv1.PreflightWeComPolicy {
+		return "wecom_preflight"
+	}
+	return "telegram_preflight"
 }
