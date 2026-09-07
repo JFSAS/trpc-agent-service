@@ -17,3 +17,15 @@ export const preflightResult: ChannelPreflightResult = {
   ],
 };
 export const queuedPreflight: ChannelPreflightResult = { ...preflightResult, state: "QUEUED", outcome: "UNKNOWN", reason_code: "CHANNEL_PREFLIGHT_QUEUED", freshness: "NOT_CHECKED", started_at: null, checked_at: null, expires_at: null, gateway_config_digest: null, gateway_config_freshness: null, expected_public_origin: null, checks: [] };
+
+/** Consumer fixture of Control's telegram-receive-modes-v1 fixed eight-check matrix. */
+export const longPollingPreflight: ChannelPreflightResult = {
+  ...preflightResult, receive_mode: "long_polling", diagnostic_policy: "telegram-receive-modes-v1", effective_config_digest: `sha256:${"b".repeat(64)}`,
+  outcome: "PASS", expected_public_origin: null,
+  checks: preflightResult.checks.map((check) => {
+    if (check.id === "credential_configuration") return { ...check, details: { bot_token_configured: true, webhook_secret_configured: false } };
+    if (check.id === "webhook_registration") return { ...check, status: "PASS" };
+    const codes: Partial<Record<typeof check.id, string>> = { public_origin: "PUBLIC_ORIGIN_NOT_APPLICABLE", delivery_errors: "DELIVERY_ERRORS_NOT_APPLICABLE", recovery_materials: "RECOVERY_MATERIALS_NOT_APPLICABLE" };
+    return codes[check.id] ? { ...check, status: "NOT_APPLICABLE", code: codes[check.id]!, details: { applicability: "NOT_APPLICABLE" } } : check;
+  }),
+};

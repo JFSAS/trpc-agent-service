@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChannelPreflightApiError, PREFLIGHT_STORAGE_PREFIX } from "../../lib/channel-preflight-api";
 import { sampleChannelAccount } from "../../test/channel-fixtures";
-import { preflightReceipt, preflightResult, queuedPreflight } from "../../test/channel-preflight-fixtures";
+import { preflightReceipt, preflightResult, queuedPreflight, longPollingPreflight } from "../../test/channel-preflight-fixtures";
 import { ChannelPreflightPanel } from "./preflight-panel";
 const api = vi.hoisted(() => ({ create: vi.fn(), get: vi.fn() }));
 vi.mock("../../lib/channel-preflight-api", async (original) => ({ ...await original<typeof import("../../lib/channel-preflight-api")>(), channelPreflightApi: api }));
@@ -150,4 +150,28 @@ describe("Telegram preflight panel", () => {
     render(<ChannelPreflightPanel {...props} />); fireEvent.click(await screen.findByRole("button", { name: "检查接入条件" })); await screen.findByText("检查完成 · 需要留意");
     fireEvent.click(screen.getByRole("button", { name: "重新检查接入条件" })); await waitFor(() => expect(api.create).toHaveBeenCalledTimes(2)); expect(api.create.mock.calls[0][3]).not.toBe(api.create.mock.calls[1][3]);
   });
+});
+
+
+it("renders mode-bound LP N/A separately from success, with no fake polling or public-origin evidence", async () => {
+  api.get.mockResolvedValue({ ...completed(), ...longPollingPreflight, expires_at: iso(299000) });
+  render(<ChannelPreflightPanel {...props} account={{ ...account, config: { ...account.config, receive_mode: "long_polling" } }} initialPreflightId="cpf_test" />);
+  await screen.findByText("检查完成 · 配置检查通过");
+  expect(screen.getAllByText("不适用")).toHaveLength(3);
+  expect(screen.getByText("不适用（长轮询）")).toBeInTheDocument();
+  expect(screen.getByText(/本次没有发送测试消息/)).toBeInTheDocument();
+  expect(screen.getByText(/本任务有效配置/)).toHaveTextContent(longPollingPreflight.effective_config_digest!);
+  expect(api.create).not.toHaveBeenCalled();
+});
+
+it("retains old Webhook failure after the current Account changes to LP", async () => {
+  const historical = completed(); historical.outcome = "FAIL";
+  historical.checks = historical.checks.map((c) => c.id === "public_origin" ? { ...c, status: "FAIL", code: "PUBLIC_ORIGIN_NOT_PUBLIC" } : c);
+  api.get.mockResolvedValue(historical);
+  render(<ChannelPreflightPanel {...props} account={{ ...account, config: { ...account.config, receive_mode: "long_polling" } }} initialPreflightId="cpf_test" />);
+  await screen.findByText("检查完成 · 存在问题");
+  expect(screen.getByText("Webhook（旧版预检）")).toBeInTheDocument();
+  expect(screen.getByText(/下列结果仍按检查时的模式解释/)).toBeInTheDocument();
+  expect(screen.getByText("失败")).toBeInTheDocument();
+  expect(screen.queryByText("不适用")).not.toBeInTheDocument();
 });

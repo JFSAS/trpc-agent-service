@@ -1,5 +1,6 @@
 # ChannelBinding V1 公开 API 契约审计（供 Web 流程设计）
 
+> 2026-09-07 增量：双接收方式已在 Web 实施。下文的首版 config 全只读、Telegram 两项凭据必需等是历史基线；当前仅开放停用态的结构化 config.receive_mode 修改，生成字段仍只读。新建默认 LP、模式化凭据/预检、旧 pending 兼容与独立启用确认见 [双模式实现记录](./telegram-receive-modes-v1-plan.md#15-实施记录2026-09-07)。运行验收另记。
 - 日期：2026-09-06。
 - 审计基线：`codex/tenant-rbac-workspace`，HEAD `661e4a8`。
 - 本文是当前源码、JSON Schema、OpenAPI 与一方设计文档的对照记录，不是前端已实现声明。

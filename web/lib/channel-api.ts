@@ -1,5 +1,8 @@
 /** Closed public Channel V1 DTOs; internal workload/credential-resolve APIs are not browser APIs. */
 export type ChannelProvider = "telegram" | "wecom";
+export type TelegramReceiveMode = "long_polling" | "webhook";
+export const isTelegramReceiveMode = (value: unknown): value is TelegramReceiveMode => value === "long_polling" || value === "webhook";
+export const receiveModeLabel = (value: unknown) => value === "long_polling" ? "长轮询" : value === "webhook" ? "Webhook" : "接收方式未确认";
 export type CredentialPurpose = "telegram.bot_token" | "telegram.webhook_secret" | "wecom.bot_secret";
 export type ChannelTarget = { deployment_id: string; revision_number: number };
 export type ChannelPublishedTarget = ChannelTarget & {
@@ -10,7 +13,7 @@ export type ChannelAccount = {
   tenant_id: string; account_id: string; provider: ChannelProvider; provider_account_id: string;
   name: string; description: string; account_revision: number; connection_revision: number;
   min_route_generation: number; enabled: boolean;
-  config: { webhook_path?: string; bot_id?: string };
+  config: { webhook_path?: string; bot_id?: string; receive_mode?: TelegramReceiveMode };
   credentials: ChannelCredentialStatus[]; created_by: string; created_at: string; updated_at: string;
 };
 export type ChannelBinding = {
@@ -22,7 +25,7 @@ export type ChannelDistribution = "NOT_EMITTED" | "PENDING" | "IN_FLIGHT" | "PUB
 export type ChannelObservation = {
   connection_revision: number; instance_id: string; instance_epoch: string; report_sequence: number;
   state: string; reason_code: string; observed_at: string; owner_epoch?: number;
-  received_at: string; effective_state: string;
+  received_at: string; effective_state: string; receive_mode?: TelegramReceiveMode;
 };
 export type ChannelAccountDetails = {
   account: ChannelAccount; binding?: ChannelBinding; route_generation: number; route_event_id?: string;
@@ -41,9 +44,10 @@ export type ChannelBindingPage = { bindings: ChannelBinding[]; next_cursor?: str
 export type CredentialEdit = { action: "replace"; value: string } | { action: "keep" | "clear"; value?: never };
 export type CreateAccountInput = {
   provider: ChannelProvider; provider_account_id: string; name: string; description?: string;
+  config?: { receive_mode: TelegramReceiveMode };
   credentials: Partial<Record<CredentialPurpose, { action: "replace"; value: string }>>;
 };
-export type UpdateAccountInput = { expected_account_revision: number; name?: string; description?: string };
+export type UpdateAccountInput = { expected_account_revision: number; name?: string; description?: string; config?: { receive_mode: TelegramReceiveMode } };
 export type UpdateCredentialInput = { expected_account_revision: number; expected_credential_version: number } & CredentialEdit;
 export type AccountEnabledInput = { expected_account_revision: number; enabled: boolean };
 export type CreateBindingInput = { account_id: string; target: ChannelTarget };
@@ -72,11 +76,12 @@ export async function channelRead<T>(operation: Promise<T>): Promise<T> {
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function positive(value: unknown): boolean { return typeof value === "number" && Number.isSafeInteger(value) && value > 0; }
 function textFields(value: Record<string, unknown>, fields: string[]): boolean { return fields.every((key) => typeof value[key] === "string"); }
-function accountShape(value: unknown): boolean {
+function accountShape(value: unknown, legacy = false): boolean {
   if (!object(value) || !textFields(value, ["account_id", "tenant_id", "provider_account_id", "name", "description", "created_by", "created_at", "updated_at"]) || !value.account_id) return false;
   if ((value.provider !== "telegram" && value.provider !== "wecom") || !positive(value.account_revision) || !positive(value.connection_revision) || typeof value.enabled !== "boolean" || !object(value.config)) return false;
   if (typeof value.min_route_generation !== "number" || !Number.isSafeInteger(value.min_route_generation) || value.min_route_generation < 0) return false;
   if (value.provider === "telegram" ? typeof value.config.webhook_path !== "string" : typeof value.config.bot_id !== "string") return false;
+  if (value.provider === "telegram" ? !(legacy ? value.config.receive_mode === undefined : isTelegramReceiveMode(value.config.receive_mode)) : value.config.receive_mode !== undefined) return false;
   return Array.isArray(value.credentials) && value.credentials.every((item) => object(item) && typeof item.purpose === "string" && positive(item.credential_version) && typeof item.configured === "boolean");
 }
 function bindingShape(value: unknown): boolean {
@@ -90,20 +95,20 @@ function routeShape(value: Record<string, unknown>): boolean {
 }
 function observationShape(value: unknown): boolean {
   return object(value) && textFields(value, ["instance_id", "instance_epoch", "state", "reason_code", "observed_at", "received_at", "effective_state"])
-    && positive(value.connection_revision) && positive(value.report_sequence) && (value.owner_epoch === undefined || positive(value.owner_epoch));
+    && (value.receive_mode === undefined || isTelegramReceiveMode(value.receive_mode)) && positive(value.connection_revision) && positive(value.report_sequence) && (value.owner_epoch === undefined || positive(value.owner_epoch));
 }
 /** Guard the shapes components consume, including successful-but-malformed responses before clearing a write intent. */
-function responseShape(path: string, init: RequestInit, body: unknown): boolean {
+function responseShape(path: string, init: RequestInit, body: unknown, legacy = false): boolean {
   if (!object(body)) return false;
   const route = path.split("?")[0];
   const account = /^\/v1\/tenants\/[^/]+\/channel-accounts(?:\/|$)/.test(route);
   if (init.method === "POST" || init.method === "PATCH") {
-    return routeShape(body) && (body.account === undefined || accountShape(body.account)) && (body.binding === undefined || bindingShape(body.binding))
-      && (account ? accountShape(body.account) : bindingShape(body.binding));
+    return routeShape(body) && (body.account === undefined || accountShape(body.account, legacy)) && (body.binding === undefined || bindingShape(body.binding))
+      && (account ? accountShape(body.account, legacy) : bindingShape(body.binding));
   }
   if (route.endsWith("/channel-accounts") || route.endsWith("/channel-bindings")) {
     const items = account ? body.accounts : body.bindings;
-    return Array.isArray(items) && items.every(account ? accountShape : bindingShape)
+    return Array.isArray(items) && items.every((item) => account ? accountShape(item) : bindingShape(item))
       && (body.next_cursor === undefined || (typeof body.next_cursor === "string" && body.next_cursor.length > 0));
   }
   if (!routeShape(body) || typeof body.gateway_application !== "string") return false;
@@ -127,7 +132,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         const error = data && typeof data === "object" ? data as Record<string, unknown> : {};
         throw new ChannelApiError(response.status, typeof error.code === "string" ? error.code : "HTTP_ERROR", `渠道请求未完成（HTTP ${response.status}）。`, typeof error.field === "string" ? error.field : undefined);
       }
-      if (!responseShape(path, init, body)) throw new ChannelApiError(response.status, "INVALID_RESPONSE", `渠道响应结构不完整（HTTP ${response.status}），请保留写请求并确认结果。`);
+      const contract = response.headers.get("X-Channel-Result-Contract");
+      if ((contract !== null && contract !== "receive-modes-v1" && contract !== "webhook-v1") || !responseShape(path, init, body, contract === "webhook-v1")) throw new ChannelApiError(response.status, "INVALID_RESPONSE", `渠道响应结构不完整（HTTP ${response.status}），请保留写请求并确认结果。`);
       return body as T;
     })();
     return await Promise.race([operation, new Promise<never>((_, reject) => {
@@ -159,20 +165,25 @@ const editBody = (edit: CredentialEdit) => edit.action === "replace" ? { action:
 export const channelApi = {
   listAccounts(tenant: string, cursor?: string, pageSize?: number) { return request<ChannelAccountPage>(path(tenant, "channel-accounts") + pagination(cursor, pageSize)); },
   getAccount(tenant: string, id: string) { return request<ChannelAccountDetails>(path(tenant, "channel-accounts", id)); },
-  createAccount(tenant: string, input: CreateAccountInput, key: string) {
+  createAccount(tenant: string, input: CreateAccountInput, key: string, contract?: "webhook-v1") {
+    if (contract && (input.provider !== "telegram" || input.config !== undefined || !input.credentials["telegram.bot_token"] || !input.credentials["telegram.webhook_secret"])) throw new ChannelApiError(400, "CHANNEL_INPUT_INVALID", "旧创建契约仅用于无 config 的原 Telegram 两项凭据请求。");
     const credentials: CreateAccountInput["credentials"] = {};
     for (const purpose of credentialPurposes(input.provider)) {
       const edit = input.credentials[purpose];
       if (edit) credentials[purpose] = { action: edit.action, value: edit.value };
     }
-    return request<ChannelCommandResult>(path(tenant, "channel-accounts"), json("POST", {
+    const init = json("POST", {
       provider: input.provider, provider_account_id: input.provider_account_id, name: input.name,
+      ...(input.provider === "telegram" && input.config?.receive_mode !== undefined ? { config: { receive_mode: input.config.receive_mode } } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}), credentials,
-    }, key));
+    }, key);
+    if (contract) init.headers = { ...init.headers, "X-Channel-Create-Contract": contract };
+    return request<ChannelCommandResult>(path(tenant, "channel-accounts"), init);
   },
   updateAccount(tenant: string, id: string, input: UpdateAccountInput, key: string) {
     return request<ChannelCommandResult>(path(tenant, "channel-accounts", id), json("PATCH", {
       expected_account_revision: input.expected_account_revision,
+      ...(input.config?.receive_mode !== undefined ? { config: { receive_mode: input.config.receive_mode } } : {}),
       ...(input.name !== undefined ? { name: input.name } : {}), ...(input.description !== undefined ? { description: input.description } : {}),
     }, key));
   },
@@ -217,7 +228,7 @@ export function channelError(error: unknown): string {
     CHANNEL_IDEMPOTENCY_CONFLICT: "本次请求标识已对应不同内容，请核对原操作；新编辑意图需使用新标识。",
     CHANNEL_ACCOUNT_DISABLED: "请先显式启用本平台接入，再开启消息路由。",
     CHANNEL_CREDENTIAL_REQUIRED: "此账户缺少必需凭据，请先在凭据区补齐。",
-    CHANNEL_ACCOUNT_MUST_BE_DISABLED: "清除凭据前请先停用本平台接入；停用会影响消息接纳和回复资格。",
+    CHANNEL_ACCOUNT_MUST_BE_DISABLED: "更改接收方式或清除凭据前请先停用本平台接入；停用会影响消息接纳和回复资格。",
     CHANNEL_VERSION_EXHAUSTED: "账户或绑定版本已达到上限，请联系平台处理，不要重置版本。",
     CHANNEL_ROUTE_GENERATION_EXHAUSTED: "路由代数已达到上限，请联系平台处理，不要回退计数。",
     CHANNEL_SOURCE_INTEGRITY: "账户状态完整性检查未通过，请保留现状并联系平台处理。",
@@ -232,6 +243,10 @@ export function channelError(error: unknown): string {
 }
 export function credentialPurposes(provider: ChannelProvider): CredentialPurpose[] {
   return provider === "telegram" ? ["telegram.bot_token", "telegram.webhook_secret"] : provider === "wecom" ? ["wecom.bot_secret"] : [];
+}
+/** Allowed purposes remain stable; only the current mode's readiness requirements vary. */
+export function requiredCredentialPurposes(provider: ChannelProvider, mode?: TelegramReceiveMode): CredentialPurpose[] {
+  return provider === "telegram" && mode === "long_polling" ? ["telegram.bot_token"] : credentialPurposes(provider);
 }
 const trimMetadata = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 function validUnicode(value: string): boolean {
@@ -251,6 +266,10 @@ export function validateCredential(purpose: CredentialPurpose, value: string): s
 export function validateChannelAccount(input: CreateAccountInput): Record<string, string> {
   const errors: Record<string, string> = {};
   const purposes = credentialPurposes(input.provider);
+  const mode = input.config?.receive_mode ?? "long_polling";
+  if (input.provider === "telegram" && !isTelegramReceiveMode(mode)) errors.config = "请选择明确的接收方式。";
+  if (input.provider === "wecom" && input.config !== undefined) errors.config = "企业微信不使用 Telegram 接收方式。";
+  const required = requiredCredentialPurposes(input.provider, mode);
   if (!purposes.length) errors.provider = "请选择 Telegram 或企业微信。";
   const physical = input.provider_account_id;
   if (typeof physical !== "string" || !physical.length || !validUnicode(physical) || new TextEncoder().encode(physical).length > 1024 || /[\p{White_Space}\p{Cc}]/u.test(physical)) errors.provider_account_id = "机器人身份需为 1～1024 UTF-8 字节，不接受空白或控制字符。";
@@ -259,6 +278,7 @@ export function validateChannelAccount(input: CreateAccountInput): Record<string
   if (input.description !== undefined && (typeof input.description !== "string" || !validUnicode(input.description) || Array.from(input.description).length > 4096)) errors.description = "说明最多 4096 个字符。";
   for (const purpose of purposes) {
     const edit = input.credentials?.[purpose];
+    if (!edit && !required.includes(purpose)) continue;
     const error = !edit || edit.action !== "replace" ? "创建账户时请完整填写此项凭据。" : validateCredential(purpose, edit.value);
     if (error) errors[`credentials.${purpose}`] = error;
   }

@@ -2,7 +2,7 @@ import type { ChannelAccount, ChannelAccountDetails, ChannelBinding, CreateAccou
 export const sampleChannelAccount: ChannelAccount = {
   tenant_id: "t", account_id: "cha_test", provider: "telegram", provider_account_id: "123456",
   name: "研究机器人", description: "渠道测试账户", account_revision: 3, connection_revision: 2,
-  min_route_generation: 1, enabled: true, config: { webhook_path: "/v1/telegram/cha_test" },
+  min_route_generation: 1, enabled: true, config: { webhook_path: "/v1/telegram/cha_test", receive_mode: "webhook" },
   credentials: [{ purpose: "telegram.bot_token", credential_version: 1, configured: true }, { purpose: "telegram.webhook_secret", credential_version: 1, configured: true }],
   created_by: "u", created_at: "2026-09-06T10:00:00Z", updated_at: "2026-09-06T10:10:00Z",
 };
@@ -18,5 +18,6 @@ export const sampleChannelDetails: ChannelAccountDetails = {
 /** Synthetic values only; real credentials must never be written to fixtures. */
 export const sampleChannelCreate: CreateAccountInput = {
   provider: "telegram", provider_account_id: "00123456", name: "研究机器人", description: "测试",
+  config: { receive_mode: "webhook" },
   credentials: { "telegram.bot_token": { action: "replace", value: "synthetic-token" }, "telegram.webhook_secret": { action: "replace", value: "synthetic_webhook_secret" } },
 };

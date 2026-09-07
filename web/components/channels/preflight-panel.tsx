@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import type { ChannelAccount } from "../../lib/channel-api";
+import { receiveModeLabel, type ChannelAccount } from "../../lib/channel-api";
 import { channelPreflightApi, ChannelPreflightApiError, isPreflightUncertain, preflightError, preflightResultHref, PREFLIGHT_CHECK_IDS, PREFLIGHT_STORAGE_PREFIX, validPreflightId, validPreflightInput, type ChannelPreflightInput, type ChannelPreflightResult, type PreflightCheckId } from "../../lib/channel-preflight-api";
 import styles from "./preflight-panel.module.css";
 
@@ -9,14 +9,18 @@ type Pending = { kind: "pending"; key: string; input: ChannelPreflightInput; cre
 type Task = { kind: "task"; preflightId: string; deadlineAt: string; createdAt: string };
 type Recovery = Pending | Task;
 const labels: Record<PreflightCheckId, string> = { credential_configuration: "凭据配置", bot_identity: "机器人身份", public_origin: "公开入口", webhook_registration: "现有 Webhook", pending_updates: "积压消息", delivery_errors: "历史投递错误", recovery_materials: "原 Webhook 恢复资料", delivery_verification: "Telegram 实际投递" };
-const statusLabels = { PASS: "通过", WARN: "留意", FAIL: "失败", UNKNOWN: "未知 / 未验证", SKIPPED: "未执行" };
+const statusLabels = { PASS: "通过", WARN: "留意", FAIL: "失败", UNKNOWN: "未知 / 未验证", SKIPPED: "未执行", NOT_APPLICABLE: "不适用" };
 const codeMessages: Record<string, string> = {
+  PUBLIC_ORIGIN_NOT_APPLICABLE: "长轮询无需公网入站回调；此项不适用，不代表已验证公网可达。",
+  DELIVERY_ERRORS_NOT_APPLICABLE: "Webhook 历史投递错误不用于判断当前长轮询健康；此项不适用。",
+  RECOVERY_MATERIALS_NOT_APPLICABLE: "长轮询不使用 Webhook 恢复资料；这不表示可以还原未知外部 Webhook。",
+  WEBHOOK_BLOCKS_LONG_POLLING: "现有 Webhook 阻挡长轮询。预检没有删除或接管它；启用仅协调平台已管理的入口，未知外部配置保持冲突。",
   CREDENTIALS_CONFIGURED: "已保存所需凭据；实际可用性由身份检查确认。", BOT_TOKEN_MISSING: "尚未配置 Bot Token，请先更新该凭据。", WEBHOOK_SECRET_MISSING: "尚未配置 Webhook Secret，请先更新该凭据。",
   BOT_IDENTITY_MATCH: "Token 对应的机器人与保存的物理身份一致。", BOT_IDENTITY_MISMATCH: "Token 对应另一机器人，请核对保存的 Bot ID 和 Token。", TOKEN_REJECTED: "Telegram 拒绝了当前 Token，请核对或更新凭据。",
   PROVIDER_NETWORK: "连接 Telegram 失败，请检查 Gateway 出网网络。", PROVIDER_TIMEOUT: "Telegram 请求超时，尚未获得确定结果。", PROVIDER_RATE_LIMITED: "Telegram 限流，请稍后重新检查。", PROVIDER_UNAVAILABLE: "Telegram 服务暂时异常。", PROVIDER_RESPONSE_INVALID: "Telegram 响应格式异常，未采信为成功。", NOT_EXECUTED: "前置检查未通过，此项没有执行。",
   PUBLIC_ORIGIN_STATIC_VALID: "公开入口通过静态格式检查；不代表公网可达。", PUBLIC_ORIGIN_INVALID: "公开入口格式不符合要求，请检查 Gateway 平台配置。", PUBLIC_ORIGIN_NOT_PUBLIC: "公开入口是本地或非公开地址，请配置公开 HTTPS 入口。",
   WEBHOOK_MATCH: "当前 Webhook 与本账户预期入口一致；本次未修改注册。", WEBHOOK_DIFFERENT: "已有 Webhook 指向其他入口，请核实后再决定是否接入；本次未接管。", WEBHOOK_NONE: "当前没有注册 Webhook；预检不会自动注册。", WEBHOOK_COMPARISON_UNAVAILABLE: "已存在 Webhook，但预期入口无效，未作相同或不同的推断。",
-  PENDING_UPDATES_ZERO: "没有报告积压消息，不代表已经收到测试消息。", PENDING_UPDATES_PRESENT: "Telegram 报告有积压消息，请结合历史投递错误核对。",
+  PENDING_UPDATES_ZERO: "没有报告积压消息，不代表已经收到测试消息。", PENDING_UPDATES_PRESENT: "Telegram 报告有待投递更新；这不是 Poller 内部队列或游标落后量，也不会主动清空积压。",
   DELIVERY_ERROR_NOT_REPORTED: "没有报告近期投递错误，不代表实际投递已验证。", DELIVERY_ERROR_REPORTED: "Telegram 报告历史投递错误；不据此推断当前服务持续故障。",
   RECOVERY_MATERIALS_UNAVAILABLE: "旧 secret_token 不可回读，本结果不是完整恢复资料。", DELIVERY_NOT_TESTED: "本次没有发送测试消息，也没有验证 Telegram 实际投递。",
 };
@@ -147,14 +151,16 @@ function PreflightPanel({ account, userId, canWrite, denyWrites, initialPrefligh
     try { sessionStorage.removeItem(storageKey); markerRef.current = null; setMarker(null); setStorageError(""); setPostError(""); setPendingRejected(false); }
     catch { setStorageError("浏览器恢复存储仍不可用，尚未清除记录；不会开始新任务。"); }
   }
-  const stale = !!data && (data.freshness === "STALE" || data.connection_revision !== account.connection_revision || data.bot_token_version !== token?.credential_version);
+  const checkedMode = data?.receive_mode ?? "webhook";
+  const modeChanged = !!data && account.config.receive_mode !== undefined && checkedMode !== account.config.receive_mode;
+  const stale = !!data && (modeChanged || data.freshness === "STALE" || data.connection_revision !== account.connection_revision || data.bot_token_version !== token?.credential_version);
   const expired = !!data && !stale && (data.freshness === "EXPIRED" || data.expires_at !== null && Date.parse(data.expires_at) <= now);
   const metadataChanged = !!data && (data.metadata_changed || data.account_revision !== account.account_revision);
   const stateLabel = data?.state === "QUEUED" ? "正在排队，等待 Gateway" : data?.state === "RUNNING" ? "正在检查接入条件" : data?.state === "TIMED_OUT" ? "预检超时，未获得检查结果" : data?.state === "STALE" ? "检查期间配置或授权变化，任务已失效" : data?.outcome === "PASS" ? "检查完成 · 配置检查通过" : data?.outcome === "WARN" ? "检查完成 · 需要留意" : data?.outcome === "FAIL" ? "检查完成 · 存在问题" : "检查完成 · 存在未知项";
   const reasonMessages: Record<string, string> = { CHANNEL_PREFLIGHT_NO_EXECUTOR: "期限内没有 Gateway 领取任务，请检查 Gateway 预检执行器。", CHANNEL_PREFLIGHT_EXECUTION_TIMEOUT: "Gateway 未在期限内完成检查，请核对服务后重新检查。", CHANNEL_PREFLIGHT_REQUESTER_REVOKED: "发起者的 OWNER 授权已撤销，本次任务不再执行。", CHANNEL_PREFLIGHT_TENANT_INACTIVE: "租户已停用，本次任务不再执行。", CHANNEL_PREFLIGHT_GATEWAY_CONFIG_CHANGED: "Gateway 配置发生变化，请重新检查。", CHANNEL_PREFLIGHT_ACCOUNT_CHANGED: "账户连接配置已变化，请重新检查。", CHANNEL_SOURCE_EPOCH_MISMATCH: "预检服务来源已变化，请重新检查。" };
   return <section className={styles.panel} aria-labelledby="channel-preflight-title">
     <div className={styles.heading}><div><h2 id="channel-preflight-title">Telegram 接入预检</h2><p>检查已保存的账户、凭据和现有 Webhook；不要求配置运行目标。</p></div>{canWrite && <button className="button primary" type="button" disabled={!canStart} onClick={start}>{busy ? "正在提交检查…" : completedCurrent ? "重新检查接入条件" : "检查接入条件"}</button>}</div>
-    <p className={styles.boundary}>检查不会启用账户、切换路由、注册或删除 Webhook，也不会发送消息。配置检查通过不等于上线成功。</p>
+    <p className={styles.boundary}>检查不会启用账户、切换路由、注册或删除 Webhook，也不会发送消息或调用 getUpdates 消费更新。配置检查通过不等于上线成功。</p>
     {account.enabled && <p className={styles.warning}>此账户当前已启用。请先在账户接入操作中单独确认停用，再检查；本面板不会自动停用。</p>}
     {!canWrite && <p className={styles.note}>当前为只读访问，可查看已知任务结果；发起预检需要租户 OWNER。</p>}
     {!validPreflightInput(input) && <p className={styles.warning}>账户版本或 Bot Token 版本尚不完整，请先重新读取账户。</p>}
@@ -167,15 +173,16 @@ function PreflightPanel({ account, userId, canWrite, denyWrites, initialPrefligh
     {reading && <p role="status">正在读取预检结果…</p>}
     {stopped && <p className={styles.warning}>已到任务期限，自动轮询已停止；请手动读取服务端终态，不会自动新建任务。</p>}
     {data && <div className={styles.result}><div className={styles.resultHeading}><h3>{stateLabel}</h3>{data.state === "COMPLETED" && <span className={stale || expired ? styles.warning : styles.note}>{stale ? "结果已失效" : expired ? "结果已过期" : "针对检查时配置"}</span>}</div>
+      {modeChanged && <p className={styles.warning}>接收方式已变更；下列结果仍按检查时的模式解释，没有重算历史检查项。</p>}
       {stale && <p className={styles.warning}>配置已变化，此结果已失效。它仅保留检查时的历史事实，请重新检查。</p>}
       {expired && <p className={styles.warning}>检查结果已超过有效期，请重新检查；历史结果不再代表当前条件。</p>}
       {metadataChanged && !stale && <p className={styles.note}>名称或说明已变更，连接检查仍适用；任务保留原账户版本作为审计快照。</p>}
       {reasonMessages[data.reason_code] && <p className={styles.warning}>{reasonMessages[data.reason_code]}</p>}
       {data.state === "COMPLETED" && <ol className={styles.checks}>{PREFLIGHT_CHECK_IDS.map((id) => { const item = data.checks.find((c) => c.id === id); return <li key={id} data-testid="preflight-check"><div><strong>{labels[id]}</strong><span className={item?.status === "PASS" ? styles.pass : item?.status === "FAIL" ? styles.fail : styles.neutral}>{item ? statusLabels[item.status] : "未知 / 未验证"}</span></div><p>{item ? codeMessages[item.code] ?? "未识别的检查结论，不作为成功依据。" : "未获得此项检查事实。"}</p>{id === "pending_updates" && typeof item?.details.pending_update_count === "number" && <small>积压数量：{item.details.pending_update_count}</small>}{id === "delivery_errors" && typeof item?.details.last_error_at === "string" && <small>最近报告错误时间：{item.details.last_error_at}</small>}</li>; })}</ol>}
-      <dl className={styles.facts}><dt>检查时间</dt><dd>{data.checked_at ?? "尚未完成"}</dd><dt>结果有效至</dt><dd>{data.expires_at ?? "尚无检查结果"}</dd><dt>检查时公开入口</dt><dd>{data.expected_public_origin ?? "未确认合法入口"}</dd><dt>固定连接版本</dt><dd>r{data.connection_revision} · Token v{data.bot_token_version}</dd></dl>
-      {data.gateway_config_digest && <details><summary>检查技术信息</summary><p className={styles.mono}>{data.gateway_config_digest}</p><p className={styles.mono}>{data.preflight_id}</p></details>}
+      <dl className={styles.facts}><dt>检查时接收方式</dt><dd>{receiveModeLabel(checkedMode)}{!data.diagnostic_policy ? "（旧版预检）" : ""}</dd><dt>当前保存接收方式</dt><dd>{receiveModeLabel(account.config.receive_mode)}</dd><dt>检查时间</dt><dd>{data.checked_at ?? "尚未完成"}</dd><dt>结果有效至</dt><dd>{data.expires_at ?? "尚无检查结果"}</dd><dt>检查时公开入口</dt><dd>{checkedMode === "long_polling" ? "不适用（长轮询）" : data.expected_public_origin ?? "未确认合法入口"}</dd><dt>固定连接版本</dt><dd>r{data.connection_revision} · Token v{data.bot_token_version}</dd></dl>
+      {data.gateway_config_digest && <details><summary>检查技术信息</summary><p className={styles.mono}>共享 Gateway 配置：{data.gateway_config_digest}</p>{data.diagnostic_policy && <p className={styles.mono}>诊断策略：{data.diagnostic_policy}</p>}{data.effective_config_digest && <p className={styles.mono}>本任务有效配置：{data.effective_config_digest}</p>}<p className={styles.mono}>{data.preflight_id}</p></details>}
     </div>}
     {!taskId && !pending && ready && !invalidLink && <p className={styles.note}>尚未选择预检任务。新检查只使用当前已保存的配置与凭据版本。</p>}
-    <div className={styles.limits}><strong>结果边界</strong><ul><li>公开入口：仅静态格式检查，未探测 DNS、TLS 或公网可达性。</li><li>Gateway 当前配置：尚未确认（UNCONFIRMED）；结果只针对检查时配置。</li><li>Telegram 实际投递：未验证（NOT_TESTED），不以 READY 或 PUBLISHED 代替。</li><li>旧 Webhook 的 secret_token 不可回读，预检结果不是完整恢复资料。</li></ul></div>
+    <div className={styles.limits}><strong>结果边界</strong><ul><li>公开入口：Webhook 仅静态格式检查，未探测 DNS、TLS 或公网可达性；长轮询不适用。</li><li>Gateway 当前配置：尚未确认（UNCONFIRMED）；结果只针对检查时配置。</li><li>Telegram 实际投递：未验证（NOT_TESTED），不以 READY 或 PUBLISHED 代替。</li><li>旧 Webhook 的 secret_token 不可回读，预检结果不是完整恢复资料。</li></ul></div>
   </section>;
 }

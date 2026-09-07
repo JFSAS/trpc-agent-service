@@ -41,7 +41,7 @@ describe("Channel public API", () => {
   });
   it("constructs fresh allowlisted mutation bodies and never copies read-only config or nested target internals", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(command));
-    const extra = { config: { bot_id: "not-editable" }, enabled: true, tenant_id: "wrong", credentials: { ...create.credentials, "wecom.bot_secret": { action: "replace" as const, value: "other-provider-secret" } } };
+    const extra = { config: { receive_mode: "webhook" as const, bot_id: "not-editable" }, enabled: true, tenant_id: "wrong", credentials: { ...create.credentials, "wecom.bot_secret": { action: "replace" as const, value: "other-provider-secret" } } };
     await channelApi.createAccount("t", { ...create, ...extra }, "k1");
     await channelApi.updateAccount("t", "a", { expected_account_revision: 3, name: "n", ...extra }, "k2");
     await channelApi.setAccountEnabled("t", "a", { ...extra, expected_account_revision: 3, enabled: false }, "k3");
@@ -51,7 +51,7 @@ describe("Channel public API", () => {
     await channelApi.setBindingEnabled("t", "b", { ...extra, expected_binding_revision: 2, enabled: true }, "k6");
     const bodies = fetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
     expect(bodies[0]).toEqual(create);
-    expect(bodies[1]).toEqual({ expected_account_revision: 3, name: "n" });
+    expect(bodies[1]).toEqual({ expected_account_revision: 3, name: "n", config: { receive_mode: "webhook" } });
     expect(bodies[2]).toEqual({ expected_account_revision: 3, enabled: false });
     expect(bodies[3]).toEqual({ account_id: "a", target: { deployment_id: "d", revision_number: 1 } });
     expect(bodies[4]).toEqual({ expected_binding_revision: 2, target: { deployment_id: "d", revision_number: 1 } });

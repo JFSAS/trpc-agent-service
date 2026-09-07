@@ -93,9 +93,10 @@ frontend prerequisite for enabling a valid route.
 - **Role boundary:** active tenant MEMBER/OWNER can read; OWNER write controls
   follow the current session/tenant access check, and the Control API remains
   authoritative. A denied write removes local write controls and secrets.
-- **Read-only identity/config:** Provider, physical identity, Telegram
-  `webhook_path`, and WeCom `bot_id` are not editable metadata. Account PATCH
-  sends only `expected_account_revision` and `name`/`description`.
+- **Read-only identity/generated config:** Provider, physical identity, Telegram
+  `webhook_path`, and WeCom `bot_id` remain read-only. Metadata PATCH sends
+  `expected_account_revision` and `name`/`description`; Telegram mode is a
+  separate confirmed PATCH of `config.receive_mode` on a disabled account.
 - **Fixed target:** the Deployment shortcut carries only validated
   `deployment_id`/`revision_number`. Selecting an account or loading a URL
   never writes or selects `latest`; invalid/duplicate selectors are visible.
@@ -246,3 +247,60 @@ npm run test:e2e:real
 The test verifies creation with revision 1 and `{}` Spec, CAS save, server
 validation, `201` publication, idempotent `200` publication, immutable version
 readback, metadata update, Agent listing, and stale-revision `409` behavior.
+
+
+## Telegram receive modes: Web implementation (2026-09-07)
+
+This source adds `long_polling` / `webhook` to the existing Channel pages;
+rollout and real Telegram receiving remain separate coordinator-owned gates.
+Control owns the shared wire; Web does not add an internal Gateway API.
+
+- New Telegram forms default to **long polling** and explicitly send the mode.
+  Existing accounts must return an explicit mode; missing/unknown current
+  modes are not interpreted as LP. WeCom has no Telegram mode selector.
+- LP requires Token only. The optional Webhook Secret remains editable and
+  preserved. Its server-provided metadata starts at version 1, configured
+  false; the browser never invents a credential revision. List counts show
+  required credentials rather than implying that every allowed purpose is required.
+- An enabled account has a separate stop action. Disabled accounts save mode
+  using Account PATCH/CAS and remain disabled. Missing Secret may be saved in
+  a disabled Webhook configuration; enable requires it. Saving never registers
+  or deletes Webhook, clears backlog, changes Binding, or auto-enables.
+- Enable is separately confirmed against the latest mode/revision. Gateway
+  drains old receiving before starting another receiver. V1 coordinates only
+  platform-managed/empty Webhook; an unknown external Webhook remains a
+  conflict. There is no blind takeover checkbox or all-PASS preflight gate.
+- Pending create stores exact mode and supplied-purpose names, never values.
+  Old Telegram markers retain their original body/key and use the explicit
+  `X-Channel-Create-Contract: webhook-v1` interpreter on confirmed retry. The
+  BFF forwards that header only to the Account collection POST. Missing mode
+  in command receipts is accepted only with the owner-provided response
+  header `X-Channel-Result-Contract: webhook-v1`; current GET/list are strict.
+- New preflight results carry `receive_mode`, `diagnostic_policy` equal to
+  `telegram-receive-modes-v1`, and an `effective_config_digest` after claim.
+  All three are absent on legacy results. LP checks 3/6/7 use exact
+  `NOT_APPLICABLE` codes/details, not PASS/SKIPPED. An existing Webhook is a
+  FAIL obstacle; no Webhook is PASS for that check only, not proof of polling.
+  History uses its own mode/policy, never the Account's latest mode.
+- Gateway mode/reason observations stay per-instance. No client-side owner
+  election, private cursor inspection, or inferred Agent execution is added.
+  The existing client 10-second budget stays unchanged; it is not a BFF
+  upstream deadline.
+
+The [receive-mode plan and implementation record](../docs/architecture-next/web/telegram-receive-modes-v1-plan.md)
+contains the three-task alignment. A reusable real BFF check is available at
+`test/channel-receive-modes-real-e2e.mjs`; it requires an explicitly selected
+isolated environment and creates only disabled synthetic accounts:
+
+```sh
+WEB_BASE_URL=http://127.0.0.1:PORT \
+CONTROL_E2E_USERNAME=TEST_USERNAME \
+CONTROL_E2E_PASSWORD=TEST_PASSWORD \
+CONTROL_E2E_TENANT_ID=TEST_TENANT \
+node test/channel-receive-modes-real-e2e.mjs
+```
+
+It does not invoke preflight, enable a Bot, or contact Telegram. Old stored
+receipt migration, authentic Telegram updates, multi-replica receive fencing,
+and remote-main integration require the corresponding backend/coordinator
+acceptance; this script does not stand in for those results.

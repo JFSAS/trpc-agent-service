@@ -64,7 +64,7 @@ describe("Channel account create", () => {
     await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/tenants/t/channels/cha_test?deployment_id=d&revision_number=3"));
     expect(mocks.create.mock.calls[0][1].provider_account_id).toBe("9007199254740993123456789");
     expect(mocks.create.mock.calls[0][1]).not.toHaveProperty("enabled");
-    expect(mocks.create.mock.calls[0][1]).not.toHaveProperty("config");
+    expect(mocks.create.mock.calls[0][1].config).toEqual({ receive_mode: "long_polling" });
     expect(mocks.get).toHaveBeenCalledWith("t", "cha_test");
   });
 
@@ -221,5 +221,55 @@ describe("Channel account create", () => {
     expect(await screen.findByLabelText("Bot Token")).toHaveValue("");
     expect(screen.getByLabelText(/Webhook Secret/)).toHaveValue("");
     expect(screen.getByLabelText(/账户名称/)).toHaveValue(""); expect(mocks.create).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("Receive mode creation", () => {
+  it("defaults to LP and omits the optional Secret rather than sending an empty replace", async () => {
+    render(<AccountCreate tenantId="t" />);
+    await screen.findByRole("button", { name: "检查并创建账户" });
+    expect(screen.getByRole("radio", { name: /^长轮询/ })).toBeChecked();
+    inputValue(/Telegram 数字 Bot ID/, "123456"); inputValue(/账户名称/, "LP bot"); inputValue("Bot Token", "lp-token");
+    openConfirmation(); expect(screen.getByRole("dialog")).toHaveTextContent("长轮询"); confirmCreate();
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+    expect(mocks.create.mock.calls[0][1]).toMatchObject({ config: { receive_mode: "long_polling" }, credentials: { "telegram.bot_token": { action: "replace", value: "lp-token" } } });
+    expect(Object.keys(mocks.create.mock.calls[0][1].credentials)).toEqual(["telegram.bot_token"]);
+    expect(mocks.create.mock.calls[0]).toHaveLength(3);
+  });
+  it("requires Secret in Webhook and preserves typed optional Secret across mode choices", async () => {
+    render(<AccountCreate tenantId="t" />); await fillTelegram();
+    fireEvent.click(screen.getByRole("radio", { name: /^Webhook/ }));
+    expect(screen.getByLabelText(/Webhook Secret/)).toHaveValue("form_only_webhook");
+    inputValue(/Webhook Secret/, ""); openConfirmation();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Webhook Secret/)).toHaveAttribute("aria-invalid", "true");
+    inputValue(/Webhook Secret/, "preserved"); fireEvent.click(screen.getByRole("radio", { name: /^长轮询/ }));
+    expect(screen.getByLabelText(/Webhook Secret/)).toHaveValue("preserved");
+    openConfirmation(); confirmCreate(); await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+    expect(mocks.create.mock.calls[0][1].credentials["telegram.webhook_secret"].value).toBe("preserved");
+  });
+  it("restores modern LP with the exact omitted-purpose set and no implicit Secret", async () => {
+    const marker = { operation: "createAccount", key: "modern-key", secret: true, createdAt: new Date().toISOString(), input: { provider: "telegram", provider_account_id: "123", name: "LP pending", config: { receive_mode: "long_polling" }, supplied_purposes: ["telegram.bot_token"] } };
+    expect(saveChannelPending(sessionStorage, channelPendingKey("u", "t", "new"), marker)).toBe(true);
+    render(<AccountCreate tenantId="t" />); await screen.findByText("上一次创建结果待确认");
+    expect(screen.getByRole("radio", { name: /^长轮询/ })).toBeDisabled();
+    expect(screen.getByLabelText(/Webhook Secret/)).toBeDisabled();
+    inputValue("Bot Token", "original-lp-token"); openConfirmation(true); confirmCreate(true);
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+    expect(mocks.create.mock.calls[0][2]).toBe("modern-key");
+    expect(mocks.create.mock.calls[0][1].config).toEqual({ receive_mode: "long_polling" });
+    expect(Object.keys(mocks.create.mock.calls[0][1].credentials)).toEqual(["telegram.bot_token"]);
+    expect(mocks.create.mock.calls[0][1]).not.toHaveProperty("supplied_purposes");
+  });
+  it("uses only the explicit legacy contract for an old marker, without new mode or a new key", async () => {
+    saveChannelPending(sessionStorage, channelPendingKey("u", "t", "new"), { operation: "createAccount", key: "legacy-key", secret: true, createdAt: new Date().toISOString(), input: { provider: "telegram", provider_account_id: "123", name: "old webhook" } });
+    render(<AccountCreate tenantId="t" />); await screen.findByText("上一次创建结果待确认");
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument(); expect(mocks.create).not.toHaveBeenCalled();
+    inputValue("Bot Token", "original-token"); inputValue(/Webhook Secret/, "original_secret"); openConfirmation(true); confirmCreate(true);
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+    expect(mocks.create.mock.calls[0][2]).toBe("legacy-key"); expect(mocks.create.mock.calls[0][3]).toBe("webhook-v1");
+    expect(mocks.create.mock.calls[0][1]).not.toHaveProperty("config");
+    expect(Object.keys(mocks.create.mock.calls[0][1].credentials)).toEqual(["telegram.bot_token", "telegram.webhook_secret"]);
   });
 });

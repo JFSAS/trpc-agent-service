@@ -1,4 +1,4 @@
-import type { ChannelTarget } from "./channel-api";
+import { isTelegramReceiveMode, type ChannelTarget } from "./channel-api";
 
 export type ChannelPending = {
   operation: string; key: string; input: Record<string, unknown>; secret: boolean; createdAt: string;
@@ -49,20 +49,34 @@ function credentialMarker(input: Record<string, unknown>, secret: boolean): bool
     && purpose(input.purpose) && version(input.expected_account_revision) && version(input.expected_credential_version)
     && (secret ? input.action === "replace" : input.action === "keep" || input.action === "clear");
 }
+function modeConfig(value: unknown): boolean {
+  return record(value) && fields(value, ["receive_mode"]) && isTelegramReceiveMode(value.receive_mode);
+}
+function createModeMarker(input: Record<string, unknown>): boolean {
+  // An old marker remains intact and distinguishable; the form locks legacy Telegram recovery.
+  if (!Object.hasOwn(input, "config") && !Object.hasOwn(input, "supplied_purposes")) return true;
+  if (input.provider !== "telegram" || !modeConfig(input.config) || !Array.isArray(input.supplied_purposes)) return false;
+  const purposes = input.supplied_purposes;
+  return (purposes.length === 1 || purposes.length === 2) && purposes[0] === "telegram.bot_token"
+    && (purposes.length === 1 || purposes[1] === "telegram.webhook_secret")
+    && ((input.config as Record<string, unknown>).receive_mode !== "webhook" || purposes.length === 2);
+}
 function validInput(pending: ChannelPending): boolean {
   const input = pending.input;
   if (!record(input) || containsSecretField(input)) return false;
   if (pending.secret) {
     if (pending.operation === "updateCredential") return credentialMarker(input, true);
     return pending.operation === "createAccount"
-      && fields(input, ["provider", "provider_account_id", "name"], ["description"])
+      && fields(input, ["provider", "provider_account_id", "name"], ["description", "config", "supplied_purposes"])
+      && createModeMarker(input)
       && (input.provider === "telegram" || input.provider === "wecom")
       && typeof input.provider_account_id === "string" && input.provider_account_id.length > 0 && new TextEncoder().encode(input.provider_account_id).length <= 1024
       && typeof input.name === "string" && input.name.trim().length > 0 && metadata(input);
   }
   switch (pending.operation) {
-    case "updateAccount": return fields(input, ["expected_account_revision"], ["name", "description"])
-      && version(input.expected_account_revision) && (Object.hasOwn(input, "name") || Object.hasOwn(input, "description")) && metadata(input);
+    case "updateAccount": return fields(input, ["expected_account_revision"], ["name", "description", "config"])
+      && version(input.expected_account_revision) && (Object.hasOwn(input, "name") || Object.hasOwn(input, "description") || Object.hasOwn(input, "config")) && metadata(input)
+      && (!Object.hasOwn(input, "config") || modeConfig(input.config));
     case "setAccountEnabled": return fields(input, ["expected_account_revision", "enabled"]) && version(input.expected_account_revision) && typeof input.enabled === "boolean";
     case "createBinding": return fields(input, ["account_id", "target"]) && id(input.account_id) && target(input.target);
     case "setBindingTarget": return fields(input, ["expected_binding_revision", "target"]) && version(input.expected_binding_revision) && target(input.target);
