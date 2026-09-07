@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strings"
+	shared "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 	"sync"
 	"testing"
 	"time"
@@ -30,8 +30,10 @@ func (f authReaderFunc) ReadAuthorization(c context.Context, t domain.Authorizat
 }
 func authorizationFixture(t *testing.T, generation int64, state, mode string, age int64) (domain.AuthorizationRead, []wire.AuthorizationSnapshotPage) {
 	t.Helper()
-	ref := wire.PolicyReference{ID: "session", Revision: 1, Digest: "sha256:" + strings.Repeat("a", 64)}
-	p := wire.AccessPolicyDocument{SchemaVersion: 1, TenantID: "tenant", AccountID: "account", Provider: "telegram", PolicyID: "policy", Revision: 1, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Body: wire.AccessPolicyBody{AccessMode: mode, AllowedPrincipalIDs: []string{"principal"}, AllowedConversationIDs: []string{"-200"}, AllowedOperations: []string{"message.send"}, AuthorizationMaxAgeMS: age, SessionPolicy: ref, TenantQuota: ref}}
+	session, quota := authorizationDefinition(t, "tenant", "session"), authorizationDefinition(t, "tenant", "quota")
+	sr := wire.PolicyReference{ID: session.PolicyID, Revision: 1, Digest: session.Digest}
+	qr := wire.PolicyReference{ID: quota.PolicyID, Revision: 1, Digest: quota.Digest}
+	p := wire.AccessPolicyDocument{SchemaVersion: 1, TenantID: "tenant", AccountID: "account", Provider: "telegram", PolicyID: "policy", Revision: 1, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Body: wire.AccessPolicyBody{AccessMode: mode, AllowedPrincipalIDs: []string{"principal"}, AllowedConversationIDs: []string{"-200"}, AllowedOperations: []string{"message.send"}, AuthorizationMaxAgeMS: age, SessionPolicy: sr, TenantQuota: qr}}
 	if mode == "PUBLIC_LIMITED" {
 		p.Body.AllowedPrincipalIDs = []string{}
 	}
@@ -57,7 +59,11 @@ func authorizationFixture(t *testing.T, generation int64, state, mode string, ag
 	}
 	n, root := d.Result()
 	m := wire.AuthorizationSnapshotManifest{AuthorizationSnapshotIdentity: id, AccountRevision: 1, AccountEnabled: true, Policy: wire.PolicyReference{ID: p.PolicyID, Revision: 1, Digest: p.Digest}, CapturedAt: time.Now().UTC(), AuthorizationMaxAgeMS: age, PrincipalCount: n, PrincipalDigest: root}
-	return domain.AuthorizationRead{Manifest: m, Policy: p}, []wire.AuthorizationSnapshotPage{{AuthorizationSnapshotIdentity: id, Principals: []wire.AuthorizationPrincipal{principal}, Complete: true}}
+	var pair *shared.PolicyDependencies
+	if mode != "DENY_ALL" {
+		pair = &shared.PolicyDependencies{Session: session, Quota: quota}
+	}
+	return domain.AuthorizationRead{Manifest: m, Policy: p, Dependencies: pair}, []wire.AuthorizationSnapshotPage{{AuthorizationSnapshotIdentity: id, Principals: []wire.AuthorizationPrincipal{principal}, Complete: true}}
 }
 func installAuthorization(t *testing.T, store *authpg.Store, generation int64, state, mode string, age int64) {
 	t.Helper()
@@ -273,5 +279,89 @@ func TestAuthorizationHeadLockFencesInstallation(t *testing.T) {
 	var pgerr interface{ SQLState() string }
 	if !errors.As(e, &pgerr) || pgerr.SQLState() != "55P03" {
 		t.Fatal("head not fenced", e)
+	}
+}
+
+func authorizationDefinition(t *testing.T, tenant, kind string) wire.PolicyDefinitionDocument {
+	t.Helper()
+	d := wire.PolicyDefinitionDocument{SchemaVersion: 1, TenantID: tenant, PolicyID: kind, Kind: kind, Revision: 1, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Definition: wire.PolicyDefinition{Enabled: true}}
+	if kind == "session" {
+		d.Definition.Session = &wire.SessionDefinition{Partition: "per_user_in_conversation"}
+	} else {
+		d.Definition.Quota = &wire.QuotaDefinition{MaxConcurrentRuns: 1, MaxRunsPerMinute: 5}
+	}
+	signAuthorizationDefinition(t, &d)
+	return d
+}
+func signAuthorizationDefinition(t *testing.T, d *wire.PolicyDefinitionDocument) {
+	t.Helper()
+	d.Digest = ""
+	raw, _ := json.Marshal(d)
+	raw, e := jcs.Transform(raw)
+	if e != nil {
+		t.Fatal(e)
+	}
+	sum := sha256.Sum256(raw)
+	d.Digest = "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func TestAuthorizationDependencyUnknownVersusDisabled(t *testing.T) {
+	for _, mode := range []string{"missing", "disabled_session", "disabled_quota"} {
+		t.Run(mode, func(t *testing.T) {
+			s, p, g := authorizationSetup(t)
+			read, pages := authorizationFixture(t, 1, "ACTIVE", "ALLOWLIST", 30000)
+			if mode == "missing" {
+				read.Dependencies = nil
+			} else {
+				doc := &read.Dependencies.Session
+				if mode == "disabled_quota" {
+					doc = &read.Dependencies.Quota
+				}
+				doc.Definition.Enabled = false
+				signAuthorizationDefinition(t, doc)
+				if mode == "disabled_session" {
+					read.Policy.Body.SessionPolicy.Digest = doc.Digest
+				} else {
+					read.Policy.Body.TenantQuota.Digest = doc.Digest
+				}
+				read.Policy.Digest = ""
+				raw, _ := json.Marshal(read.Policy)
+				raw, e := jcs.Transform(raw)
+				if e != nil {
+					t.Fatal(e)
+				}
+				sum := sha256.Sum256(raw)
+				read.Policy.Digest = "sha256:" + hex.EncodeToString(sum[:])
+				read.Manifest.Policy.Digest = read.Policy.Digest
+			}
+			e := g.Refresh(context.Background(), domain.AuthorizationTarget{TenantID: "tenant", AccountID: "account", Provider: "telegram"}, authReaderFunc(func(ctx context.Context, _ domain.AuthorizationTarget, stage func(context.Context, wire.AuthorizationSnapshotPage) error) (domain.AuthorizationRead, error) {
+				for _, page := range pages {
+					if e := stage(ctx, page); e != nil {
+						return domain.AuthorizationRead{}, e
+					}
+				}
+				return read, nil
+			}))
+			if e != nil {
+				t.Fatal(e)
+			}
+			input := authAcceptance(mode)
+			receipt, e := s.Commit(context.Background(), input)
+			if mode == "missing" {
+				if !errors.Is(e, domain.ErrUnavailable) {
+					t.Fatal(receipt, e)
+				}
+				countAuthorizationRows(t, p, 0, 0, 0, 0)
+			} else {
+				if e != nil || receipt.Decision != "denied" || receipt.Reason != "POLICY_DEPENDENCY_DENIED" {
+					t.Fatal(receipt, e)
+				}
+				again, e := s.Commit(context.Background(), input)
+				if e != nil || again != receipt {
+					t.Fatal("denial replay", again, e)
+				}
+				countAuthorizationRows(t, p, 1, 0, 1, 1)
+			}
+		})
 	}
 }

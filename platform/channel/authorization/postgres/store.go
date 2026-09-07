@@ -137,6 +137,18 @@ func (s *Store) Refresh(ctx context.Context, target domain.AuthorizationTarget, 
 	if p.TenantID != target.TenantID || p.AccountID != target.AccountID || p.Provider != target.Provider || p.PolicyID != m.Policy.ID || p.Revision != m.Policy.Revision || p.Digest != m.Policy.Digest || p.Body.AuthorizationMaxAgeMS != m.AuthorizationMaxAgeMS {
 		return ErrIntegrity
 	}
+	var sessionJSON, quotaJSON []byte
+	if result.Dependencies != nil {
+		if p.Body.AccessMode == "DENY_ALL" {
+			return ErrIntegrity
+		}
+		pair, e := domain.MatchPolicyDependencies(p, result.Dependencies.Session, result.Dependencies.Quota)
+		if e != nil {
+			return ErrIntegrity
+		}
+		sessionJSON, _ = json.Marshal(pair.Session)
+		quotaJSON, _ = json.Marshal(pair.Quota)
+	}
 	// Lock only after staging, so a slow fetch cannot monopolize the hot-path head.
 	_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, string(s.namespace)+"-auth/"+s.scope+"/"+target.AccountID)
 	if err != nil {
@@ -194,9 +206,31 @@ func (s *Store) Refresh(ctx context.Context, target domain.AuthorizationTarget, 
 	if _, err = tx.Exec(ctx, s.query(`DELETE FROM gateway_authorization_principals WHERE scope_id=$1 AND account_id=$2`), s.scope, target.AccountID); err != nil {
 		return ErrUnavailable
 	}
-	_, err = tx.Exec(ctx, s.query(`INSERT INTO gateway_authorization_snapshots(scope_id,account_id,source_epoch,tenant_id,provider,generation,account_revision,account_enabled,policy_id,policy_revision,policy_digest,policy_jsonb,principal_count,principal_digest,captured_at,read_started_at,fresh_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(scope_id,account_id) DO UPDATE SET generation=EXCLUDED.generation,account_revision=EXCLUDED.account_revision,account_enabled=EXCLUDED.account_enabled,policy_revision=EXCLUDED.policy_revision,policy_digest=EXCLUDED.policy_digest,policy_jsonb=EXCLUDED.policy_jsonb,principal_count=EXCLUDED.principal_count,principal_digest=EXCLUDED.principal_digest,captured_at=EXCLUDED.captured_at,read_started_at=EXCLUDED.read_started_at,fresh_until=EXCLUDED.fresh_until`), s.scope, target.AccountID, s.epoch, target.TenantID, target.Provider, m.Generation, m.AccountRevision, m.AccountEnabled, p.PolicyID, p.Revision, p.Digest, policyJSON, count, root, m.CapturedAt, anchor, expires)
+	_, err = tx.Exec(ctx, s.query(`INSERT INTO gateway_authorization_snapshots(scope_id,account_id,source_epoch,tenant_id,provider,generation,account_revision,account_enabled,policy_id,policy_revision,policy_digest,policy_jsonb,principal_count,principal_digest,captured_at,read_started_at,fresh_until,session_policy_jsonb,quota_policy_jsonb) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(scope_id,account_id) DO UPDATE SET generation=EXCLUDED.generation,account_revision=EXCLUDED.account_revision,account_enabled=EXCLUDED.account_enabled,policy_revision=EXCLUDED.policy_revision,policy_digest=EXCLUDED.policy_digest,policy_jsonb=EXCLUDED.policy_jsonb,principal_count=EXCLUDED.principal_count,principal_digest=EXCLUDED.principal_digest,captured_at=EXCLUDED.captured_at,read_started_at=EXCLUDED.read_started_at,fresh_until=EXCLUDED.fresh_until,session_policy_jsonb=EXCLUDED.session_policy_jsonb,quota_policy_jsonb=EXCLUDED.quota_policy_jsonb`), s.scope, target.AccountID, s.epoch, target.TenantID, target.Provider, m.Generation, m.AccountRevision, m.AccountEnabled, p.PolicyID, p.Revision, p.Digest, policyJSON, count, root, m.CapturedAt, anchor, expires, sessionJSON, quotaJSON)
 	if err != nil {
 		return ErrUnavailable
+	}
+	// Read back actual JSONB: triggers and DB coercion are not proof of content.
+	var storedSession, storedQuota []byte
+	if err = tx.QueryRow(ctx, s.query(`SELECT session_policy_jsonb,quota_policy_jsonb FROM gateway_authorization_snapshots WHERE scope_id=$1 AND account_id=$2`), s.scope, target.AccountID).Scan(&storedSession, &storedQuota); err != nil {
+		return ErrUnavailable
+	}
+	if sessionJSON == nil {
+		if storedSession != nil || storedQuota != nil {
+			return ErrIntegrity
+		}
+	} else {
+		sd, e := wire.DecodePolicyDefinitionDocument(storedSession)
+		if e != nil {
+			return ErrIntegrity
+		}
+		qd, e := wire.DecodePolicyDefinitionDocument(storedQuota)
+		if e != nil {
+			return ErrIntegrity
+		}
+		if _, e = domain.MatchPolicyDependencies(p, sd, qd); e != nil {
+			return ErrIntegrity
+		}
 	}
 	_, err = tx.Exec(ctx, s.query(`INSERT INTO gateway_authorization_principals(scope_id,account_id,generation,tenant_id,provider,principal_id,external_user_id,state,revision) SELECT $1,$2,$3,$4,$5,principal_id,external_user_id,state,revision FROM gateway_authorization_staging WHERE stage_id=$6`), s.scope, target.AccountID, m.Generation, target.TenantID, target.Provider, stageID)
 	if err != nil {

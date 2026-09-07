@@ -13,9 +13,11 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding"
 	channelnats "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/nats"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/policyowner"
 	channelpostgres "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/postgres"
 	channelapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelpolicy"
+	ownerpg "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelpolicy/adapter/outbound/postgres"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
 	deploymenthttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/inbound/runtimehttp"
 	deploymentnats "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/nats"
@@ -180,8 +182,19 @@ func New(ctx context.Context, config Config) (*App, error) {
 			pool.Close()
 			return nil, err
 		}
+		ownerSource, err := ownerpg.NewReader(pool)
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("assemble policy owner reader: %w", err)
+		}
+		definitions, err := policyowner.NewReader(ownerSource)
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("assemble channel policy bridge: %w", err)
+		}
 		channelModule, err = channelbinding.NewModule(channelbinding.Dependencies{
-			DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
+			PolicyDefinitions: definitions,
+			DB:                pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
 			TenantAccess:          channelTenantAccess{members: activeTenantMemberLookup{tenants: tenantModule.Service}},
 			TransactionAuthorizer: channelTransactionAuthorizer{}, Deployments: deploymentModule.Service,
 			Cipher: config.Channel.cipher, Options: channelpostgres.Options{ScopeID: config.Channel.ScopeID, SourceEpoch: config.Channel.SourceEpoch, MaxTenantAccounts: config.Channel.MaxTenantAccounts}, Workloads: config.Channel.principals(),

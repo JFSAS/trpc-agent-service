@@ -2,8 +2,13 @@ package postgresadapter
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gowebpki/jcs"
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"os"
 	"strings"
 	"sync"
@@ -97,6 +102,20 @@ func TestWorkerLedgerV1Postgres(t *testing.T) {
 			t.Fatal(e)
 		}
 		target := sharedauth.AuthorizationTarget{TenantID: req.Route.TenantID, AccountID: req.Route.AccountID, Provider: req.Route.Provider}
+		incomplete := current
+		incomplete.read.Dependencies = nil
+		if e = projection.Refresh(ctx, target, incomplete); e != nil {
+			t.Fatal(e)
+		}
+		incompleteTx, e := runtime.Begin(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		missingErr := l.currentAuthorization(ctx, incompleteTx, req)
+		incompleteTx.Rollback(ctx)
+		if !errors.Is(missingErr, domain.ErrNotReady) {
+			t.Fatal("missing dependency passed Worker check", missingErr)
+		}
 		if e = projection.Refresh(ctx, target, current); e != nil {
 			t.Fatal("Worker independent install", e)
 		}
@@ -137,7 +156,30 @@ func TestWorkerLedgerV1Postgres(t *testing.T) {
 		if e != nil || run.WaitReason != "AUTHORIZATION_DEPENDENCIES_NOT_READY" || run.Attempts != 0 {
 			t.Fatal("partial check granted full execution", run, e)
 		}
-		revoked := workerAuthorizationFixture(t, req, 2, "REVOKED")
+		disabled := workerAuthorizationFixture(t, req, 2, "ACTIVE")
+		disabled.read.Dependencies.Session.Definition.Enabled = false
+		signAuthorizationDefinition(t, &disabled.read.Dependencies.Session)
+		disabled.read.Policy.Body.SessionPolicy.Digest = disabled.read.Dependencies.Session.Digest
+		disabled.read.Policy.Revision = 2
+		disabled.read.Policy.Digest = ""
+		signed, _ := json.Marshal(disabled.read.Policy)
+		signed, e = jcs.Transform(signed)
+		if e != nil {
+			t.Fatal(e)
+		}
+		sum := sha256.Sum256(signed)
+		disabled.read.Policy.Digest = "sha256:" + hex.EncodeToString(sum[:])
+		disabled.read.Manifest.Policy = wire.PolicyReference{ID: disabled.read.Policy.PolicyID, Revision: 2, Digest: disabled.read.Policy.Digest}
+		if e = projection.Refresh(ctx, target, disabled); e != nil {
+			t.Fatal(e)
+		}
+		if e = check(req); !errors.Is(e, domain.ErrFenced) {
+			t.Fatal("disabled dependency passed Worker check", e)
+		}
+		revoked := workerAuthorizationFixture(t, req, 3, "REVOKED")
+		revoked.read.Policy = disabled.read.Policy
+		revoked.read.Dependencies = disabled.read.Dependencies
+		revoked.read.Manifest.Policy = disabled.read.Manifest.Policy
 		if e = projection.Refresh(ctx, target, revoked); e != nil {
 			t.Fatal(e)
 		}

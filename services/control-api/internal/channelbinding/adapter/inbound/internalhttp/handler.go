@@ -20,6 +20,7 @@ import (
 )
 
 type Runtime interface {
+	ResolvePolicyDependencies(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyDependenciesResponse, error)
 	ReadAuthorizationManifest(context.Context, application.WorkloadPrincipal, application.AuthorizationManifestRequest) (channelv1.AuthorizationSnapshotManifest, error)
 	ReadAuthorizationPage(context.Context, application.WorkloadPrincipal, application.AuthorizationPageRequest) (channelv1.AuthorizationSnapshotPage, error)
 	ResolveAccessPolicy(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyResolveResponse, error)
@@ -67,6 +68,7 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 	h.mux.HandleFunc("POST /internal/v1/channel-authorizations:snapshot", h.authorizationManifest)
 	h.mux.HandleFunc("POST /internal/v1/channel-authorizations:page", h.authorizationPage)
 	h.mux.HandleFunc("POST /internal/v1/channel-access-policies:resolve", h.resolvePolicy)
+	h.mux.HandleFunc("POST /internal/v1/channel-policy-dependencies:resolve", h.resolveDependencies)
 	h.mux.HandleFunc("POST /internal/v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials:resolve", h.resolve)
 	h.mux.HandleFunc("POST /internal/v1/channel-account-observations", h.observations)
 	if h.preflight != nil {
@@ -93,7 +95,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		failure(w, 403, "CHANNEL_WORKLOAD_DENIED")
 		return
 	}
-	if application.WorkerAuthorizationOnly(p) && (r.Method != "POST" || !slices.Contains([]string{"/internal/v1/channel-authorizations:snapshot", "/internal/v1/channel-authorizations:page", "/internal/v1/channel-access-policies:resolve"}, r.URL.Path)) {
+	if application.WorkerAuthorizationOnly(p) && (r.Method != "POST" || !slices.Contains([]string{"/internal/v1/channel-authorizations:snapshot", "/internal/v1/channel-authorizations:page", "/internal/v1/channel-access-policies:resolve", "/internal/v1/channel-policy-dependencies:resolve"}, r.URL.Path)) {
 		failure(w, 403, "CHANNEL_WORKLOAD_DENIED")
 		return
 	}
@@ -201,6 +203,8 @@ func handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, application.ErrWorkloadDenied):
 		status, code = 403, "CHANNEL_WORKLOAD_DENIED"
+	case errors.Is(err, application.ErrPolicyReferenceDenied):
+		status, code = 403, "CHANNEL_POLICY_REFERENCE_DENIED"
 	case errors.Is(err, application.ErrPolicyNotFound):
 		status, code = 404, "CHANNEL_POLICY_NOT_FOUND"
 	case errors.Is(err, application.ErrAccountNotFound):
@@ -243,4 +247,22 @@ func (h *Handler) resolvePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out, domain.MaxAccessPolicyDocumentBytes+4096)
+}
+
+func (h *Handler) resolveDependencies(w http.ResponseWriter, r *http.Request) {
+	p := r.Context().Value(principalKey{}).(application.WorkloadPrincipal)
+	if !application.CanReadAuthorization(p) {
+		handleError(w, application.ErrWorkloadDenied)
+		return
+	}
+	in, ok := decode[application.PolicyResolveRequest](w, r, "access-policy-resolve-request.schema.json", 16*1024)
+	if !ok {
+		return
+	}
+	out, e := h.service.ResolvePolicyDependencies(r.Context(), p, in)
+	if e != nil {
+		handleError(w, e)
+		return
+	}
+	writeJSON(w, 200, out, channelv1.MaxPolicyDependenciesBytes)
 }

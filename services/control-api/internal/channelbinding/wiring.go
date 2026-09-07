@@ -17,6 +17,7 @@ import (
 )
 
 type Dependencies struct {
+	PolicyDefinitions     application.PublishedDefinitionReader
 	DB                    postgresadapter.DB
 	Routes                gin.IRouter
 	Authenticate          gin.HandlerFunc
@@ -58,7 +59,11 @@ func NewModule(deps Dependencies) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := application.NewRuntimeService(store, deps.Cipher, deps.Options.ScopeID, deps.Options.SourceEpoch)
+	var definitions []application.PublishedDefinitionReader
+	if deps.PolicyDefinitions != nil {
+		definitions = append(definitions, deps.PolicyDefinitions)
+	}
+	runtime, err := application.NewRuntimeService(store, deps.Cipher, deps.Options.ScopeID, deps.Options.SourceEpoch, definitions...)
 	if err != nil {
 		return nil, err
 	}

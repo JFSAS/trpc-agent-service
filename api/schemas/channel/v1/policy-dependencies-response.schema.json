@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://jfsas.dev/schemas/channel/v1/access-policy-resolve-response.schema.json",
+  "$id": "https://jfsas.dev/schemas/channel/v1/policy-dependencies-response.schema.json",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -367,12 +367,20 @@
         "published_at",
         "digest"
       ]
+    },
+    "session": {
+      "$ref": "policy-definition-document.schema.json"
+    },
+    "quota": {
+      "$ref": "policy-definition-document.schema.json"
     }
   },
   "required": [
     "schema_version",
     "scope_id",
     "source_epoch",
-    "policy"
+    "policy",
+    "session",
+    "quota"
   ]
 }

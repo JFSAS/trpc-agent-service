@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	shared "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,7 +77,7 @@ func newAuthorizationRefresh(c Config, pool *pgxpool.Pool, directory *catalog.Se
 		reader.Close()
 		return nil, errors.New("initialize authorization installer failed")
 	}
-	loop, err := authorizationrefresh.New(authorizationDirectory{directory}, authorizationInstaller{store, reader}, authorizationrefresh.Options{})
+	loop, err := authorizationrefresh.New(authorizationDirectory{directory}, authorizationInstaller{store, shared.CompleteReader{Current: reader, Definitions: reader}}, authorizationrefresh.Options{})
 	if err != nil {
 		reader.Close()
 		return nil, errors.New("initialize authorization refresher failed")

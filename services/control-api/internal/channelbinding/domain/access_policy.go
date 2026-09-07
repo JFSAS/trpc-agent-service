@@ -20,9 +20,10 @@ const (
 type ChannelOperation string
 
 const (
-	OperationMessageSend  ChannelOperation = "message.send"
-	OperationSessionNew   ChannelOperation = "session.new"
-	OperationRunCancelOwn ChannelOperation = "run.cancel_own"
+	OperationMessageSend        ChannelOperation = "message.send"
+	OperationSessionNew         ChannelOperation = "session.new"
+	OperationSessionResetShared ChannelOperation = "session.reset_shared"
+	OperationRunCancelOwn       ChannelOperation = "run.cancel_own"
 	// These are preparation bounds, not a measured runtime propagation SLA. F10
 	// must calibrate freshness; complete large member sets need paged projections.
 	MaxAuthorizationAgeMS        int64 = 30000
@@ -83,7 +84,7 @@ func canonicalAccessPolicy(body AccessPolicyBody) (json.RawMessage, error) {
 	}
 	for _, op := range body.AllowedOperations {
 		switch op {
-		case OperationMessageSend, OperationSessionNew, OperationRunCancelOwn:
+		case OperationMessageSend, OperationSessionNew, OperationRunCancelOwn, OperationSessionResetShared:
 		default:
 			return nil, failure(InputInvalid, "/allowed_operations")
 		}

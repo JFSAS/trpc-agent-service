@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	shared "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 	"slices"
 	"time"
 
@@ -21,10 +22,10 @@ func (s *Store) VerifyAuthorization(ctx context.Context, tx pgx.Tx, in domain.In
 	if tx == nil || in.Kind != "text" || route.ValidateFor(in.Key) != nil {
 		return a, domain.ErrUnavailable
 	}
-	var raw []byte
+	var raw, sessionRaw, quotaRaw []byte
 	var enabled bool
 	var blocked string
-	err := tx.QueryRow(ctx, `SELECT source_epoch,tenant_id,provider,generation,account_enabled,policy_id,policy_revision,policy_digest,policy_jsonb,read_started_at,fresh_until,blocked_reason FROM gateway_authorization_snapshots WHERE scope_id=$1 AND account_id=$2 FOR SHARE`, s.scope, in.Key.AccountID).Scan(&a.SourceEpoch, &a.TenantID, &a.Provider, &a.Generation, &enabled, &a.PolicyID, &a.PolicyRevision, &a.PolicyDigest, &raw, &a.ReadStartedAt, &a.FreshUntil, &blocked)
+	err := tx.QueryRow(ctx, `SELECT source_epoch,tenant_id,provider,generation,account_enabled,policy_id,policy_revision,policy_digest,policy_jsonb,read_started_at,fresh_until,blocked_reason,session_policy_jsonb,quota_policy_jsonb FROM gateway_authorization_snapshots WHERE scope_id=$1 AND account_id=$2 FOR SHARE`, s.scope, in.Key.AccountID).Scan(&a.SourceEpoch, &a.TenantID, &a.Provider, &a.Generation, &enabled, &a.PolicyID, &a.PolicyRevision, &a.PolicyDigest, &raw, &a.ReadStartedAt, &a.FreshUntil, &blocked, &sessionRaw, &quotaRaw)
 	if err != nil || a.SourceEpoch != s.epoch || a.TenantID != route.TenantID || a.Provider != in.Key.Provider || blocked != "" {
 		return domain.AdmissionAuthorization{}, domain.ErrUnavailable
 	}
@@ -80,7 +81,15 @@ func (s *Store) VerifyAuthorization(ctx context.Context, tx pgx.Tx, in domain.In
 	case in.ConversationKind == "group" && !slices.Contains(policy.Body.AllowedConversationIDs, in.ConversationID):
 		a.Reason = "CONVERSATION_NOT_ALLOWED"
 	default:
-		a.Decision = "ALLOW"
+		if _, e := shared.CheckPolicyDependencies(policy, sessionRaw, quotaRaw, nil); e != nil {
+			if errors.Is(e, shared.ErrDependencyDisabled) || errors.Is(e, shared.ErrDependencyDenied) {
+				a.Reason = "POLICY_DEPENDENCY_DENIED"
+			} else {
+				return domain.AdmissionAuthorization{}, domain.ErrUnavailable
+			}
+		} else {
+			a.Decision = "ALLOW"
+		}
 	}
 	if a.ValidateFor(in, route) != nil {
 		return domain.AdmissionAuthorization{}, domain.ErrUnavailable

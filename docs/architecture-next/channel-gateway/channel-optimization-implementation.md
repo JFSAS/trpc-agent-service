@@ -749,3 +749,139 @@ Admission/Worker 同库授权 fence 仍待完成，全部 F01–F12 目标保持
 - Review, exact commands, baseline/modified regression and marked-copy rollback:
   `artifacts/main-review-20260908/VERIFICATION.txt`. Source submission is authorized;
   this review does not deploy or change the live Bot configuration.
+
+### 2026-09-08 — Exact runtime policy dependency read path
+
+- Added closed, digest-verified complete SessionPolicy/Quota definition contracts,
+  exact dependency binding and detached public Go values. References cannot be
+  substituted by kind, tenant, ID, revision or digest; disabled values are not
+  silently converted into enabled authorization or quota capacity.
+- Added account-authorized Control dependency resolution via the policy owner's
+  published read port, production module composition, an internal mTLS route and
+  the public bounded/no-store client. Requests name only an exact AccessPolicy;
+  tenant and both dependency references are derived from its verified document.
+  The exclusive Worker capability permits this fourth read route, not credentials.
+- Real owner publication/PostgreSQL -> RuntimeService -> verified Worker mTLS ->
+  public reader exercises complete content, cross-tenant/revision rejection and
+  credential denial. This is a real dependency-read chain, not a quota reservation
+  or an authorized Attempt. New wire corruption/shape tests cover both kinds.
+- Evidence: `artifacts/policy-dependencies-20260908-0700/VERIFICATION.txt`.
+  Next: atomic dependency installation with current snapshot expiry, runtime
+  enabled/session/low-quota checks, actual shared reservations, then complete
+  execution/tool/approval fences. Production emission and zero-Attempt hold remain
+  unchanged; full F01–F12 is unfinished. No commit, push or deployment this increment.
+
+### 2026-09-08 — Atomic current snapshot dependency installation
+
+- Added CompleteReader and wired both opt-in refresh lifecycles to resolve a full
+  exact Session/Quota pair within the original current snapshot deadline. No new
+  freshness interval starts after historical dependency reads; DENY_ALL skips them.
+- Added Gateway migration 0017 / Worker migration 0008 with paired dependency
+  JSONB, account/tenant/kind/reference constraints and same-policy immutability.
+  Complete pairs may enrich an old generation; incomplete/old writers cannot
+  erase an installed pair for that exact policy.
+- Shared installation verifies incoming complete content and reads actual JSONB
+  back inside the policy/principal transaction before commit. Invalid, partial,
+  downgraded or DB-trigger-mutated dependencies leave the prior head unchanged.
+  The DB anchor still precedes network reads, locking and bulk installation.
+- Real PostgreSQL tests exercise both compiled owner namespaces, same-generation
+  enrichment, deadline preservation, SQL guards and corruption rollback. Gateway
+  namespace uses its restricted runtime role; Worker namespace corruption tests
+  use the isolated test owner. Separate Worker ledger regression uses its actual
+  migrator/runtime split. No live IM or single deployed App claim is made.
+- Evidence: `artifacts/dependency-install-20260908-0720/VERIFICATION.txt`.
+  Next: require/interpret these dependencies in Admission/Worker current checks,
+  enforce session partition/low-quota semantics and shared reservations, then
+  complete execution/tools/approval fences. Zero-Attempt hold and production
+  emission state are unchanged; F01–F12 remains unfinished. No push/deployment.
+
+### 2026-09-08 — Locked runtime policy dependency checks
+
+- Admission and Worker now read the paired dependency JSONB under the same current
+  head lock as account/policy/principal state, then verify complete content and
+  exact references before a local allow. Missing/corrupt/substituted dependencies
+  stay unknown; complete disabled definitions are a known denial.
+- Admission records POLICY_DEPENDENCY_DENIED plus the usual authorization audit,
+  creates zero Runs, and replays the first decision. Missing dependencies persist
+  no acceptance state. Worker missing/disabled checks stay zero-Attempt waits;
+  complete enabled definitions still do not replace actual session/quota gates.
+- Shared semantic checks retain explicit partition/limit/reference values. Public
+  definitions require per-user partition, explicit positive quota and a provided
+  valid ceiling; missing ceilings are not-ready. No default quota ceiling, implicit
+  unlimited capacity, process-local budget counter or tool isolation is invented.
+- Tests now use real signed complete dependency fixtures instead of placeholder
+  references. PostgreSQL tests exercise Admission unknown versus disabled, denial
+  replay and zero Run; Worker tests exercise missing -> complete -> disabled ->
+  revoked while preserving historical Admission facts and zero Attempts.
+- Evidence: `artifacts/dependency-checks-20260908-0740/VERIFICATION.txt`.
+  Next: actual Session partition application and shared reservation semantics, then
+  complete runtime/tool/approval gates. PUBLIC_LIMITED/production emission remain
+  unenabled. Full F01–F12 remains open; no commit/push/deployment this increment.
+
+### 2026-09-08 — Worker conversation registry transaction foundation
+
+- Added policy-bound, tagged per-user/shared scope and generation-derived SessionID
+  values. Exact policy revision/digest changes isolate history; tenant/topic/
+  deployment/principal isolation and switch-back behavior are covered.
+- Added Worker migration 0009 and a transaction-owned registry adapter. New intake
+  callbacks select generation while holding the registry lock; reset uses command
+  identity replay, expected-generation CAS, immutable result and audit outbox in
+  the same transaction. Deferred SQL enforcement rejects naked generation updates.
+- The adapter requires current authorization through an explicit transaction port,
+  rechecks before commit and distinguishes shared reset operation. No default
+  grant, Gateway-owned generation or process-local registry is introduced.
+- Real Worker-role PostgreSQL tests cover 8 concurrent duplicate commands, distinct
+  CAS contenders, replay after response loss/denial, final authorization failure,
+  audit rollback, intake/reset ordering and reopening the durable registry.
+- Evidence: `artifacts/session-registry-20260908-0800/VERIFICATION.txt`.
+  This is not yet actual Execution intake or `/new` routing: those need the real
+  current-authority adapter plus pending authorized-intake/refresh discovery, to
+  avoid a projection/intake initialization cycle. The existing hash path is not a
+  chosen compatibility fallback; replace it when wiring this registry. Session
+  accepted-head/reset integration and full F01–F12 acceptance remain uncompleted.
+  No commit, push, deployment or live IM operation in this increment.
+
+### 2026-09-08 — Session current projection authority
+
+- Added a concrete Session authorizer over Worker's current locked authorization
+  tables: pinned epoch/scope, account state, complete immutable policy/dependency
+  proof, exact SessionPolicy reference/partition, current principal, operation and
+  group scope plus DB-time checks. It makes no per-command Control request.
+- Added explicit `session.reset_shared` publication/wire enum support; it is not
+  inherited from session.new or granted by default. Authenticated conversation kind
+  is now part of Session scope and validation, not guessed from provider IDs.
+- Registry tests now additionally compose real installed Worker snapshots with
+  this authorizer. Both partition modes succeed only with the correct grants;
+  missing/disabled/revoked/reference/tenant/group/epoch failures create no command.
+  After current revocation, a prior immutable result replays but a new reset fails.
+- RouteAuthority is a mandatory separate port, not a default grant. The tests use
+  a bounded route-owner fixture; production route/intake assembly and provider
+  command routing remain pending. The complete execution/reset chain is not claimed.
+- Evidence: `artifacts/session-authority-20260908-0820/VERIFICATION.txt`.
+  Next: pending authorized intake and refresh discovery plus the actual route-owner
+  adapter; then replace old Session selection, integrate registry/Run transaction
+  and reset results, and continue quota/execution/remaining F01–F12 gates.
+  No commit, push, deployment, or live IM operation in this increment.
+
+### 2026-09-08 — Pending intake discovery and main integration review
+
+- Worker migration 0010 stores unassigned authorized inputs with immutable first
+  request, policy and deadline. Retry does not renew expiry. Pending entries create
+  no Execution Receipt, Run, Session or broker ACK; expired entries stop requesting
+  authorization refresh but occupy retained capacity until explicit cleanup.
+- The refresh directory discovers both active Runs and unexpired pending inputs.
+  This provides the discovery primitive before Session assignment, not a complete
+  broker intake pipeline. Staging is not yet called by the production consumer;
+  atomic registry/Run promotion and retention remain future work.
+- Pending and ordinary intake share capacity and identity locks. Main review found
+  ordinary Accept could cross a pending identity when capacity was available.
+  A reproduced regression now protects same/event/run/admission identities after
+  receipt replay: ordinary Accept returns retryable ErrNotReady, never terminal
+  ACK or a new receipt. Actual conversion requires the future promoter transaction.
+- Review also moved the policy-owner PostgreSQL reader composition to Control's
+  process bootstrap and injected the published-definition port into ChannelBinding
+  (ARC-206), and aligned Session adapter package naming with Worker (ARC-104).
+- Review/test evidence: artifacts/main-submit-20260908/VERIFICATION.txt. This
+  integration packages the dependency, Session and pending-input foundations above;
+  it does not complete F01–F12, enable production authorization emission, deploy
+  services, or establish a new real Telegram/WeCom acceptance result.

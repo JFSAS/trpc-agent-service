@@ -1,10 +1,12 @@
 package postgresadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	channelv1 "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/credentialcrypto"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +129,38 @@ func TestPolicyOwnerReadersUseRealPublishedDocumentsAgainstPostgreSQL(t *testing
 	if err != nil || result.Revision != 1 || result.Distribution != "PENDING" {
 		t.Fatal(result, err)
 	}
+
+	cipher, e := credentialcrypto.New("k1", map[string]credentialcrypto.Key{"k1": {Encryption: bytes.Repeat([]byte{1}, 32), MAC: bytes.Repeat([]byte{2}, 32)}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	runtime, e := application.NewRuntimeService(store, cipher, testScope, testEpoch, reader)
+	if e != nil {
+		t.Fatal(e)
+	}
+	resolver, e := application.NewPolicyDependencyService(runtime, reader)
+	if e != nil {
+		t.Fatal(e)
+	}
+	principal := application.WorkloadPrincipal{PrincipalID: "spiffe://test/worker", InstanceID: "worker", ScopeID: testScope, Audience: application.WorkloadAudience, Consumers: []string{application.WorkerAuthorizationConsumer}}
+	input := application.PolicyResolveRequest{SchemaVersion: 1, AccountID: a.ID, Reference: domain.PolicyRevisionReference{ID: result.PolicyID, Revision: result.Revision, Digest: result.Digest}}
+	bundle, e := resolver.Resolve(ctx, principal, input)
+	if e != nil || bundle.Session.Digest != sr.Digest || bundle.Quota.Digest != qr.Digest || bundle.Session.TenantID != a.TenantID {
+		t.Fatal("exact runtime dependency bundle", bundle, e)
+	}
+	principal.Consumers = []string{"telegram_receiver"}
+	if _, e = resolver.Resolve(ctx, principal, input); !errors.Is(e, application.ErrWorkloadDenied) {
+		t.Fatal("unprivileged dependency resolve", e)
+	}
+	if _, e = reader.ReadPublishedDefinition(ctx, "tnt_b", "session", sr); !errors.Is(e, application.ErrPolicyReferenceDenied) {
+		t.Fatal("cross tenant definition", e)
+	}
+	if _, e = reader.ReadPublishedDefinition(ctx, a.TenantID, "quota", sr); !errors.Is(e, application.ErrPolicyReferenceDenied) {
+		t.Fatal("kind definition", e)
+	}
+	principal.Consumers = []string{application.WorkerAuthorizationConsumer}
+	verifyPolicyDependencyMTLS(t, runtime, principal, bundle)
+	t.Log("POLICY_DEPENDENCIES=PASS owner publication -> PG exact read -> runtime account authorization -> independent wire digest and reference binding")
 	// Verify persisted JSONB against the exact shared consumer contract, not only
 	// in-memory producer values. Both owner definitions and the access policy emit
 	// one notification plus one audit, and their transport digests survive JSONB.

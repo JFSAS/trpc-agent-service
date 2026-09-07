@@ -28,8 +28,10 @@ func (r workerAuthorizationReader) ReadAuthorization(ctx context.Context, target
 func workerAuthorizationFixture(t *testing.T, req domain.Requested, generation int64, state string) workerAuthorizationReader {
 	t.Helper()
 	a := req.Authorization
-	ref := wire.PolicyReference{ID: "definition", Revision: 1, Digest: domain.Digest([]byte("definition"))}
-	policy := wire.AccessPolicyDocument{SchemaVersion: 1, TenantID: req.Route.TenantID, AccountID: req.Route.AccountID, Provider: req.Route.Provider, PolicyID: a.PolicyID, Revision: a.PolicyRevision, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Body: wire.AccessPolicyBody{AccessMode: "ALLOWLIST", AllowedPrincipalIDs: []string{a.PrincipalID}, AllowedConversationIDs: []string{}, AllowedOperations: []string{"message.send"}, SessionPolicy: ref, TenantQuota: ref, AuthorizationMaxAgeMS: 30000}}
+	session, quota := authorizationDefinition(t, req.Route.TenantID, "session"), authorizationDefinition(t, req.Route.TenantID, "quota")
+	sr := wire.PolicyReference{ID: session.PolicyID, Revision: 1, Digest: session.Digest}
+	qr := wire.PolicyReference{ID: quota.PolicyID, Revision: 1, Digest: quota.Digest}
+	policy := wire.AccessPolicyDocument{SchemaVersion: 1, TenantID: req.Route.TenantID, AccountID: req.Route.AccountID, Provider: req.Route.Provider, PolicyID: a.PolicyID, Revision: a.PolicyRevision, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Body: wire.AccessPolicyBody{AccessMode: "ALLOWLIST", AllowedPrincipalIDs: []string{a.PrincipalID}, AllowedConversationIDs: []string{}, AllowedOperations: []string{"message.send"}, SessionPolicy: sr, TenantQuota: qr, AuthorizationMaxAgeMS: 30000}}
 	raw, err := json.Marshal(policy)
 	if err != nil {
 		t.Fatal(err)
@@ -48,5 +50,28 @@ func workerAuthorizationFixture(t *testing.T, req domain.Requested, generation i
 	}
 	count, root := d.Result()
 	manifest := wire.AuthorizationSnapshotManifest{AuthorizationSnapshotIdentity: identity, AccountRevision: 1, AccountEnabled: true, Policy: wire.PolicyReference{ID: policy.PolicyID, Revision: policy.Revision, Digest: policy.Digest}, CapturedAt: time.Now().UTC(), AuthorizationMaxAgeMS: 30000, PrincipalCount: count, PrincipalDigest: root}
-	return workerAuthorizationReader{shared.AuthorizationRead{Manifest: manifest, Policy: policy}, wire.AuthorizationSnapshotPage{AuthorizationSnapshotIdentity: identity, Principals: []wire.AuthorizationPrincipal{p}, Complete: true}}
+	return workerAuthorizationReader{shared.AuthorizationRead{Manifest: manifest, Policy: policy, Dependencies: &shared.PolicyDependencies{Session: session, Quota: quota}}, wire.AuthorizationSnapshotPage{AuthorizationSnapshotIdentity: identity, Principals: []wire.AuthorizationPrincipal{p}, Complete: true}}
+}
+
+func authorizationDefinition(t *testing.T, tenant, kind string) wire.PolicyDefinitionDocument {
+	t.Helper()
+	d := wire.PolicyDefinitionDocument{SchemaVersion: 1, TenantID: tenant, PolicyID: kind, Kind: kind, Revision: 1, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Definition: wire.PolicyDefinition{Enabled: true}}
+	if kind == "session" {
+		d.Definition.Session = &wire.SessionDefinition{Partition: "per_user_in_conversation"}
+	} else {
+		d.Definition.Quota = &wire.QuotaDefinition{MaxConcurrentRuns: 1, MaxRunsPerMinute: 5}
+	}
+	signAuthorizationDefinition(t, &d)
+	return d
+}
+func signAuthorizationDefinition(t *testing.T, d *wire.PolicyDefinitionDocument) {
+	t.Helper()
+	d.Digest = ""
+	raw, _ := json.Marshal(d)
+	raw, e := jcs.Transform(raw)
+	if e != nil {
+		t.Fatal(e)
+	}
+	sum := sha256.Sum256(raw)
+	d.Digest = "sha256:" + hex.EncodeToString(sum[:])
 }

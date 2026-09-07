@@ -62,3 +62,24 @@ Tests cover real Worker migrations and Ledger.Accept persistence, target filteri
 deduplication, configuration rejection, cancellation and idempotent Close. A
 separate actual Control/PostgreSQL mTLS test verifies the public reader and revocation.
 These are component integration proofs, not a single deployed App/real IM chain.
+
+## Locked dependency document checks
+
+Claim now reads both dependency documents under the same current-head lock as
+policy/principal checks. The shared checker independently revalidates full content
+and exact references, then requires enabled SessionPolicy and Quota. Missing or
+corrupt content returns AUTHORIZATION_NOT_READY; known disabled content returns
+AUTHORIZATION_DENIED. This supersedes the earlier subject-only local check.
+
+Passing document checks still records AUTHORIZATION_DEPENDENCIES_NOT_READY and
+zero Attempts: actual session partition application, shared quota reservations and
+execution/tool/approval gates are not proved merely by reading their definitions.
+No per-message synchronous Control request is added.
+
+Pending authorized intake is an unassigned durable input, not an accepted Run.
+StageAuthorization freezes its first request/policy/deadline; active pending rows
+are refresh targets and count toward queue capacity, while all pending rows count
+toward retained capacity. Ordinary Accept replays existing receipts first, then
+returns ErrNotReady for any pending Event/Run/Admission identity; it cannot promote
+or acknowledge that input. Production consumer staging, transactionally coupled
+registry/Run promotion and retention cleanup are not yet wired.

@@ -235,3 +235,21 @@ func FuzzDecodeAccessPolicyRevision(f *testing.F) {
 		}
 	})
 }
+
+func TestSharedSessionResetRequiresExplicitOperation(t *testing.T) {
+	_, body, _ := policyFixture(t)
+	normalized, e := d.NormalizeAccessPolicyBody(body)
+	if e != nil {
+		t.Fatal(e)
+	}
+	before := normalized
+	for _, op := range before.AllowedOperations {
+		if op == d.OperationSessionResetShared {
+			t.Fatal("shared reset implicitly granted")
+		}
+	}
+	body.AllowedOperations = append(body.AllowedOperations, d.OperationSessionResetShared)
+	if _, e = d.NormalizeAccessPolicyBody(body); e != nil {
+		t.Fatal("explicit shared reset rejected", e)
+	}
+}

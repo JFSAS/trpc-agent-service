@@ -131,6 +131,16 @@ func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain
 	} else if !errors.Is(e, domain.ErrNotFound) {
 		return domain.Receipt{}, e
 	}
+	// A pending identity can only be promoted by the future registry/Run
+	// transaction. Keep all collisions retryable here: ErrConflict is terminal
+	// to the broker and must not ACK an input still awaiting authorization.
+	var pending bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM execution_pending_intakes WHERE event_id=$1 OR run_id=$2 OR admission_id=$3)`, req.EventID, req.RunID, req.AdmissionID).Scan(&pending); err != nil {
+		return domain.Receipt{}, err
+	}
+	if pending {
+		return domain.Receipt{}, domain.ErrNotReady
+	}
 	var tenant, id, digest, admission string
 	err = tx.QueryRow(ctx, `SELECT tenant_id,run_id,request_digest,admission_id FROM execution_runs WHERE run_id=$1 OR admission_id=$2 ORDER BY run_id LIMIT 1`, req.RunID, req.AdmissionID).Scan(&tenant, &id, &digest, &admission)
 	if err == nil {
@@ -164,7 +174,7 @@ func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain
 	// lock. Completed history still occupies storage, but this gate never blocks
 	// receipt replay, an alias for an existing Run, or that Run's recovery writes.
 	var queued, retained int64
-	if err = tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status IN ('QUEUED','RUNNING','RETRY_WAIT')),count(*) FROM execution_runs`).Scan(&queued, &retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM execution_runs WHERE status IN ('QUEUED','RUNNING','RETRY_WAIT'))+(SELECT count(*) FROM execution_pending_intakes WHERE expires_at>clock_timestamp()),(SELECT count(*) FROM execution_runs)+(SELECT count(*) FROM execution_pending_intakes)`).Scan(&queued, &retained); err != nil {
 		return domain.Receipt{}, err
 	}
 	if queued >= int64(limits.MaxQueuedRuns) || retained >= int64(limits.MaxRetainedRuns) {

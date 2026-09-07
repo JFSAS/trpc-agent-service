@@ -14,6 +14,7 @@ type AuthorizationTarget struct{ TenantID, AccountID, Provider string }
 // timestamps are in-process diagnostics; durable expiry uses a DB clock anchor
 // acquired before the reader starts its authenticated current-state request.
 type AuthorizationRead struct {
+	Dependencies         *PolicyDependencies
 	Manifest             wire.AuthorizationSnapshotManifest
 	Policy               wire.AccessPolicyDocument
 	StartedAt, ExpiresAt time.Time

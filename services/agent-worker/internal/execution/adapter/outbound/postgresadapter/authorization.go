@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	shared "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 	"slices"
 	"time"
 
@@ -21,7 +22,8 @@ func NewAuthorizationProjection(pool *pgxpool.Pool, scope, epoch string) (*insta
 	return installer.New(pool, scope, epoch, installer.Worker)
 }
 
-// currentAuthorization checks local current account/policy/principal state under
+// currentAuthorization checks local current account/policy/principal state and
+// exact enabled dependency documents under
 // the caller's Claim transaction. nil means this check passed, not that quota,
 // session isolation, tool authority or the remaining Claim gates have passed.
 func (l *Ledger) currentAuthorization(ctx context.Context, tx pgx.Tx, r domain.Requested) error {
@@ -32,9 +34,9 @@ func (l *Ledger) currentAuthorization(ctx context.Context, tx pgx.Tx, r domain.R
 	var epoch, tenant, provider, policyID, digest, blocked string
 	var generation, policyRevision int64
 	var enabled bool
-	var raw []byte
+	var raw, sessionRaw, quotaRaw []byte
 	var start, until, now time.Time
-	err := tx.QueryRow(ctx, `SELECT source_epoch,tenant_id,provider,generation,account_enabled,policy_id,policy_revision,policy_digest,policy_jsonb,read_started_at,fresh_until,blocked_reason FROM worker_authorization_snapshots WHERE scope_id=$1 AND account_id=$2 FOR SHARE`, a.ScopeID, r.Route.AccountID).Scan(&epoch, &tenant, &provider, &generation, &enabled, &policyID, &policyRevision, &digest, &raw, &start, &until, &blocked)
+	err := tx.QueryRow(ctx, `SELECT source_epoch,tenant_id,provider,generation,account_enabled,policy_id,policy_revision,policy_digest,policy_jsonb,read_started_at,fresh_until,blocked_reason,session_policy_jsonb,quota_policy_jsonb FROM worker_authorization_snapshots WHERE scope_id=$1 AND account_id=$2 FOR SHARE`, a.ScopeID, r.Route.AccountID).Scan(&epoch, &tenant, &provider, &generation, &enabled, &policyID, &policyRevision, &digest, &raw, &start, &until, &blocked, &sessionRaw, &quotaRaw)
 	if err != nil || blocked != "" || epoch != a.SourceEpoch || tenant != r.Route.TenantID || provider != r.Route.Provider || generation < a.Generation || policyID != a.PolicyID || policyRevision < a.PolicyRevision || policyRevision == a.PolicyRevision && digest != a.PolicyDigest {
 		return domain.ErrNotReady
 	}
@@ -73,6 +75,12 @@ func (l *Ledger) currentAuthorization(ctx context.Context, tx pgx.Tx, r domain.R
 	}
 	if !slices.Contains(p.Body.AllowedPrincipalIDs, principal) || !slices.Contains(p.Body.AllowedOperations, a.Operation) || a.ConversationKind == "group" && !slices.Contains(p.Body.AllowedConversationIDs, a.ConversationID) {
 		return domain.ErrFenced
+	}
+	if _, e := shared.CheckPolicyDependencies(p, sessionRaw, quotaRaw, nil); e != nil {
+		if errors.Is(e, shared.ErrDependencyDisabled) || errors.Is(e, shared.ErrDependencyDenied) {
+			return domain.ErrFenced
+		}
+		return domain.ErrNotReady
 	}
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil || now.Before(start) || !now.Before(until) {
 		return domain.ErrNotReady

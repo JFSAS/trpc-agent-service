@@ -379,3 +379,7 @@ func TestPreflightPrivateOptionalSurfaceDoesNotChangeLegacyConstructor(t *testin
 		}
 	}
 }
+
+func (runtimeFake) ResolvePolicyDependencies(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyDependenciesResponse, error) {
+	return application.PolicyDependenciesResponse{}, application.ErrDependencyUnavailable
+}

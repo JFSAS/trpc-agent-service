@@ -98,6 +98,90 @@ func TestAuthorizationTargetsPostgresAndLifecycle(t *testing.T) {
 	req.Input.ReceivedAt = time.Now().UTC()
 	policy := domain.Policy{Version: "test", MaxRunAge: time.Hour, MaxReplyAge: time.Hour, MaxFutureSkew: time.Minute, LeaseTTL: 3 * time.Second, RenewalInterval: time.Second, RetryBackoff: time.Millisecond, MaxAttempts: 3}
 	store := ledger.New(pool)
+
+	// A durable unassigned input can discover its refresh target before any Run or
+	// Session exists. Staging is not an accepted receipt and cannot select a hash.
+	limits := domain.IntakeLimits{MaxQueuedRuns: 1, MaxRetainedRuns: 1}
+	if e = store.StageAuthorization(ctx, req, policy, limits); e != nil {
+		t.Fatal(e)
+	}
+	var originalDeadline time.Time
+	if e = pool.QueryRow(ctx, `SELECT expires_at FROM execution_pending_intakes WHERE event_id=$1`, req.EventID).Scan(&originalDeadline); e != nil {
+		t.Fatal(e)
+	}
+	changedPolicy := policy
+	changedPolicy.MaxRunAge = 2 * time.Hour
+	if e = store.StageAuthorization(ctx, req, changedPolicy, limits); e != nil {
+		t.Fatal("pending retry at capacity", e)
+	}
+	var retriedDeadline time.Time
+	if e = pool.QueryRow(ctx, `SELECT expires_at FROM execution_pending_intakes WHERE event_id=$1`, req.EventID).Scan(&retriedDeadline); e != nil || !retriedDeadline.Equal(originalDeadline) {
+		t.Fatal("retry extended pending deadline", e)
+	}
+	for _, table := range []string{"execution_runs", "execution_sessions", "execution_receipts"} {
+		var n int
+		if e = pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); e != nil || n != 0 {
+			t.Fatal("staging allocated execution facts", table, n, e)
+		}
+	}
+	pendingDirectory := authorizationTargets{pool: pool, scope: req.Authorization.ScopeID}
+	pendingTargets, e := pendingDirectory.AuthorizationTargets(ctx)
+	if e != nil || len(pendingTargets) != 1 || pendingTargets[0].Target.AccountID != req.Route.AccountID {
+		t.Fatal("pending target discovery", pendingTargets, e)
+	}
+	foreignPending := authorizationTargets{pool: pool, scope: "other"}
+	if v, e := foreignPending.AuthorizationTargets(ctx); e != nil || len(v) != 0 {
+		t.Fatal("foreign pending target", v, e)
+	}
+	changed := req
+	changed.Input.Text = "changed"
+	if e = store.StageAuthorization(ctx, changed, policy, limits); !errors.Is(e, domain.ErrConflict) {
+		t.Fatal("pending identity reinterpretation", e)
+	}
+	next := req
+	next.EventID = "next-event"
+	next.RunID = "next-run"
+	next.AdmissionID = "next-admission"
+	next.EventDigest = domain.Digest([]byte(next.EventID))
+	next.RunDigest = domain.Digest([]byte(next.RunID))
+	if e = store.StageAuthorization(ctx, next, policy, limits); !errors.Is(e, domain.ErrCapacity) {
+		t.Fatal("pending capacity", e)
+	}
+	if _, e = store.Accept(ctx, next, policy, limits); !errors.Is(e, domain.ErrCapacity) {
+		t.Fatal("normal intake bypassed pending retained capacity", e)
+	}
+	// Legacy Accept must not turn a staged identity into a Run, even when
+	// capacity is available. A retryable error keeps the broker from ACKing it.
+	for _, field := range []string{"same", "event", "run", "admission"} {
+		candidate := next
+		switch field {
+		case "same":
+			candidate = req
+		case "event":
+			candidate.EventID = req.EventID
+		case "run":
+			candidate.RunID = req.RunID
+		case "admission":
+			candidate.AdmissionID = req.AdmissionID
+		}
+		if _, e = store.Accept(ctx, candidate, policy, domain.IntakeLimits{MaxQueuedRuns: 100, MaxRetainedRuns: 1000}); !errors.Is(e, domain.ErrNotReady) {
+			t.Fatalf("legacy intake crossed pending %s reservation: %v", field, e)
+		}
+	}
+	expired := next
+	expired.Input.ReceivedAt = time.Now().Add(-2 * time.Hour)
+	if e = store.StageAuthorization(ctx, expired, policy, domain.IntakeLimits{MaxQueuedRuns: 100, MaxRetainedRuns: 1000}); !errors.Is(e, domain.ErrInvalid) {
+		t.Fatal("expired pending input", e)
+	}
+	if _, e = pool.Exec(ctx, `UPDATE execution_pending_intakes SET expires_at=expires_at+interval '1 hour'`); e == nil {
+		t.Fatal("pending deadline mutable")
+	}
+	// Fixture cleanup only; real promotion must delete this row in the same Run/
+	// registry transaction and is intentionally not represented by this DELETE.
+	if _, e = pool.Exec(ctx, `DELETE FROM execution_pending_intakes`); e != nil {
+		t.Fatal(e)
+	}
+	t.Log("PENDING_INTAKE_DISCOVERY=PASS zero Run/Session/Receipt; immutable retry; target scope; shared retained capacity")
 	for n := 0; n < 2; n++ {
 		r := req
 		r.EventID = fmt.Sprintf("event-%d", n)

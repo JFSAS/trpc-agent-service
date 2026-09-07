@@ -272,8 +272,8 @@ remain separate implementation work.
 
 A mapping with `consumers: ["worker_channel_authorization"]` is exclusive: mixing
 it with another consumer is rejected at construction. Its verified mTLS identity
-can POST only `channel-access-policies:resolve`, `channel-authorizations:snapshot`
-and `channel-authorizations:page` under `/internal/v1/`. All other paths are denied
+can POST only `channel-access-policies:resolve`, `channel-authorizations:snapshot`,
+`channel-authorizations:page` and `channel-policy-dependencies:resolve` under `/internal/v1/`. All other paths are denied
 before parsing; the application service also denies account catalogue, credential
 resolution and observations. Worker never receives IM credentials. Scope and source
 epoch remain pinned by configuration and trusted mapping, not inbound Run claims.
@@ -282,3 +282,38 @@ The real PostgreSQL/mTLS integration test
 `TestWorkerAuthorizationReaderActualRuntimeMTLSPostgres` exercises the public Go
 reader against the actual RuntimeService, observes ACTIVE then REVOKED, and checks
 the denied routes. This is not live IM or a completed Worker execution fence.
+
+### Exact SessionPolicy and TenantQuota dependency resolution
+
+`POST /internal/v1/channel-policy-dependencies:resolve` uses the same closed request
+as access-policy resolution: schema version, account ID and exact AccessPolicy
+reference. The workload cannot choose a tenant, definition kind or alternate
+Session/Quota reference. RuntimeService first verifies workload capability,
+account ownership, scope, epoch and the complete immutable AccessPolicy. Its
+references are read through the Session/Quota owner's exact revision port, never
+through Channel's cross-owner SQL. Process bootstrap constructs the owner reader and bridge, then injects the
+published-definition port through ChannelBinding dependencies. Missing optional
+readers in older compositions fail closed.
+
+The response carries all three complete immutable documents. Public consumers
+independently validate closed fields, kind-dependent shapes and full-envelope
+JCS/SHA256 digests, then match tenant/kind/ID/revision/digest. DENY_ALL has no such
+bundle; missing/denied references fail closed. No latest fallback is performed.
+A valid disabled definition remains disabled; zero ordinary quota limits remain
+explicit values, not implied unlimited or prepaid capacity.
+
+The public `controlhttp.Client.ReadPolicyDependencies` uses the existing pinned
+mTLS source and bounded no-store transport. These historical reads never renew
+current authorization expiry. CompleteReader now supplies dependencies to atomic Gateway/Worker snapshot
+installation. Enabled/partition/low-budget checks, actual quota reservations and
+execution fences remain subsequent work. No new standalone deployment is added.
+
+### Explicit shared Session reset operation
+
+AccessPolicy publication and the public resolve/dependency schemas now recognize
+`session.reset_shared`. It is not added to any policy by default, and `session.new`
+does not imply it. Worker Session current checks require this separate operation
+for shared partitions and verify the current SessionPolicy partition/reference.
+The strict older consumer may reject this newly selected operation; publishing it
+requires updated consumers before enabling Session command delivery. This change
+does not register a `/new` Gateway handler or enable authorized Attempts.

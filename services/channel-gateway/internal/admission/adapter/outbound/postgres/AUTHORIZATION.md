@@ -36,3 +36,12 @@
 - ConversationKind 暂作为进程内规范化元数据（JSON 排除），授权事实另行保存。
   不改变旧 RunRequested v1 闭合 schema，也不破坏从既有 input 重建 ReplySnapshot。
 - 0016 是新增迁移；不修改已发布迁移。回滚演练仅恢复源码副本，不删除数据库事实。
+
+## Complete dependency requirement
+
+For an otherwise eligible ALLOWLIST input, the guard now revalidates the complete
+SessionPolicy/Quota pair read under the current snapshot head lock. Missing,
+malformed or wrong-reference content is retryable and writes no Receipt, Admission
+or Outbox. Known disabled content writes a POLICY_DEPENDENCY_DENIED Receipt and
+audit without a Run; replay retains that original decision. Actual session/quota
+application and complete runtime gates still precede production emission enablement.

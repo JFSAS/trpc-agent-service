@@ -44,7 +44,7 @@ func (d authorizationTargets) AuthorizationTargets(ctx context.Context) ([]sched
 	if ctx == nil || d.pool == nil {
 		return nil, scheduler.ErrDirectory
 	}
-	rows, e := d.pool.Query(ctx, `SELECT request_json->'Route'->>'TenantID',request_json->'Route'->>'AccountID',request_json->'Route'->>'Provider',max((request_json->'Authorization'->>'generation')::bigint) FROM execution_runs WHERE status IN ('QUEUED','RUNNING','RETRY_WAIT') AND request_json->'Authorization'->>'scope_id'=$1 GROUP BY 1,2,3 ORDER BY 1,2,3 LIMIT 1001`, d.scope)
+	rows, e := d.pool.Query(ctx, `SELECT request_json->'Route'->>'TenantID',request_json->'Route'->>'AccountID',request_json->'Route'->>'Provider',max((request_json->'Authorization'->>'generation')::bigint) FROM (SELECT request_json FROM execution_runs WHERE status IN ('QUEUED','RUNNING','RETRY_WAIT') UNION ALL SELECT request_json FROM execution_pending_intakes WHERE expires_at>clock_timestamp()) inputs WHERE request_json->'Authorization'->>'scope_id'=$1 GROUP BY 1,2,3 ORDER BY 1,2,3 LIMIT 1001`, d.scope)
 	if e != nil {
 		return nil, scheduler.ErrDirectory
 	}
@@ -124,7 +124,7 @@ func newAuthorizationRuntime(c Config, pool *pgxpool.Pool) (*authorizationRuntim
 		reader.Close()
 		return nil, e
 	}
-	loop, e := scheduler.New(authorizationTargets{pool, a.ScopeID}, authorizationInstaller{store, reader}, scheduler.Options{})
+	loop, e := scheduler.New(authorizationTargets{pool, a.ScopeID}, authorizationInstaller{store, source.CompleteReader{Current: reader, Definitions: reader}}, scheduler.Options{})
 	if e != nil {
 		reader.Close()
 		return nil, e

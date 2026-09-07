@@ -88,16 +88,21 @@ type RuntimeStore interface {
 	PruneObservations(context.Context) error
 }
 type RuntimeService struct {
+	definitions  PublishedDefinitionReader
 	store        RuntimeStore
 	cipher       CredentialCipher
 	scope, epoch string
 }
 
-func NewRuntimeService(store RuntimeStore, cipher CredentialCipher, scope, epoch string) (*RuntimeService, error) {
-	if store == nil || cipher == nil || !domain.ValidID(scope) || !domain.ValidEpoch(epoch) {
+func NewRuntimeService(store RuntimeStore, cipher CredentialCipher, scope, epoch string, definitions ...PublishedDefinitionReader) (*RuntimeService, error) {
+	if len(definitions) > 1 || (len(definitions) == 1 && definitions[0] == nil) || store == nil || cipher == nil || !domain.ValidID(scope) || !domain.ValidEpoch(epoch) {
 		return nil, ErrDependencyUnavailable
 	}
-	return &RuntimeService{store, cipher, scope, epoch}, nil
+	out := &RuntimeService{store: store, cipher: cipher, scope: scope, epoch: epoch}
+	if len(definitions) == 1 {
+		out.definitions = definitions[0]
+	}
+	return out, nil
 }
 func (s *RuntimeService) authorize(p WorkloadPrincipal) error {
 	if p.PrincipalID == "" || p.Audience != WorkloadAudience || p.ScopeID != s.scope || !domain.ValidID(p.InstanceID) {
