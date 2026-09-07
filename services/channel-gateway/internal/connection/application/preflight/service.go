@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 )
 
@@ -21,6 +22,23 @@ type Service struct {
 // ValidateGrant verifies pinned metadata without consulting the runtime catalog
 // or using the local wall clock to reinterpret Control's lease clock.
 func ValidateGrant(g Grant, cfg ConfigSnapshot) error {
+	if g.DiagnosticPolicy != g.Request.DiagnosticPolicy {
+		return ErrConflict
+	}
+	if g.DiagnosticPolicy == "" {
+		if g.ReceiveMode != "" || g.EffectiveConfigDigest != "" {
+			return ErrInvalid
+		}
+	} else {
+		if g.DiagnosticPolicy != wire.PreflightReceiveModesPolicy {
+			return ErrInvalid
+		}
+		effective, e := wire.PreflightEffectiveConfigDigest(g.ScopeID, g.SourceEpoch, g.ReceiveMode, g.ConnectionRevision, cfg.PublicOrigin, cfg.OriginStatus)
+		if e != nil || effective != g.EffectiveConfigDigest {
+			return ErrConflict
+		}
+	}
+
 	if ValidateConfig(cfg) != nil || ValidateConfig(g.Request.Config) != nil {
 		return ErrInvalid
 	}
@@ -205,7 +223,7 @@ func assembleChecks(g Grant, cfg ConfigSnapshot, p ProbeResult) []Check {
 	credentialCode, credentialStatus := "CREDENTIALS_CONFIGURED", "PASS"
 	if !g.Credential.Configured {
 		credentialCode, credentialStatus = "BOT_TOKEN_MISSING", "FAIL"
-	} else if !g.WebhookSecretConfigured {
+	} else if !g.WebhookSecretConfigured && g.ReceiveMode != "long_polling" {
 		credentialCode, credentialStatus = "WEBHOOK_SECRET_MISSING", "FAIL"
 	}
 	identityStatus := "UNKNOWN"
@@ -249,7 +267,7 @@ func assembleChecks(g Grant, cfg ConfigSnapshot, p ProbeResult) []Check {
 			deliveryCode, deliveryStatus = "DELIVERY_ERROR_REPORTED", "WARN"
 		}
 	}
-	return []Check{
+	checks := []Check{
 		check("credential_configuration", credentialStatus, credentialCode, struct {
 			BotToken      bool `json:"bot_token_configured"`
 			WebhookSecret bool `json:"webhook_secret_configured"`
@@ -279,6 +297,27 @@ func assembleChecks(g Grant, cfg ConfigSnapshot, p ProbeResult) []Check {
 			Verification string `json:"verification"`
 		}{"NOT_TESTED"}),
 	}
+	if g.ReceiveMode == "long_polling" {
+		for _, item := range []struct {
+			index int
+			code  string
+		}{{2, "PUBLIC_ORIGIN_NOT_APPLICABLE"}, {5, "DELIVERY_ERRORS_NOT_APPLICABLE"}, {6, "RECOVERY_MATERIALS_NOT_APPLICABLE"}} {
+			checks[item.index] = check(checks[item.index].ID, "NOT_APPLICABLE", item.code, struct {
+				Applicability string `json:"applicability"`
+			}{"NOT_APPLICABLE"})
+		}
+		if p.Presence != nil {
+			status, code, relation := "PASS", "WEBHOOK_NONE", "NONE"
+			if *p.Presence {
+				status, code, relation = "FAIL", "WEBHOOK_BLOCKS_LONG_POLLING", "DIFFERENT"
+			}
+			checks[3] = check("webhook_registration", status, code, struct {
+				Presence *bool  `json:"presence"`
+				Relation string `json:"relation"`
+			}{p.Presence, relation})
+		}
+	}
+	return checks
 }
 
 func check(id, status, code string, details any) Check {

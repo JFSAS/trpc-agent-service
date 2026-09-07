@@ -20,9 +20,13 @@ func TestControlConfigRejectsMixingAndUntrustedOrigins(t *testing.T) {
 		}
 		bad = c
 		bad.Control.PublicOrigin = raw
-		if bad.Validate() == nil {
+		if raw != "" && bad.Validate() == nil {
 			t.Fatal("invalid public origin accepted")
 		}
+	}
+	c.Control.PublicOrigin = ""
+	if err := c.Validate(); err != nil {
+		t.Fatalf("pure polling requires no origin: %v", err)
 	}
 	mixed := c
 	mixed.Accounts = []Account{{ID: "account"}}

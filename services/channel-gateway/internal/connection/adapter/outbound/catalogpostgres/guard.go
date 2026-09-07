@@ -32,10 +32,10 @@ func (s *Store) Guard(ctx context.Context, tx pgx.Tx, p *c.Permit, routeGenerati
 	if b.ScopeID != s.scope || b.SourceEpoch != s.epoch || b.InstanceID != s.instance || b.InstanceEpoch != s.boot {
 		return c.ErrUnauthorized
 	}
-	var tenant, provider, epoch string
+	var tenant, provider, epoch, mode string
 	var revision, floor int64
 	var enabled, present bool
-	err := tx.QueryRow(ctx, `SELECT tenant_id,provider,source_epoch,connection_revision,min_route_generation,enabled,present FROM gateway_account_directory WHERE scope_id=$1 AND account_id=$2 FOR SHARE`, s.scope, b.AccountID).Scan(&tenant, &provider, &epoch, &revision, &floor, &enabled, &present)
+	err := tx.QueryRow(ctx, `SELECT tenant_id,provider,source_epoch,connection_revision,min_route_generation,enabled,present,COALESCE(account_json->'config'->>'receive_mode','webhook') FROM gateway_account_directory WHERE scope_id=$1 AND account_id=$2 FOR SHARE`, s.scope, b.AccountID).Scan(&tenant, &provider, &epoch, &revision, &floor, &enabled, &present, &mode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c.ErrUnauthorized
 	}
@@ -45,8 +45,11 @@ func (s *Store) Guard(ctx context.Context, tx pgx.Tx, p *c.Permit, routeGenerati
 	if !present || !enabled || epoch != b.SourceEpoch || tenant != b.TenantID || provider != b.Provider || revision != b.ConnectionRevision || !c.ValidUseKind(provider, b.Kind) {
 		return c.ErrUnauthorized
 	}
+	if provider == "telegram" && (b.Kind == "telegram_webhook" || b.Kind == "telegram_registration") && mode != "webhook" {
+		return c.ErrUnauthorized
+	}
 	if routeGeneration != nil {
-		if b.Kind != "telegram_webhook" && b.Kind != "wecom_ingress" {
+		if b.Kind != "telegram_webhook" && b.Kind != "telegram_receiver" && b.Kind != "wecom_ingress" {
 			return c.ErrUnauthorized
 		}
 		if !c.ValidRevision(*routeGeneration) || *routeGeneration < floor {

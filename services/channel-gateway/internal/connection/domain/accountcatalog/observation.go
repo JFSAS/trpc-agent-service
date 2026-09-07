@@ -3,6 +3,7 @@ package accountcatalog
 import "time"
 
 type Observation struct {
+	ReceiveMode        string    `json:"receive_mode,omitempty"`
 	ScopeID            string    `json:"scope_id"`
 	SourceEpoch        string    `json:"source_epoch"`
 	TenantID           string    `json:"tenant_id"`

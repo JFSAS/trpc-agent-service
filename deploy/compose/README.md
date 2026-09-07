@@ -25,7 +25,7 @@ Connection/0005、Final/0006 与 Runtime/0007 的历史镜像验收分别保留�
 | `gateway-database` | PostgreSQL 镜像，一次性 provision job | 创建/校验 `gateway` role 与 `channel_gateway` database，并设置权限 |
 | `nats` | NATS 2.11.8 | 带三角色 ACL 的 JetStream |
 | `nats-reconcile` | Gateway 镜像，`reconcile` 模式，一次性 job | 根据声明创建并严格校验 Streams 和 Gateway route consumer |
-| `channel-gateway` | Gateway 镜像，默认 Control 来源 | 0001–0010 migration、账户/凭据接入、Routing、Telegram 注册/入站、Outbox relay、WeCom Supervisor、Runner/Maintenance 与 observations；ReplyIntent Consumer 未接入 |
+| `channel-gateway` | Gateway 镜像，默认 Control 来源 | 0001–0011 migration、账户/凭据接入、Routing、Telegram 注册/入站、Outbox relay、WeCom Supervisor、Runner/Maintenance 与 observations；ReplyIntent Consumer 未接入 |
 
 依赖顺序：
 
@@ -414,7 +414,8 @@ NATS 消费与真实 Worker committed-Final verifier 仍未接入，不能把 Ru
 - `GATEWAY_CONTROL_SCOPE_ID` / `GATEWAY_CONTROL_SOURCE_EPOCH`: Control 发放的固定来源身份。
 - `GATEWAY_INSTANCE_ID`: mTLS principal 对应的实例 ID；每个同时运行的副本必须不同。
 - `GATEWAY_CONTROL_CERTS_DIR`: 本机目录，只读挂载 `ca.pem`、`client.pem`、`client-key.pem`。
-- `GATEWAY_PUBLIC_ORIGIN`: 平台配置的外部 HTTPS origin，路径由账户目录决定，不接受租户任意 URL。
+- `GATEWAY_PUBLIC_ORIGIN`: Webhook 账户按需使用的平台 HTTPS origin；纯长轮询可留空。路径由账户目录决定，不接受租户任意 URL。
+- `GATEWAY_HTTPS_PROXY` / `GATEWAY_HTTP_PROXY` / `GATEWAY_NO_PROXY`: 可选出站代理；默认 bypass 本地及内部服务，不在文档或日志记录代理凭据。
 - 既有 Gateway PG / NATS 三角色配置保持不变。SDK Token/Secret 不再由此 Compose 注入。
 
 Control 不可达时公共 listener 保持运行，但新工作拒绝且 readyz 返回 503；snapshot 恢复
@@ -429,3 +430,26 @@ docker compose -f deploy/compose/compose.yaml \
 ```
 
 生产启动命令与真实联调前提见 `services/channel-gateway/CONTROL_RUNTIME.md`。
+
+
+## Telegram 双接收模式（源码实现，发布前须联合验收）
+
+仍使用上面的单个 `channel-gateway`，不新增 polling 或 connector 服务/镜像。Control
+管理 `ChannelAccount.config.receive_mode`；新账户默认 `long_polling`，旧账户迁移为显式
+`webhook`。静态 fixture overlay 仍是原 Webhook 测试入口，不冒充 Control 管理面配置。
+
+纯长轮询的 Compose 可不配置 `GATEWAY_PUBLIC_ORIGIN`，不需要公网入站端口映射；需可用的
+Telegram 出站网络、Control mTLS、Gateway PostgreSQL 和 NATS。混合模式部署的启用
+Webhook 账户若缺 origin，会报告 CONFIG_INVALID 并影响 readiness，不被长轮询成功掩盖。
+
+模式修改需先停用，再保存配置，再显式启用。保存不触 Telegram；Gateway 在新的接收
+实例启动前处理旧 owner 和在途请求。只协调空 Webhook 或本平台有持久管理证据的端点；
+遇到外部未知 Webhook 会报告 WEBHOOK_CONFLICT，不盲目接管。两方向都不主动丢弃积压，
+持久 cursor/Receipt 不随模式清空。积压仍受 Telegram 保留期约束。
+
+本版本使用协调升级窗口：先停止旧 Gateway 接收并排空旧预检，再部署双读 Control、
+新 Gateway/Web 和迁移，最后开放新模式写入。旧程序的严格快照校验不支持任意混部；
+不要先对旧 Gateway 发布含 receive_mode 的新快照。源码/镜像回退不等于远端 Webhook
+恢复，已存在 LP 账户时不直接降级到 Webhook-only 构建。Helm 继续延后。
+
+实现与验证入口见 [双模式开发记录](../../docs/architecture-next/channel-gateway/telegram-receive-modes-implementation.md)。

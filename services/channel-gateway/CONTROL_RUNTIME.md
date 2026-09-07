@@ -30,35 +30,44 @@ go build -o ./bin/channel-gateway ./services/channel-gateway/cmd/channel-gateway
 1. 私有 mTLS HTTP 客户端拉完整快照，PG 原子发布、30 秒新鲜度按请求开始计。
 2. 可信本地账户使用上下文绑定 scope/source/tenant/account/连接版本/实例资格/客户端代。
 3. WeCom 凭据 bridge 获得 Supervisor 原始 OwnerGrant，解析前后复核；源失败和换代取消旧 Client。
-4. Telegram 各副本安装当前版本 Secret 的 immutable Handler；账户级持久注册 fence 的
-   持有者批量解析同版 token+secret，GetMe 核对物理身份，BEGIN_CALL 后 SetWebhook。
-   注册不依赖先有 Binding 或先收到一条 webhook，不使用企微租约。
+4. Telegram 使用统一的物理 Bot receiver owner：`webhook` 副本安装当前版本 Secret 的
+   immutable Handler；`long_polling` 只有持有 SQL owner 的实例执行显式 `getUpdates`。
+   receiver 仅解析 Bot Token，Webhook Handler 单独解析 Secret。所有远端操作在
+   BEGIN_CALL 的有界窗口内执行，先用 GetMe 核对物理身份；不使用企微租约。
 5. Admission 在资格 guard 后取得幂等/预算/owner/route 锁；已存在 Receipt 仍优先返回。
 6. Delivery A1 把资格/Client 绑定摘要写入 Claim；A2 必须再次匹配。实际 Sender 也在调用前
    检查原上下文。Finish/Observation/Maintenance 不重新申请当前账户资格。
 7. Control 模式默认启动有界 Delivery Runner，由 Runner 独占 Maintenance 生命周期；fixture 才独立维护。不存在 Final 输入时不会制造发送任务。
 8. 状态变化及 30 秒心跳经 mTLS 上报，失败不修改授权或更新 freshness。
 
-新增迁移 `0009_control_use_binding.sql`、`0010_telegram_registration.sql`；0001–0008 保持原哈希。
+当前迁移为 0001–0011。0011 新增物理 Bot receiver/调用窗口/持久游标表；0001–0010 不改写。
 本轮没有 Worker 实现，没有 ReplyIntent NATS consumer，也没有自行填造 committed-Final verifier。
 
 ## Telegram 真实入站就绪条件
 
-- Control 对真实 Telegram Account 发布 enabled 的最新完整快照，保存两项同版托管凭据。
-- Gateway mTLS principal 可读取该 scope/tenant/account 以及 registration/webhook 用途。
-- 公共 HTTPS origin 实际转发到 Gateway 公共 listener，Telegram 能访问当前账户路径。
+- Control 对真实 Telegram Account 发布 enabled 的最新完整快照，带显式 receive_mode。
+- Gateway mTLS principal 可读取该 scope/tenant/account 及 `telegram_receiver` 用途。
+- 长轮询需要 Bot Token 和 Telegram 出站访问，无需公共 origin；Webhook 另需当前版本
+  Secret、`telegram_webhook` 权限，以及 Telegram 可访问的公共 HTTPS origin 和账户路径。
 - Control Relay 只发布已提交且真实固定发布目标的 route 三元组，NATS retained route 流及
   Gateway replay/checkpoint 正常；账户 route floor 已追上。
-- registration 当前版本 READY；源新鲜，readyz 204。随后才请用户在机器人私聊发文本。
-- 收消息验收为 Telegram HTTP → Receipt/Admission/Outbox → NATS RunRequested，固定
+- 当前模式接收端 READY；源新鲜，readyz 204。随后才请用户在机器人私聊发文本。
+- 收消息验收为 Telegram Webhook/长轮询 → Receipt/Admission/Outbox → NATS RunRequested，固定
   tenant、binding、DeploymentRevision 和 Manifest 身份。它不等于 Worker 已执行/已回复。
 
 ## 远端注册的事实边界
 
-PG fence 不会撤回 Telegram 已接收的旧 HTTP。超时/失去资格时保留原 operation 的 UNKNOWN
-或迟到事实；旧 ACK 不标记新版本 READY，不恢复旧 Secret。当前 holder 按持久 next_due
-重新协调最新期望值；正常 READY 每 60 秒重申，失败有 5 秒退避。每次注册的本地 lease 25 秒，
-解析/SDK 操作各最多 5 秒；进程最多 8 个并发账户。凭据材料不进入注册表或 observations。
+PG fence 不会撤回 Telegram 已接收的旧 HTTP。当前 receiver lease 为 30 秒，每个远端
+调用本地最多 8 秒、持久不确定窗口 10 秒；超时或失去资格不会提前清除此窗口。新版配置
+已阻断旧资格后仍须等待旧调用窗口结束，不能仅凭 disabled 判定已静默。正常 Webhook
+约每 30 秒协调，失败至少退避 5 秒，409 冲突退避 30 秒，429 使用有界 retry_after。
+进程最多 8 个并发账户；当前没有大规模账户压测结论。
+
+仅空 Webhook 或本平台有持久管理证据的端点可自动协调，未知端点报告 WEBHOOK_CONFLICT。
+Set/DeleteWebhook 固定保留积压。长轮询使用公开的 `platform/im/telegram` 单次 HTTP
+客户端，不调用 SDK 自带自动 offset 循环；原始 Update 与 Webhook 共用 Normalize。
+每条消息完成持久 Admission/Receipt 后才以 owner + cursor CAS 推进游标。隔离测试覆盖
+提交后崩溃重放、双 owner 排他、模式切换与原始消息去重；不把本地测试称为真实 Bot 验收。
 
 
 ## 2026-09-06 真实入站验收记录
@@ -95,4 +104,7 @@ export GATEWAY_TELEGRAM_PREFLIGHT_ENABLED=false
 真实Control Handler、数据库任务或真实Telegram已完成验收。
 
 新增设计见 [Telegram预检执行设计](../../docs/architecture-next/channel-gateway/telegram-preflight-v1.md)。
-无需新Node镜像、Connector进程、Gateway迁移或NATS subject；Helm仍在最终workload集成阶段。
+这段预检历史切片没有新增迁移；当前双模式接收另增加 0011。两者都不增加 Node 镜像、
+Connector 进程或 NATS subject；Helm 仍在最终 workload 集成阶段。
+
+最新模式化预检协议、迁移顺序和测试见 [双模式开发记录](../../docs/architecture-next/channel-gateway/telegram-receive-modes-implementation.md)。

@@ -1,54 +1,57 @@
-// Package telegramregistration confines token-bearing SDK calls and errors.
+// Package telegramregistration adapts explicit protocol calls to the receiver.
 package telegramregistration
 
 import (
 	"context"
-	"github.com/go-telegram/bot"
+	"encoding/json"
+	"errors"
+	"time"
+
+	protocol "github.com/liuzengh/trpc-agent-service/platform/im/telegram"
 	app "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
-	"net/http"
-	"strconv"
-	"time"
 )
 
 type Factory struct{}
-type client struct {
-	bot       *bot.Bot
-	transport *http.Transport
-}
+type client struct{ api *protocol.Client }
 
 func (Factory) New(token string) (app.Remote, error) {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.MaxConnsPerHost = 2
-	tr.DisableCompression = true
-	tr.ResponseHeaderTimeout = 5 * time.Second
-	h := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	b, e := bot.New(token, bot.WithSkipGetMe(), bot.WithHTTPClient(5*time.Second, h))
+	api, e := protocol.New(protocol.Options{Token: token})
 	if e != nil {
-		tr.CloseIdleConnections()
 		return nil, c.ErrInvalid
 	}
-	return &client{b, tr}, nil
+	return &client{api}, nil
+}
+func stable(e error) error {
+	if e == nil {
+		return nil
+	}
+	var api *protocol.APIError
+	if errors.As(e, &api) {
+		if api.Code == 409 {
+			return app.ErrPollingConflict
+		}
+		if api.Code == 429 {
+			return &app.RateLimited{After: time.Duration(api.RetryAfter) * time.Second}
+		}
+	}
+	return c.ErrUnavailable
 }
 func (c1 *client) Identity(ctx context.Context) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	u, e := c1.bot.GetMe(ctx)
-	if e != nil || u == nil || !u.IsBot || u.ID <= 0 {
-		return "", c.ErrUnavailable
-	}
-	return strconv.FormatInt(u.ID, 10), nil
+	id, e := c1.api.Identity(ctx)
+	return id, stable(e)
 }
-func (c1 *client) Register(ctx context.Context, url, secret string) (bool, error) {
-	if !c.ValidWebhookSecret(secret) {
-		return false, c.ErrInvalid
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	yes, e := c1.bot.SetWebhook(ctx, &bot.SetWebhookParams{URL: url, SecretToken: secret, AllowedUpdates: []string{"message", "callback_query"}, MaxConnections: 40, DropPendingUpdates: false})
-	if e != nil {
-		return false, c.ErrUnavailable
-	}
-	return yes, nil
+func (c1 *client) Webhook(ctx context.Context) (string, error) {
+	v, e := c1.api.WebhookInfo(ctx)
+	return v.URL, stable(e)
 }
-func (c1 *client) Close() { c1.transport.CloseIdleConnections() }
+func (c1 *client) Register(ctx context.Context, address, secret string) (bool, error) {
+	e := c1.api.SetWebhook(ctx, address, secret, []string{"message", "callback_query"})
+	return e == nil, stable(e)
+}
+func (c1 *client) DeleteWebhook(ctx context.Context) error { return stable(c1.api.DeleteWebhook(ctx)) }
+func (c1 *client) Poll(ctx context.Context, offset int64, timeout int) ([]json.RawMessage, error) {
+	v, e := c1.api.PollOnce(ctx, protocol.PollRequest{Offset: offset, Limit: 100, TimeoutSeconds: timeout, AllowedUpdates: []string{"message", "callback_query"}})
+	return v, stable(e)
+}
+func (c1 *client) Close() { c1.api.Close() }

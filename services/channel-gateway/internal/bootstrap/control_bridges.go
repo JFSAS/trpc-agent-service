@@ -5,6 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+
 	"github.com/jackc/pgx/v5"
 	telegram "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/inbound/telegramadapter"
 	admission "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
@@ -14,10 +19,6 @@ import (
 	use "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
 	d "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
-	"net/http"
-	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 type credentialTransport struct{ client *control.Client }
@@ -93,6 +94,9 @@ func (b accountGuardBridge) VerifyAccount(ctx context.Context, tx pgx.Tx, provid
 		kind = provider + "_ingress"
 		if provider == "telegram" {
 			kind = "telegram_webhook"
+			if bound.Kind == "telegram_receiver" {
+				kind = "telegram_receiver"
+			}
 		}
 	}
 	if bound.Kind != kind || bound.Provider != provider || bound.AccountID != account || (tenant != "" && bound.TenantID != tenant) {

@@ -40,6 +40,7 @@ type Credential struct {
 	Configured bool   `json:"configured"`
 }
 type Config struct {
+	ReceiveMode string `json:"receive_mode,omitempty"`
 	WebhookPath string `json:"webhook_path,omitempty"`
 	BotID       string `json:"bot_id,omitempty"`
 }
@@ -89,12 +90,12 @@ func (a Account) Validate() error {
 	var purposes []string
 	switch a.Provider {
 	case "telegram":
-		if !decimal.MatchString(a.ProviderAccountID) || a.Config.BotID != "" || a.Config.WebhookPath != "/v1/telegram/"+a.ID {
+		if (a.Config.ReceiveMode != "" && a.Config.ReceiveMode != "webhook" && a.Config.ReceiveMode != "long_polling") || !decimal.MatchString(a.ProviderAccountID) || a.Config.BotID != "" || a.Config.WebhookPath != "/v1/telegram/"+a.ID {
 			return ErrInvalid
 		}
 		purposes = []string{"telegram.bot_token", "telegram.webhook_secret"}
 	case "wecom":
-		if a.Config.WebhookPath != "" || a.Config.BotID != a.ProviderAccountID {
+		if a.Config.ReceiveMode != "" || a.Config.WebhookPath != "" || a.Config.BotID != a.ProviderAccountID {
 			return ErrInvalid
 		}
 		purposes = []string{"wecom.bot_secret"}
@@ -106,12 +107,24 @@ func (a Account) Validate() error {
 	}
 	seen := map[string]bool{}
 	for i, c := range a.Credentials {
-		if c.Purpose != purposes[i] || !ValidID(c.ID) || seen[c.ID] || !ValidRevision(c.Version) || a.Enabled && !c.Configured {
+		if c.Purpose != purposes[i] || !ValidID(c.ID) || seen[c.ID] || !ValidRevision(c.Version) || a.Enabled && !c.Configured && !(a.Provider == "telegram" && a.ReceiveMode() == "long_polling" && c.Purpose == "telegram.webhook_secret") {
 			return ErrInvalid
 		}
 		seen[c.ID] = true
 	}
 	return nil
+}
+
+// ReceiveMode interprets legacy webhook-only snapshots without changing their
+// serialized bytes or digest. New Control snapshots always set the mode.
+func (a Account) ReceiveMode() string {
+	if a.Provider != "telegram" {
+		return ""
+	}
+	if a.Config.ReceiveMode == "" {
+		return "webhook"
+	}
+	return a.Config.ReceiveMode
 }
 func (s Snapshot) ComputedDigest() (string, error) {
 	body, err := json.Marshal(struct {
@@ -268,7 +281,15 @@ func (r ResolveRequest) Validate(a Account) error {
 			return ErrUnauthorized
 		}
 		purposes = []string{"wecom.bot_secret"}
+	case "telegram_receiver":
+		if a.Provider != "telegram" || r.Consumer.OwnerEpoch == nil || *r.Consumer.OwnerEpoch < 1 || *r.Consumer.OwnerEpoch > MaxRevision || r.Consumer.RegistrationEpoch != nil {
+			return ErrUnauthorized
+		}
+		purposes = []string{"telegram.bot_token"}
 	case "telegram_registration":
+		if a.ReceiveMode() != "webhook" {
+			return ErrUnauthorized
+		}
 		if a.Provider != "telegram" || r.Consumer.RegistrationEpoch == nil || *r.Consumer.RegistrationEpoch < 1 || r.Consumer.OwnerEpoch != nil {
 			return ErrUnauthorized
 		}
@@ -278,6 +299,9 @@ func (r ResolveRequest) Validate(a Account) error {
 			return ErrUnauthorized
 		}
 		if r.Consumer.Kind == "telegram_webhook" {
+			if a.ReceiveMode() != "webhook" {
+				return ErrUnauthorized
+			}
 			purposes = []string{"telegram.webhook_secret"}
 		} else {
 			purposes = []string{"telegram.bot_token"}

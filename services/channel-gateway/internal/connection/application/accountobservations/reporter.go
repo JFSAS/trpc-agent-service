@@ -4,9 +4,10 @@ package accountobservations
 
 import (
 	"context"
-	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 	"strconv"
 	"time"
+
+	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 )
 
 type Source interface{ Observations() []c.Observation }
@@ -68,7 +69,7 @@ func (r *Reporter) Run(ctx context.Context) error {
 		for _, o := range all {
 			key := o.AccountID
 			present[key] = true
-			value := strconv.FormatInt(o.ConnectionRevision, 10) + o.State + o.Reason
+			value := strconv.FormatInt(o.ConnectionRevision, 10) + o.ReceiveMode + o.State + o.Reason
 			if o.OwnerEpoch != nil {
 				value += strconv.FormatInt(*o.OwnerEpoch, 10)
 			}

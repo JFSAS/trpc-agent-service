@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
 )
 
@@ -32,13 +31,21 @@ type AccountUseGuard interface {
 	VerifyAccount(context.Context, pgx.Tx, string, string, string, *int64) (string, error)
 	RecheckAccount(context.Context, pgx.Tx) error
 }
+
+type TelegramGuard interface {
+	Required(context.Context) bool
+	VerifyPolling(context.Context, pgx.Tx, string, string, string, string, int64, int64) error
+}
 type Store struct {
+	telegramGuard   TelegramGuard
 	accountGuard    AccountUseGuard
 	connectionGuard ConnectionGuard
 	pool            *pgxpool.Pool
 	guard           RouteGuard
 	budget          Budget
 }
+
+func (s *Store) WithTelegramGuard(g TelegramGuard) *Store { cp := *s; cp.telegramGuard = g; return &cp }
 
 func NewStore(pool *pgxpool.Pool, guard RouteGuard) *Store {
 	return &Store{pool: pool, guard: guard, budget: DefaultBudget()}
@@ -152,6 +159,15 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (domain.Receipt
 	if err = s.chargeBudget(ctx, tx, c.Route != nil); err != nil {
 		return domain.Receipt{}, err
 	}
+	if c.Input.TelegramFence != nil || s.telegramGuard != nil && s.telegramGuard.Required(ctx) {
+		f := c.Input.TelegramFence
+		if f == nil || s.telegramGuard == nil || c.Input.Key.Provider != "telegram" {
+			return domain.Receipt{}, domain.ErrUnavailable
+		}
+		if err = s.telegramGuard.VerifyPolling(ctx, tx, f.ScopeID, c.Input.Key.AccountID, f.InstanceID, f.InstanceEpoch, f.Epoch, f.Revision); err != nil {
+			return domain.Receipt{}, domain.ErrUnavailable
+		}
+	}
 	if c.Input.Key.Provider == "wecom" {
 		if s.connectionGuard == nil {
 			return domain.Receipt{}, domain.ErrUnavailable
@@ -206,6 +222,12 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (domain.Receipt
 		_, err = tx.Exec(ctx, `INSERT INTO gateway_outbox(event_id,subject,payload) VALUES($1,$2,$3)`, c.Receipt.AdmissionID, wire.RunRequestedSubject, payload)
 		if err != nil {
 			return domain.Receipt{}, err
+		}
+	}
+	if c.Input.TelegramFence != nil {
+		f := c.Input.TelegramFence
+		if err = s.telegramGuard.VerifyPolling(ctx, tx, f.ScopeID, c.Input.Key.AccountID, f.InstanceID, f.InstanceEpoch, f.Epoch, f.Revision); err != nil {
+			return domain.Receipt{}, domain.ErrUnavailable
 		}
 	}
 	if s.accountGuard != nil {
