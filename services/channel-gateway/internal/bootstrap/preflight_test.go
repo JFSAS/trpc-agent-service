@@ -115,6 +115,17 @@ func TestPreflightBootstrapSwitchDoesNotAffectFixtures(t *testing.T) {
 	}
 }
 func TestPreflightLoadConfigExplicitSwitch(t *testing.T) {
+	// Preflight is independent at runtime, but LoadConfig still validates the
+	// complete V1 workload, including its migration identity and Final proof peer.
+	for key, value := range map[string]string{
+		"GATEWAY_MIGRATION_DATABASE_URL": "postgres://migrator/db",
+		"GATEWAY_WORKER_URL":             "https://worker.example",
+		"GATEWAY_WORKER_CA_FILE":         "ca.pem",
+		"GATEWAY_WORKER_CERT_FILE":       "client.pem",
+		"GATEWAY_WORKER_KEY_FILE":        "key.pem",
+	} {
+		t.Setenv(key, value)
+	}
 	for k, v := range map[string]string{"GATEWAY_DATABASE_URL": "postgres://unused/db", "GATEWAY_NATS_URL": "nats://unused:4222", "GATEWAY_NATS_TOPOLOGY_FILE": "../../../../deploy/nats/streams.yaml", "GATEWAY_ACCOUNT_SOURCE": "control", "GATEWAY_WECOM_ACCOUNTS_FILE": "", "GATEWAY_TELEGRAM_ACCOUNTS_FILE": "", "GATEWAY_CONTROL_URL": "https://control.example", "GATEWAY_CONTROL_SCOPE_ID": "pool", "GATEWAY_CONTROL_SOURCE_EPOCH": controlEpoch, "GATEWAY_CONTROL_CA_FILE": "ca.pem", "GATEWAY_CONTROL_CERT_FILE": "client.pem", "GATEWAY_CONTROL_KEY_FILE": "key.pem", "GATEWAY_PUBLIC_ORIGIN": "https://gateway.example", "GATEWAY_INSTANCE_ID": "gw"} {
 		t.Setenv(k, v)
 	}

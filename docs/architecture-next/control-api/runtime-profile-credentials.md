@@ -397,18 +397,20 @@ Profile 拥有方提供可选 `runtimehttp` Adapter，路由为
 `POST /internal/v1/runtime-profiles/credentials/resolve`，不同于公开管理 GET。
 只在可信工作负载认证 middleware 与 ExecutionAuthorizationVerifier 成对注入时注册；
 身份来自可信 middleware 经 `WithWorkerIdentity` 写入的 context，不信任请求体或
-请求头自述 Worker 身份。默认 bootstrap 没有真实
-Run/Attempt verifier，因此不注册该路由；缺少依赖不提供默认许可。
-生产执行身份、Run/Attempt 拥有方当前授权与 Worker outbound Adapter 是后续接入任务，
-并需配置加密传输；内部 Adapter 实现不意味着运行面已经贯通。
+请求头自述 Worker 身份。当前 bootstrap 在显式配置 `CONTROL_RUNTIME_CONFIG_FILE` 后
+装配 mTLS 工作负载身份、真实 Worker Run/Attempt verifier 与此路由；未配置时不注册，
+缺少依赖不提供默认许可。Worker outbound Adapter 已按固定 Manifest 解析整批并复核
+当前 Fence。真实跨进程 fixture 已验证该路径，实际外部 Provider/Telegram 验收另行记录，
+不把仅有内部 Adapter 或配置存在视为真实渠道交付。
 Deployment 与 Profile 同进程时可直接组装 Checker，不需要通过自己的公开 HTTP 绕行。
 Worker 独立进程时继续使用上述内部接口；共享 PostgreSQL 不构成跨模块直读表的理由。
 此方案不创建 Secret 微服务，不复制值进 Outbox/NATS，也不建设通用凭据分发平台。
 
-## 15. Attempt 初始化：后续 Worker 接入必须遵守的失败语义
+## 15. Attempt 初始化：Worker V1 已接线的失败语义
 
 当前 Application 在同一 Profile 锁定事务中核对全部 use，随后全有或全无地解密并返回；
-后述 Worker 验收和 Attempt 生命周期仍待执行域实现，不属于当前已接线能力。
+Worker V1 已实现后述完整批次验收、单次初始化与 Attempt 生命周期；具体跨进程测试范围
+见 [Worker 实现状态](../agent-worker/implementation-status.md)，不据单元测试推断外部模型验收。
 任何一项失败时不返回部分值。Worker 构造本 Attempt 的全部所需凭据集合，验收响应的
 Tenant/Profile/Attempt/ManifestDigest 等于请求，且 CredentialID/Purpose/audience_digest 集合
 完全相同，无缺失、多余或重复；接收时还持有有效 lease，全部通过才初始化客户端与 Agent。
@@ -425,6 +427,12 @@ Worker 不在每次模型/工具调用前重新解析，也不在同 Attempt 中
 4. Worker 进程崩溃、lease 失效、凭据缓存丢失时，同样结束该 Attempt，恢复使用新 AttemptID。
 5. 初始化响应携带请求标识与 Attempt/lease 绑定；已结束 Attempt 的迟到响应被丢弃，不启动 Agent。
 6. 新 Attempt 重新读取当前值；active 同 ID 轮换只影响新 Attempt，不改变旧 Manifest。
+
+在线 verifier 的网络/读取故障与明确拒绝分开：前者经
+`ErrExecutionDependencyUnavailable` 返回 Resolve 503，Worker 记录
+`DEPENDENCY_UNAVAILABLE` 并在固定期限和显式次数内分配新 Attempt；真实 owner 403
+经 `ErrExecutionUnauthorized` 返回 Resolve 403，Worker 记录 `CREDENTIAL_DENIED`，
+不自动重试该 Run。完整200响应中的批次身份/uses验收失败同样整批拒绝，不初始化客户端。
 
 live clear 与并发 Resolve 通过拥有方同一 Profile 的行锁事务序列化。
 clear 提交之后开始授权的新批次必须失败；clear 之前已授权的在途批次可能完成初始化。

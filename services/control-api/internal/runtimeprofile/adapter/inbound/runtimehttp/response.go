@@ -11,15 +11,16 @@ type resolvedCredentialResponse struct {
 }
 
 type resolveResponse struct {
-	TenantID       string                       `json:"tenant_id"`
-	ProfileID      string                       `json:"profile_id"`
-	RunID          string                       `json:"run_id"`
-	AttemptID      string                       `json:"attempt_id"`
-	WorkerID       string                       `json:"worker_id"`
-	LeaseEpoch     int64                        `json:"lease_epoch"`
-	ManifestID     string                       `json:"manifest_id"`
-	ManifestDigest string                       `json:"manifest_digest"`
-	Credentials    []resolvedCredentialResponse `json:"credentials"`
+	TenantID              string                       `json:"tenant_id"`
+	ProfileID             string                       `json:"profile_id"`
+	ProfileRevisionNumber int64                        `json:"profile_revision_number"`
+	RunID                 string                       `json:"run_id"`
+	AttemptID             string                       `json:"attempt_id"`
+	WorkerID              string                       `json:"worker_id"`
+	LeaseEpoch            int64                        `json:"lease_epoch"`
+	ManifestID            string                       `json:"manifest_id"`
+	ManifestDigest        string                       `json:"manifest_digest"`
+	Credentials           []resolvedCredentialResponse `json:"credentials"`
 }
 
 func batchResponse(batch application.CredentialBatch) resolveResponse {
@@ -27,5 +28,5 @@ func batchResponse(batch application.CredentialBatch) resolveResponse {
 	for _, credential := range batch.Credentials {
 		values = append(values, resolvedCredentialResponse{CredentialID: credential.Use.CredentialID, Purpose: credential.Use.Purpose, AudienceDigest: credential.Use.AudienceDigest, CredentialRevision: credential.CredentialRevision, Value: string(credential.Value)})
 	}
-	return resolveResponse{TenantID: batch.TenantID, ProfileID: batch.ProfileID, RunID: batch.RunID, AttemptID: batch.AttemptID, WorkerID: batch.WorkerID, LeaseEpoch: batch.LeaseEpoch, ManifestID: batch.ManifestID, ManifestDigest: batch.ManifestDigest, Credentials: values}
+	return resolveResponse{TenantID: batch.TenantID, ProfileID: batch.ProfileID, ProfileRevisionNumber: batch.ProfileRevisionNumber, RunID: batch.RunID, AttemptID: batch.AttemptID, WorkerID: batch.WorkerID, LeaseEpoch: batch.LeaseEpoch, ManifestID: batch.ManifestID, ManifestDigest: batch.ManifestDigest, Credentials: values}
 }

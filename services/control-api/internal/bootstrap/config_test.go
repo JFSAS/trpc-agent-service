@@ -27,6 +27,9 @@ func TestLoadConfigUsesV1Defaults(t *testing.T) {
 	if !bytes.Equal(config.ProfileCredentialKey, key) {
 		t.Fatal("credential key was not decoded exactly")
 	}
+	if config.MigrationDatabaseURL != "postgres://control_migrator@localhost/control_test" {
+		t.Fatal("migration database URL was not read independently")
+	}
 	if config.HTTPAddress != ":8080" {
 		t.Fatalf("HTTPAddress = %q, want :8080", config.HTTPAddress)
 	}
@@ -138,6 +141,7 @@ func configTestEnvironment(t *testing.T) []byte {
 	}
 	t.Setenv("CONTROL_PROFILE_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(key))
 	t.Setenv("CONTROL_DATABASE_URL", "postgres://localhost/control_test")
+	t.Setenv("CONTROL_MIGRATION_DATABASE_URL", "postgres://control_migrator@localhost/control_test")
 	t.Setenv("CONTROL_BOOTSTRAP_MODE", "disabled")
 	t.Setenv("CONTROL_SESSION_LIFETIME", "")
 	t.Setenv("CONTROL_SESSION_COOKIE_SECURE", "")
@@ -148,4 +152,12 @@ func configTestEnvironment(t *testing.T) []byte {
 	}
 	t.Setenv("CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST", digest)
 	return key
+}
+
+func TestLoadConfigRequiresIndependentMigrationDatabaseURL(t *testing.T) {
+	configTestEnvironment(t)
+	t.Setenv("CONTROL_MIGRATION_DATABASE_URL", "  ")
+	if _, err := LoadConfig(); err == nil || err.Error() != "CONTROL_MIGRATION_DATABASE_URL is required" {
+		t.Fatal("expected missing migration URL rather than fallback to runtime URL")
+	}
 }

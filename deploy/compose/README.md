@@ -1,18 +1,25 @@
-# Control API + Channel Gateway 本地 Compose
+# Control API + Channel Gateway + Worker V1 Compose
+
+> **当前源码状态（Worker V1）**：Run/Manifest 消费、单 LLM、正式 Session、Completion/
+> Reply relay、Gateway Reply consumer 和真实 committed-Final mTLS verifier 已接入。
+> 完整部署请使用 [Worker V1 Compose 部署](WORKER_V1.md) 的三个文件组合；只使用 base/local
+> 不会自动配置 Worker、Session preparation 或 Control 内部双 listener。本文保留按阶段记录的
+> fixture/历史验收；这些记录不替代本轮真实模型和真实 Telegram 两轮回复验收。
 
 本目录编排 Control API、Channel Gateway 和它们当前需要的 PostgreSQL / NATS。
 `compose.yaml` 是服务基线，`compose.local.yaml` 增加本地构建、回环端口与本地
 HTTP Cookie 配置。这里的启动命令说明如何运行当前代码，不替代实际部署验证记录。
 
 当前默认 **Control mTLS 账户来源**已接账户目录、托管凭据/轮换、Telegram 注册与动态入站、
-WeCom Supervisor、Delivery Runner 和 observations；Gateway 执行 0001–0010 共 10 个迁移。
+WeCom Supervisor、Reply consumer、Delivery Runner 和 observations；Gateway 执行 0001–0011 共 11 个迁移。
 Runner 独占 Maintenance 生命周期；显式 fixture 来源才保留 App 独立维护，不叠加两次 Run。
 真实 **Control 发布 → Telegram 用户入站 → PG Admission/Outbox → NATS RunRequested**
 已验收，运行目标固定为 Binding 对应的 DeploymentRevision/Manifest，见
 [真实入站报告](../../docs/architecture-next/channel-gateway/telegram-real-inbound-20260906.md)。
 
-ReplyIntent Consumer、真实 Agent Worker 与 committed-Final verifier、真实企微账号和完整
-Final 回复闭环仍待交付；容器 healthy 或 Runner 已启动不表示已有完整 Agent 收发链路。
+Worker V1 源码已接 Run → 单 LLM → Session/Completion → ReplyIntent → Gateway Delivery。
+真实企微账号和真实模型/Telegram 完整回复验收仍需独立证据；容器 healthy 或 Runner 已启动
+不表示真实外部账号与模型已验收。
 Connection/0005、Final/0006 与 Runtime/0007 的历史镜像验收分别保留于实施状态 §9–11，
 不以旧镜像数字代替当前接线验证。Helm 保持 `FINAL-INTEGRATION`，待全部生产 Workload 完成。
 
@@ -20,64 +27,78 @@ Connection/0005、Final/0006 与 Runtime/0007 的历史镜像验收分别保留�
 
 | Compose 服务 | 镜像/模式 | 职责 |
 | --- | --- | --- |
-| `postgres` | PostgreSQL 17.6 | 当前本地实例承载 Control 与 Gateway 两个独立 database |
+| `postgres` | PostgreSQL 17.6 | 一个实例、一个共享 database；四个 Schema 分别授权 |
 | `control-api` | Control Go 镜像 | Control API 与其自身 migration |
-| `gateway-database` | PostgreSQL 镜像，一次性 provision job | 创建/校验 `gateway` role 与 `channel_gateway` database，并设置权限 |
-| `nats` | NATS 2.11.8 | 带三角色 ACL 的 JetStream |
-| `nats-reconcile` | Gateway 镜像，`reconcile` 模式，一次性 job | 根据声明创建并严格校验 Streams 和 Gateway route consumer |
-| `channel-gateway` | Gateway 镜像，默认 Control 来源 | 0001–0011 migration、账户/凭据接入、Routing、Telegram 注册/入站、Outbox relay、WeCom Supervisor、Runner/Maintenance 与 observations；ReplyIntent Consumer 未接入 |
+| `database-schemas` | PostgreSQL 镜像，一次性 provision job | 创建/校验 control、gateway、worker、runtime_session Schema 与八个独立角色 |
+| `nats` | NATS 2.11.8 | 四角色 ACL 的 JetStream；Worker overlay 要求 TLS |
+| `nats-reconcile` | Gateway 镜像，`reconcile` 模式，一次性 job | 根据声明创建并严格校验四条 Stream / 四个 durable |
+| `channel-gateway` | Gateway 镜像，默认 Control 来源 | 0001–0010 与两份 0011 migration、账户/凭据接入、Routing、Telegram 双模式入站、Run relay、Reply 接管与 proof、Runner/Sender/Maintenance |
 
-依赖顺序：
+base/local 依赖顺序（Worker overlay 的八个单元与 Session preparation 见新部署指南）：
 
 ```text
-postgres healthy ──→ control-api
-        └─────────→ gateway-database completed ─┐
-nats healthy ────→ nats-reconcile completed ───┴→ channel-gateway
+postgres healthy → database-schemas completed → control-api
+                            └─────────────────→ channel-gateway
+nats healthy → nats-reconcile completed ────────→ channel-gateway
 ```
 
-`gateway-database` 使用实例管理连接执行 `provision-gateway.sh`，固定数据库/角色名；
-已有角色时同步其密码，已有数据库时复用。Gateway 进程使用 `gateway` 角色连接
-`channel_gateway`，不复用 Control 的管理 DSN。Gateway migration 由 Gateway
-在监听前执行，provision job 只负责数据库与角色。
+`database-schemas` 以独立管理身份执行 `provision-schemas.sh` / `provision-schemas.sql`。
+Control/Gateway 分别使用自己的 migrator/runtime DSN；启动时先验证两个连接的实际目标，
+然后只用迁移连接执行自有 migration，关闭它后用普通运行连接服务请求。
 
-当前源码执行 0001–0010：0004 为路由积压起点，0005 为 Connection 账户/lease/epoch，
-0006 为 nullable Admission `reply_origin` 与 Delivery 账本；0007 仅增加五个 Runtime 查询索引，
-0008–0010 为 Control 目录、发送资格与注册账本；旧迁移不改写、不释放总行数容量。Maintenance 对空账户副本也运行。
-旧 Admission 的 Origin 保持 NULL，不回填当前 owner/socket。新增账本 schema 不等于启用
-发送循环；也没有为 Delivery 增加新的 Compose service、镜像、端口或 Connector 部署单元。
+**当前 V1 是同一实例、同一 database、不同 Schema/role**，不增加 Worker PostgreSQL 容器。
+`worker` 由 Worker 自有 migrator 建表；`runtime_session` 由一次性 session-prepare 显式准备。
+base 的 schema provision 只建隔离空间/角色，业务表不由管理员 job 代建。
+Gateway 历史 0001–0010 SQL 保持不变，0011 新增 Reply transport receipts；迁移账本进入
+各自 Schema，Control 账本仍在 `control`。
+Schema 隔离不改变事件交接或领域所有权；不同服务不能借同库直接访问对方表。
 
-当前是**同一个本地 PostgreSQL 实例中的不同 database/role**，不是另外部署一个
-Gateway PostgreSQL 容器。若将 `GATEWAY_DATABASE_URL` 指向外部实例，该实例的
-数据库/角色需另行预置；当前 job 只操作 Compose 内的 `postgres`。
+旧 `provision-gateway.sh` 仅返回明确迁移提示，不再创建 `channel_gateway` 库。存在旧 public
+对象或旧 channel_gateway 数据库时，新 provision 在写入前终止；不自动移动数据、改 owner、
+覆盖密码或清理卷。旧卷升级流程与隔离规则见 [Database V1](../../docs/architecture-next/operations/database-v1.md)。
+外部数据库由部署侧运行同一 provision；Compose job 只连接它配置的目标实例。
 
-## 2. 必需配置与 Secret 引用
+## 2. 必需配置与身份
 
-从仓库根目录运行命令，并通过外部部署配置、环境变量或本地未提交的配置注入：
+从仓库根目录运行，通过外部配置或本地未提交的环境文件注入。`.env.example` 不含可用密码。
 
 | 变量 | 用途 |
 | --- | --- |
-| `CONTROL_PROFILE_CREDENTIAL_KEY` | 标准 base64 编码的随机 32 字节，Control Profile 凭据加密 |
-| `GATEWAY_POSTGRES_PASSWORD` | provision job 为 `gateway` role 设置的密码 |
-| `GATEWAY_DATABASE_URL` | 使用同一 Gateway 密码、`gateway` role 和 `channel_gateway` database 的 DSN |
-| `NATS_GATEWAY_PASSWORD` | Gateway 运行角色 |
-| `NATS_CONTROL_PASSWORD` | Control 路由发布角色；ACL 已预留，生产发布链路仍待接入 |
-| `NATS_RECONCILER_PASSWORD` | 独立 topology 管理角色，仅 reconciliation job 使用 |
-| `GATEWAY_TELEGRAM_ACCOUNTS_FILE` | 宿主机 JSON 文件路径；默认空配置 |
-| `GATEWAY_TELEGRAM_WEBHOOK_SECRET` | 示例账户引用的 webhook 鉴权 secret；空账户配置时可为空 |
+| PLATFORM_POSTGRES_DB / PLATFORM_POSTGRES_USER | 共享库名、独立初始化管理员；默认 agent_platform / platform_admin |
+| PLATFORM_POSTGRES_PASSWORD | 仅 postgres 初始化和 database-schemas job 使用；不作为业务运行 DSN |
+| CONTROL_MIGRATOR_PASSWORD / CONTROL_RUNTIME_PASSWORD | Control 建表身份与 DML 身份的独立密码 |
+| GATEWAY_MIGRATOR_PASSWORD / GATEWAY_RUNTIME_PASSWORD | Gateway 建表身份与 DML 身份的独立密码 |
+| WORKER_MIGRATOR_PASSWORD / WORKER_RUNTIME_PASSWORD | Worker migrator/runtime 的独立密码 |
+| SESSION_MIGRATOR_PASSWORD / SESSION_RUNTIME_PASSWORD | 预置 Session Store 角色；runtime 默认仅 SELECT/INSERT |
+| CONTROL_DATABASE_URL / CONTROL_MIGRATION_DATABASE_URL | 必需；control_runtime / control_migrator，两者同库同 Schema |
+| GATEWAY_DATABASE_URL / GATEWAY_MIGRATION_DATABASE_URL | 必需；gateway_runtime / gateway_migrator，两者同库同 Schema |
+| CONTROL_PROFILE_CREDENTIAL_KEY | 固定的 32 字节 base64 Profile 加密 Key |
+| NATS_GATEWAY_PASSWORD / NATS_CONTROL_PASSWORD / NATS_WORKER_PASSWORD / NATS_RECONCILER_PASSWORD | 各自独立的 NATS 身份 |
 
-Compose 内 Gateway DSN 的结构为：
+Compose 内 DSN 形状（密码需要 URL 编码）：
 
 ```text
-postgres://gateway:<URL_ENCODED_GATEWAY_PASSWORD>@postgres:5432/channel_gateway?sslmode=disable
+postgres://control_runtime:<encoded-password>@postgres:5432/agent_platform?sslmode=disable
+postgres://control_migrator:<encoded-password>@postgres:5432/agent_platform?sslmode=disable
+postgres://gateway_runtime:<encoded-password>@postgres:5432/agent_platform?sslmode=disable
+postgres://gateway_migrator:<encoded-password>@postgres:5432/agent_platform?sslmode=disable
 ```
 
-DSN 中密码需使用 URL 转义后的值，provision job 的密码变量使用原值。两个值必须
-对应同一密码。NATS 三个密码使用各自独立的注入值，不在启动时随机生成。
+Schema 由 provision 固定各 role 在该 database 的 search_path，业务不依赖 public。运行 DSN
+不回退到管理员或迁移 DSN；两身份相同、目标/Workload不符、public/系统 Schema、管理员
+迁移连接或高权限 runtime 均在迁移 DDL 前拒绝，两个角色必须直接登录而非 SET ROLE 伪装。宿主机直跑使用实际发布地址，不能把 127.0.0.1 原样当容器中的数据库地址。
+首次创建角色读取密码，provision 重跑不重设已有密码；密码轮换需独立管理员变更并同步部署。
+如果 Profile Session 也指向该库，沿用 Profile 现有 host/database/username/sslmode 字段，
+不添加任意 search_path/options；固定 Session role 或受信 Adapter 负责 Schema。将 postgres
+作为 Profile destination 时需显式加入发布 endpoint hosts 并重新固定 Contract Digest。
+Profile 管理 API 录入受限 DSN 后仅保存加密密码；runtime `purpose=dsn` 返回密码值，
+Worker 用固定 Manifest destination 与授权密码转义组装 Session 连接，不复用 Worker 自有
+数据库目标，也不把密码值当整条 DSN。完整输入/消费示例见 [Worker 部署 §6](WORKER_V1.md#6-发布契约session-目标与预备)。
 
-`.env.example` 同时包含宿主机直接运行的 Control DSN 示例；该示例中的
-`127.0.0.1:5432` 不是容器中的 PostgreSQL 地址。运行 Compose 时可不设置
-`CONTROL_DATABASE_URL` 以使用基线的 `postgres:5432` 默认 DSN，或显式设置正确的
-容器网络 DSN。不要把宿主机连接串原样用于容器。
+真实隔离回归：`python3 scripts/test-v1-database-isolation.py`（需 Docker、Go、Python 3）。
+脚本创建并清理独立 PG17/NATS 容器，验证 ACL、首启/重跑、迁移账本、跨 Schema 拒绝、
+legacy guard 和 Control/Gateway 的真实数据库/启动回归，
+不会连接当前业务实例；普通 go test 中集成 Skip 不算该门禁成功。
 
 ### Control Profile Key
 
@@ -108,20 +129,15 @@ bootstrap 用户密码与 Profile Key 是不同配置。Key 与数据库备份�
 Profile 加密 Key 或预期 Digest，也不会启动服务：
 
 ```sh
-export CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='api.openai.com,mcp.example.com,qdrant.internal,state.example.test'
+export CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='api.openai.com,mcp.example.com,qdrant.internal,state.example.test,postgres'
 go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 # 或：control-api -print-deployment-contract-digest
 ```
 
-当前上述 Host 示例的输出是 `sha256:43d9ac6291cf7ccacf544cb122fa4d92b398317fa6020e4bba43e8666e8747b0`。
-将经过核对的输出保存为本次发布的配置，并向所有副本注入同一个值，例如：
-
-```sh
-export CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST='sha256:43d9ac6291cf7ccacf544cb122fa4d92b398317fa6020e4bba43e8666e8747b0'
-```
-
-`.env.example` 固定了与该 Host 示例对应的 Digest。更改 Host 或发布二进制的契约后，
-需要重新预计算并统一更新发布配置；默认内建 Host 集合与此 Compose 示例不同，
+将本次二进制实际输出保存为本次发布配置，并向所有 Control 副本注入同一
+`CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`；Worker JSON 的 `platform_contract_digest`
+也必须相同。不要从历史报告复制旧 pin。`.env.example` 与 Worker bootstrap example 保存了
+当前示例 Host 集合对应的 pin；修改 Host 或发布契约后需重新预计算并统一更新。
 计算时必须传入实际 Host 配置。不要在各副本的启动脚本中把自身计算结果自动赋给
 expected 值，那会绕过多副本一致性门禁。Digest 是平台配置身份，不是凭据。
 
@@ -223,10 +239,10 @@ mv "$GATEWAY_WECOM_ACCOUNTS_DIR/accounts.next.json" "$GATEWAY_WECOM_ACCOUNTS_DIR
 
 获得连接只说明本地租约/协议链路建立。新消息仍需有效 Routing 投影；忽略/交互决策也
 通过 owner guard。可回复的首次 Admission 另存原 owner/epoch/revision/socket generation；
-相同事件跨 owner 重放仍保留首次 Origin。默认服务没有 Agent 自动回复；测试发布者、
-订阅者和 committed-Final fixture 均不是真实 Control/Worker。
+相同事件跨 owner 重放仍保留首次 Origin。显式 fixture 来源和其测试发布者、订阅者、
+committed-Final fixture 不是真实 Control/Worker。完整 Worker 链路使用生产 Control 来源。
 
-## 3. NATS 声明、生成物与三个角色
+## 3. NATS 声明、生成物与四个角色
 
 两份声明各自拥有不同的事实：
 
@@ -235,33 +251,36 @@ streams.yaml ─────→ channel-gateway reconcile ──→ JetStream St
 permissions.yaml → channel-gateway nats-config → server.conf → nats-server ACL
 ```
 
-- `deploy/nats/streams.yaml` 声明两个 Stream 的 subject、retention、容量和副本数。
+- `deploy/nats/streams.yaml` 声明四条 Stream 的 subject、retention、容量和副本数。
 - `deploy/nats/permissions.yaml` 声明角色与 secret 环境变量引用。
 - `deploy/nats/server.conf` 是生成物，只保存 `$NATS_*_PASSWORD` 引用；NATS Server
-  启动时解析真实值，生成命令不会展开 secret。
-- Gateway 运行角色只验证 topology；需要创建 topology 时由 `reconciler` 执行。
+  启动时解析真实值，生成命令不会展开 secret。Worker overlay 由 `server-tls.conf`
+  include 原 ACL 并启用 TLS；Control/Worker/Gateway/reconciler 显式信任 NATS CA。
+- Gateway/Worker 运行角色只读取、校验现有 topology；创建动作由 `reconciler` 执行。
   已存在但不兼容的 topology 会报错，reconcile 不静默改写 retention 或破坏历史。
 
 | 角色 | 当前发布/读取权限 |
 | --- | --- |
-| `control` | 发布 `control.channel-route.v1`，接收 `_INBOX.control.>` PubAck 回复 |
-| `gateway` | 发布 RunRequested；读取两条 Stream 的 Info；拉取/ACK 唯一 route consumer；接收 `_INBOX.gateway.>` 回复 |
-| `reconciler` | 管理 `$JS.API.>`，接收 `_INBOX.reconciler.>` 回复 |
+| `control` | 发布 Route/Manifest，读取对应 Stream Info，接收 `_INBOX.control.>` PubAck |
+| `gateway` | 发布 Run；读取 Route/Run/Reply Info；拉取/ACK Route 和 Reply durable；接收 `_INBOX.gateway.>` |
+| `worker` | 只发布 Reply；读取 Run/Manifest/Reply Info；拉取/ACK Run 和 Manifest durable；接收 `_INBOX.worker.>` |
+| `reconciler` | 管理 `$JS.API.>`，接收 `_INBOX.reconciler.>` |
 
-Gateway 角色没有 Control route 发布权限，也没有 Stream 创建/删除等管理权限。
-这里尚无 Worker 角色；Worker 权限、consumer 与 ACK 流程在 Worker 实现时增加。
-`execution.reply-intent.v1` 的 JSON Schema/eventadapter 已存在，但当前 topology/ACL 和
-默认 bootstrap 没有为其启用生产 consumer；发布一个 ReplyIntent 不会自动触发回复。
+运行角色没有 Stream 创建/删除权限，也没有跨 owner 发布权限。Reply consumer 在 Control
+来源下启动，复用已有 Delivery Acceptor/Runner/Sender，不新增第二个投递循环。
 
-| Stream | Subject | 当前保留语义 |
+| Stream | Subject | 当前保留语义 / durable |
 | --- | --- | --- |
-| `CHANNEL_ROUTES_V1` | `control.channel-route.v1` | Limits retention、64 MiB、单条 16 KiB、保留完整路由历史；consumer ACK 不删除历史 |
-| `RUN_REQUESTS_V1` | `execution.run-requested.v1` | WorkQueue retention、256 MiB、单条 1 MiB；未来 Worker consumer ACK 后释放消息 |
+| `CHANNEL_ROUTES_V1` | `control.channel-route.v1` | Limits、64 MiB、单条 16 KiB；`channel-gateway-routes-v1` |
+| `RUN_REQUESTS_V1` | `execution.run-requested.v1` | WorkQueue、256 MiB、单条 1 MiB；`agent-worker-runs-v1` |
+| `RUNTIME_MANIFESTS_V1` | `control.runtime-manifest.published.v1` | Limits、256 MiB、单条 1 MiB；`worker-manifests-v1` |
+| `REPLY_INTENTS_V1` | `execution.reply-intent.v1` | WorkQueue、256 MiB、单条 1 MiB；`channel-gateway-replies-v1` |
 
-两条 Stream 当前为 FileStorage、单副本、无 age 自动淘汰，容量耗尽时拒绝新消息
-而不是淘汰旧消息。删除/清空禁用；恢复或容量迁移需要显式操作设计。
-Run 的 WorkQueue ACK 是未来 Worker 的接收确认，不是 Telegram webhook 的 HTTP ACK。
-当前没有 Worker，因此待消费 Run 消息会积累，而不是自动完成 Agent 执行。
+四条 Stream 当前为 FileStorage、单副本、无 age 自动淘汰，容量耗尽时拒绝新消息，
+而不是淘汰旧消息。删除/清空禁用；Route/Manifest 的 ACK 不删除历史；尚未引入来源 GC。
+Run 的 WorkQueue ACK 发生在 Worker durable 接管/拒绝后，不是执行完成，也不是 Telegram
+webhook 的 HTTP ACK。Reply 的 ACK 发生在 Gateway durable 结果/拒绝落库后，不是远端已读。
+对 PG/proof 临时错误保持重投；Delivery 已有 receipt 先重放，再补 transport receipt。
 
 权限声明变更后生成配置：
 
@@ -274,7 +293,9 @@ just nats-config
 
 ## 4. 启动、检查与停止
 
-完成必需变量注入后，从仓库根目录执行：
+下列为 base/local 历史入口；完整 Worker V1 使用 [新指南 §7](WORKER_V1.md#7-构建校验与启动)
+固定三个 Compose 文件组合，并先注入显式配置目录、证书、Session DSN 与 release pin。
+已准备相应 base/local 运行配置时，从仓库根目录执行：
 
 ```sh
 just compose-config
@@ -320,7 +341,8 @@ just compose-down
 Shutdown 先关闭新 Admission gate，再有界 drain 已进入处理的请求；Connection 正常 drain
 期间续租，Client 关闭后释放 lease，失租/期限耗尽则取消。新增 Sender reservation 的 Drain
 覆盖在途发送与有界结果落账。默认 Maintenance 随 App 取消并在关闭 PG/NATS 前完成退出；
-生产发送 Runner 尚未启用，其组合停止/claim 门禁与后续装配一起验收。PostgreSQL Outbox 保留未完成
+Control 来源的生产 Runner 已启用并独占 Maintenance；Worker overlay 显式配置足够的
+stop grace period。PostgreSQL Outbox 保留未完成
 投递，重启后继续处理。命名卷保存 PostgreSQL 与 JetStream 数据；停止容器不删除账户
 identity/epoch 或 replaced 隔离。
 
@@ -361,14 +383,16 @@ go test -race -count=1 ./services/channel-gateway/internal/bootstrap \
 ```
 
 当前 Control `bootstrap.App` 已接托管凭据解析/轮换与 Delivery Runner，并由 Runner 独占
-Maintenance；ReplyIntent NATS Consumer 和真实 Execution committed-Final verifier 仍未接入。
+Maintenance；Worker V1 已接 ReplyIntent NATS Consumer 和真实 Execution committed-Final
+mTLS verifier，读取 Worker durable Completion，不依赖活跃 Attempt lease。
 **Delivery/0006 历史切片**的实际工作树、镜像及运行验收记录于实施状态 §10.4；没有新增
 Connector 部署单元。**2026-09-05 Runtime 切片**的七迁移镜像与空账户维护记录见 §11.4；
-该数字不是当前十迁移镜像验收声明。健康检查、样本 RunRequested、迁移已执行或空账户
+该数字不是当前十一迁移镜像验收声明。健康检查、样本 RunRequested、迁移已执行或空账户
 启动都不等于 Agent E2E。精确规则见[Runtime V1](../../docs/architecture-next/channel-gateway/delivery-runtime-v1.md)。
 
-Control Runtime Profile 的 11 个管理操作仍独立存在；默认 bootstrap 尚未注册内部
-凭据解析路由，真实 Run/Attempt 授权、Workload 认证和 Worker 接线仍属后续工作。
+Control Runtime Profile 的 11 个管理操作仍独立存在；显式 `CONTROL_RUNTIME_CONFIG_FILE`
+启用 runtime mTLS listener、Worker 身份映射、真实 Attempt authorizer、Profile 凭据解析
+及 Manifest relay/export。未注入该配置不自动启用 listener；完整 overlay 负责显式挂载。
 
 相关说明：
 
@@ -378,14 +402,14 @@ Control Runtime Profile 的 11 个管理操作仍独立存在；默认 bootstrap
 - [Runtime Profile 凭据](../../docs/architecture-next/control-api/runtime-profile-credentials.md)
 
 
-### NATS 三角色密码的当前输入边界
+### NATS 四角色密码的当前输入边界
 
 当前 bundled NATS 2.11.8 使用不加引号的 `$NATS_*_PASSWORD` 配置引用。Server 会再次
 按配置语法解析环境变量内容，不保证任意随机字符串都被当作 string；数字、布尔字面量
 或特定数字/单位前缀可能导致启动失败。不要把引用包在双引号里，也不要给同一密码变量
 人为嵌入引号后同时提供给 Server 和客户端。
 
-为 bundled 部署分别生成三个独立密码时，可使用下面的字母前缀 + 随机十六进制格式：
+为 bundled 部署分别生成四个独立密码时，可使用下面的字母前缀 + 随机十六进制格式：
 
 ```bash
 printf 'nats_%s\n' "$(openssl rand -hex 24)"
@@ -402,8 +426,8 @@ printf 'nats_%s\n' "$(openssl rand -hex 24)"
 最新代码的 `LoadConfig` 默认 `GATEWAY_ACCOUNT_SOURCE=control`，生产 Compose 已切换到
 该模式。上述静态账户说明仅用于显式 fixture overlay；历史仅维护的验收另按日期保留。当前 Control 模式
 启动 account catalog refresh、WeCom Supervisor、Telegram registration reconciler、
-Delivery Runner（复用原 Dispatcher，并独占 Maintenance 生命周期）和 observations 上报。ReplyIntent
-NATS 消费与真实 Worker committed-Final verifier 仍未接入，不能把 Runner 启动等同 Agent E2E。
+Delivery Runner（复用原 Dispatcher，并独占 Maintenance 生命周期）、ReplyIntent NATS 消费、
+真实 Worker committed-Final verifier 和 observations 上报。Runner 启动仍不等同真实 Agent E2E。
 
 没有新增 Connector 容器或 Node 镜像；Telegram Go SDK 与公开 `platform/im/wecom` 在
 同一个 Gateway Go workload 中使用。Helm 留到所有 workload 完成后。
@@ -416,7 +440,7 @@ NATS 消费与真实 Worker committed-Final verifier 仍未接入，不能把 Ru
 - `GATEWAY_CONTROL_CERTS_DIR`: 本机目录，只读挂载 `ca.pem`、`client.pem`、`client-key.pem`。
 - `GATEWAY_PUBLIC_ORIGIN`: Webhook 账户按需使用的平台 HTTPS origin；纯长轮询可留空。路径由账户目录决定，不接受租户任意 URL。
 - `GATEWAY_HTTPS_PROXY` / `GATEWAY_HTTP_PROXY` / `GATEWAY_NO_PROXY`: 可选出站代理；默认 bypass 本地及内部服务，不在文档或日志记录代理凭据。
-- 既有 Gateway PG / NATS 三角色配置保持不变。SDK Token/Secret 不再由此 Compose 注入。
+- Gateway PG 身份不变；NATS 当前为四角色，Worker overlay 要求 TLS/CA。SDK Token/Secret 不由 Compose 注入。
 
 Control 不可达时公共 listener 保持运行，但新工作拒绝且 readyz 返回 503；snapshot 恢复
 后重新建立本实例资格。注册 READY 仅是某版本有界时间的观测。源 epoch 不自动信任更新。
@@ -453,3 +477,10 @@ Webhook 账户若缺 origin，会报告 CONFIG_INVALID 并影响 readiness，不
 恢复，已存在 LP 账户时不直接降级到 Webhook-only 构建。Helm 继续延后。
 
 实现与验证入口见 [双模式开发记录](../../docs/architecture-next/channel-gateway/telegram-receive-modes-implementation.md)。
+
+## Worker V1 完整部署 overlay
+
+同库多 Schema 基础上新增 Worker、显式 Session preparation、NATS TLS、Control Channel/
+Runtime 双内部 listener 与 Reply proof 接线。当前步骤、配置目录和真实验收分层以
+[Worker V1 Compose 部署](WORKER_V1.md) 为准。历史真实 Telegram 入站证据仍不等于
+Worker 回复验收；真实回执请与本轮实现状态及审计记录交叉核对。

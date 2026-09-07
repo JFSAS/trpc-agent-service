@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -13,22 +15,49 @@ import (
 )
 
 const (
-	RouteSubject  = "control.channel-route.v1"
-	RunSubject    = "execution.run-requested.v1"
-	RouteStream   = "CHANNEL_ROUTES_V1"
-	RunStream     = "RUN_REQUESTS_V1"
-	RouteConsumer = "channel-gateway-routes-v1"
+	RouteSubject     = "control.channel-route.v1"
+	RunSubject       = "execution.run-requested.v1"
+	RouteStream      = "CHANNEL_ROUTES_V1"
+	RunStream        = "RUN_REQUESTS_V1"
+	RouteConsumer    = "channel-gateway-routes-v1"
+	ManifestSubject  = "control.runtime-manifest.published.v1"
+	ManifestStream   = "RUNTIME_MANIFESTS_V1"
+	ManifestConsumer = "worker-manifests-v1"
+	ReplySubject     = "execution.reply-intent.v1"
+	ReplyStream      = "REPLY_INTENTS_V1"
+	ReplyConsumer    = "channel-gateway-replies-v1"
+	RunConsumer      = "agent-worker-runs-v1"
 )
 
-type Auth struct{ User, Password, InboxPrefix string }
+type Auth struct{ User, Password, InboxPrefix, CAFile string }
+
+// ValidateServerURL prevents a configured private trust root from silently
+// downgrading any configured failover endpoint to plaintext. Plaintext fixture
+// mode without an explicit CA retains its existing behavior.
+func (a Auth) ValidateServerURL(raw string) error {
+	if a.CAFile == "" {
+		return nil
+	}
+	for _, server := range strings.Split(raw, ",") {
+		u, err := url.Parse(strings.TrimSpace(server))
+		if err != nil || u.Scheme != "tls" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("NATS CA requires tls:// server origins")
+		}
+	}
+	return nil
+}
+
 type Transport struct {
 	Conn     *nats.Conn
 	JS       jetstream.JetStream
 	topology Topology
 }
 
-func Connect(url string, topology Topology, auth Auth) (*Transport, error) {
+func Connect(serverURL string, topology Topology, auth Auth) (*Transport, error) {
 	if err := topology.Validate(); err != nil {
+		return nil, err
+	}
+	if err := auth.ValidateServerURL(serverURL); err != nil {
 		return nil, err
 	}
 	if auth.InboxPrefix == "" {
@@ -38,9 +67,12 @@ func Connect(url string, topology Topology, auth Auth) (*Transport, error) {
 	if auth.User != "" {
 		opts = append(opts, nats.UserInfo(auth.User, auth.Password))
 	}
+	if auth.CAFile != "" {
+		opts = append(opts, nats.RootCAs(auth.CAFile))
+	}
 	// Do not log server URLs or authentication material from asynchronous errors.
 	opts = append(opts, nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
-	nc, err := nats.Connect(url, opts...)
+	nc, err := nats.Connect(serverURL, opts...)
 	if err != nil {
 		return nil, errors.New("connect NATS failed")
 	}
@@ -79,21 +111,29 @@ func (t *Transport) Reconcile(ctx context.Context) error {
 	if err := t.verifyStreams(ctx); err != nil {
 		return err
 	}
-	stream, err := t.JS.Stream(ctx, RouteStream)
-	if err != nil {
-		return err
-	}
-	_, err = stream.Consumer(ctx, RouteConsumer)
-	if errors.Is(err, jetstream.ErrConsumerNotFound) {
-		_, err = stream.CreateConsumer(ctx, consumerConfig())
-	}
-	if err != nil {
-		return err
+	for _, item := range []struct{ stream, durable, subject string }{{RouteStream, RouteConsumer, RouteSubject}, {RunStream, RunConsumer, RunSubject}, {ManifestStream, ManifestConsumer, ManifestSubject}, {ReplyStream, ReplyConsumer, ReplySubject}} {
+		if !t.topology.HasStream(item.stream) {
+			continue
+		}
+		stream, err := t.JS.Stream(ctx, item.stream)
+		if err != nil {
+			return err
+		}
+		_, err = stream.Consumer(ctx, item.durable)
+		if errors.Is(err, jetstream.ErrConsumerNotFound) {
+			_, err = stream.CreateConsumer(ctx, durableConfig(item.durable, item.subject))
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return t.Verify(ctx)
 }
 func consumerConfig() jetstream.ConsumerConfig {
-	return jetstream.ConsumerConfig{Durable: RouteConsumer, AckPolicy: jetstream.AckExplicitPolicy, DeliverPolicy: jetstream.DeliverAllPolicy, FilterSubject: RouteSubject, AckWait: 30 * time.Second, MaxAckPending: 64, MaxDeliver: -1, ReplayPolicy: jetstream.ReplayInstantPolicy}
+	return durableConfig(RouteConsumer, RouteSubject)
+}
+func durableConfig(durable, subject string) jetstream.ConsumerConfig {
+	return jetstream.ConsumerConfig{Durable: durable, AckPolicy: jetstream.AckExplicitPolicy, DeliverPolicy: jetstream.DeliverAllPolicy, FilterSubject: subject, AckWait: 30 * time.Second, MaxAckPending: 64, MaxDeliver: -1, ReplayPolicy: jetstream.ReplayInstantPolicy}
 }
 func (t *Transport) verifyStreams(ctx context.Context) error {
 	for _, want := range t.topology.configs() {
@@ -116,18 +156,23 @@ func (t *Transport) Verify(ctx context.Context) error {
 	if err := t.verifyStreams(ctx); err != nil {
 		return err
 	}
-	c, err := t.JS.Consumer(ctx, RouteStream, RouteConsumer)
-	if err != nil {
-		return err
-	}
-	info, err := c.Info(ctx)
-	if err != nil {
-		return err
-	}
-	want := consumerConfig()
-	got := info.Config
-	if got.AckPolicy != want.AckPolicy || got.DeliverPolicy != want.DeliverPolicy || got.FilterSubject != want.FilterSubject || len(got.FilterSubjects) > 0 || got.Durable != want.Durable || got.MaxAckPending != want.MaxAckPending || got.AckWait != want.AckWait || got.DeliverSubject != "" || got.MaxDeliver != -1 || len(got.BackOff) > 0 || got.ReplayPolicy != want.ReplayPolicy || got.InactiveThreshold != 0 || got.HeadersOnly {
-		return errors.New("incompatible route consumer")
+	for _, item := range []struct{ stream, durable, subject string }{{RouteStream, RouteConsumer, RouteSubject}, {ReplyStream, ReplyConsumer, ReplySubject}} {
+		if !t.topology.HasStream(item.stream) {
+			continue
+		}
+		c, err := t.JS.Consumer(ctx, item.stream, item.durable)
+		if err != nil {
+			return err
+		}
+		info, err := c.Info(ctx)
+		if err != nil {
+			return err
+		}
+		want := durableConfig(item.durable, item.subject)
+		got := info.Config
+		if got.AckPolicy != want.AckPolicy || got.DeliverPolicy != want.DeliverPolicy || got.FilterSubject != want.FilterSubject || len(got.FilterSubjects) > 0 || got.Durable != want.Durable || got.MaxAckPending != want.MaxAckPending || got.AckWait != want.AckWait || got.DeliverSubject != "" || got.MaxDeliver != -1 || len(got.BackOff) > 0 || got.ReplayPolicy != want.ReplayPolicy || got.InactiveThreshold != 0 || got.HeadersOnly {
+			return errors.New("incompatible Gateway durable consumer")
+		}
 	}
 	return nil
 }

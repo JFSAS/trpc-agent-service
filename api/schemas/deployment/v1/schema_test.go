@@ -50,6 +50,8 @@ func TestDeploymentValidFixtures(t *testing.T) {
 	}{
 		{"deployment-input.json", input},
 		{"runtime-manifest.json", manifest},
+		{"runtime-manifest-worker-v1.json", manifest},
+		{"runtime-manifest-view-worker-v1.json", view},
 		{"runtime-manifest-no-optional-credentials.json", manifest},
 		{"runtime-manifest-view.json", view},
 		{"runtime-manifest-view-no-optional-credentials.json", view},
@@ -88,6 +90,7 @@ func TestDeploymentInvalidFixtures(t *testing.T) {
 func TestRuntimeManifestDigestCoversCanonicalInternalContent(t *testing.T) {
 	for _, name := range []string{
 		"runtime-manifest.json",
+		"runtime-manifest-worker-v1.json",
 		"runtime-manifest-no-optional-credentials.json",
 	} {
 		t.Run(name, func(t *testing.T) {

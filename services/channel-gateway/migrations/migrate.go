@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,6 +19,19 @@ import (
 var Files embed.FS
 
 func Apply(ctx context.Context, pool *pgxpool.Pool) error {
+	return apply(ctx, pool, "")
+}
+
+// ApplyForRuntime applies migrations and removes runtime write privileges from
+// the migration ledger before committing. Historical migration SQL is unchanged.
+func ApplyForRuntime(ctx context.Context, pool *pgxpool.Pool, runtimeRole string) error {
+	if runtimeRole == "" {
+		return fmt.Errorf("gateway runtime role is required for migration")
+	}
+	return apply(ctx, pool, runtimeRole)
+}
+
+func apply(ctx context.Context, pool *pgxpool.Pool, runtimeRole string) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -66,6 +80,17 @@ func Apply(ctx context.Context, pool *pgxpool.Pool) error {
 			return fmt.Errorf("migration %s: %w", name, err)
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO gateway_schema_migrations(version,digest) VALUES($1,$2)`, name, digest); err != nil {
+			return err
+		}
+	}
+	if runtimeRole != "" {
+		// Default privileges grant DML on business tables, not authority to forge
+		// or remove the history used to validate future migrations.
+		_, err = tx.Exec(ctx, `REVOKE ALL PRIVILEGES ON TABLE gateway_schema_migrations FROM `+pgx.Identifier{runtimeRole}.Sanitize()+`, PUBLIC`)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `GRANT SELECT ON TABLE gateway_schema_migrations TO `+pgx.Identifier{runtimeRole}.Sanitize()); err != nil {
 			return err
 		}
 	}

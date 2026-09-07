@@ -47,11 +47,11 @@ Adapter、Telegram SDK Sender、Connection 原始会话 reservation 与 WeCom Se
 发送按 A1 claim → A2 CALLING → Provider → Observation/Finish 处理；UNKNOWN Final 不普通
 自动重发，已失效 Origin 不迁移到新 socket，reservation 覆盖调用和有界结果落账窗口。
 
-**这不等于默认启动已启用回复**：`bootstrap.App` 尚未创建 ReplyIntent NATS Consumer，
-Control 模式已构造生产发送 Runner/Sender 与托管凭据 bridge；真实 Execution committed-Final verifier
-和 ReplyIntent 输入仍待交付。HTTP/WS 的历史本地纵切使用明确的
-`committedFinalFixture`，不是真实 Worker。Control route publisher 与真实 Telegram 入站已联通，
-Worker 和完整 IM Agent 回复 E2E 仍待联通；Telegram Callback 业务命令与 `answerCallbackQuery` 也尚未接线。
+**Worker V1 Reply 接线已实现**：Control 模式的 `bootstrap.App` 绑定 ReplyIntent NATS
+Consumer、mTLS committed-Final verifier，并复用已有 Runner/Sender；见本文末节。历史 HTTP/WS
+Delivery 纵切中的 `committedFinalFixture` 仍是测试替身，不代表真实模型或真实 Telegram 账号验收。
+完整 Worker/IM E2E 以 Worker 的独立验收记录为准；Telegram Callback 业务命令与
+`answerCallbackQuery` 仍未接线。
 
 历史 Delivery/0006 的六迁移镜像与本地验收保留于实施状态 §10.4。当前 Runtime 新增
 Maintainer、Runner、LocalOwner、0007 与 CGR-36 分类，**最终验收已通过**，见
@@ -75,7 +75,7 @@ services/channel-gateway/
 │   │   ├── domain/
 │   │   ├── application/
 │   │   └── adapter/outbound/{postgres,wecomclient}/
-│   ├── delivery/                 # Control 模式启用 Maintenance/Runner；ReplyIntent Consumer 待接入
+│   ├── delivery/                 # Control 模式启用 Maintenance/Runner；ReplyIntent Consumer + mTLS 完成证明
 │   │   ├── domain/               # Final barrier、分片、certainty、retry policy
 │   │   ├── application/          # Acceptor / Dispatcher / Maintainer / Runner / ports
 │   │   └── adapter/
@@ -115,10 +115,12 @@ just gateway-build
 
 | 环境变量 | 说明 / 默认值 |
 | --- | --- |
-| `GATEWAY_DATABASE_URL` | 必需；使用 Gateway 自己的 database/role |
+| `GATEWAY_DATABASE_URL` | 必需；常驻连接使用 `gateway_runtime` role，其默认 `search_path` 指向 `gateway` schema |
+| `GATEWAY_MIGRATION_DATABASE_URL` | 必需；启动迁移使用独立 `gateway_migrator` role，指向同一 database 与 schema；不回退到运行连接 |
 | `GATEWAY_NATS_URL` | 必需；NATS 地址 |
 | `GATEWAY_NATS_USER` / `GATEWAY_NATS_PASSWORD` | 成对配置；Compose 服务使用 `gateway` 用户 |
 | `GATEWAY_NATS_TOPOLOGY_FILE` | 默认 `deploy/nats/streams.yaml`；容器挂载到 `/etc/gateway/streams.yaml` |
+| `GATEWAY_NATS_CA_FILE` | 可选 broker 信任 CA 文件；配置后 `GATEWAY_NATS_URL` 的每个地址必须为 `tls://`，保留证书链和主机名验证；reconcile 命令同样读取 |
 | `GATEWAY_HTTP_ADDRESS` | public listener，默认 `:8090` |
 | `GATEWAY_ADMIN_ADDRESS` | 独立 admin listener，默认 `:8091` |
 | `GATEWAY_ACCOUNT_SOURCE` | 默认 `control`；`fixture` 显式启用开发账户文件，生产拒绝静态账户输入 |
@@ -148,15 +150,44 @@ just gateway-build
 的 Binding；也不会注册任何账户 webhook 路由。`readyz` 表达基础设施/投影状态，
 不是“至少配置了一个 Bot”检查。
 
-Compose 的一次性 `gateway-database` job 创建 `gateway` role 和 `channel_gateway`
-database。当前源码在监听前依次执行 0001–0010：0004 持久化路由积压 episode，0005
+V1 部署使用 PostgreSQL 17.6，共用同一 database，Control、Gateway、Worker 与 runtime Session 分别使用
+`control`、`gateway`、`worker`、`runtime_session` schema 和独立角色；Gateway 不通过跨模块
+SQL 访问其他 schema。部署阶段创建 schema/role 并固定角色默认 `search_path`，业务代码不动态
+切换 schema。启动先检查迁移与运行连接的实际 `current_database()`、`current_schema()` 与
+`current_user` / `session_user`：两个身份必须一致（直接以部署 role 登录），连接配置的 host/port/database 必须相同，实际目标 database/schema 必须一致且角色不同，schema 不是 `public` 或系统 schema，
+迁移角色必须是 schema owner 并持有 CREATE，且不持有 superuser、createdb、createrole、replication
+或 bypassrls；运行角色既不持有上述角色特权，也不拥有 schema 或 CREATE 权限。生产启动固定
+绑定 `gateway` / `gateway_migrator` / `gateway_runtime`，两个 URL 同时误配为另一 Workload
+也在执行迁移前拒绝。测试私有入口可显式指定随机 fixture identity，配置文件和环境变量没有此覆盖项。
+
+检查通过后，仅迁移连接依次执行 0001–0011，并在同一迁移事务提交前移除运行角色对
+`gateway_schema_migrations` 的写入、TRUNCATE、REFERENCES 与 TRIGGER 权限。业务表默认 DML
+授权不代表运行身份有权修改迁移历史。迁移连接关闭后，App 只保留运行连接；启动错误不输出 DSN。
+历史迁移 SQL 和摘要保持不变：0004 持久化路由积压 episode，0005
 拥有 Connection 账户/epoch/lease/replaced 隔离，0006 新增 Admission 的 nullable
 `reply_origin` 和 Delivery intents/parts/attempts/observations 账本。旧 Admission 的 Origin
 保持 NULL；0007 仅新增 Runtime 查询五索引，不改旧 SQL 或业务事实、不释放容量。
 0008–0010 分别增加 Control 账户目录、发送资格绑定与 Telegram 注册账本。
-独立维护与发送循环分开，Control 模式启动 Runner，仍不启动 ReplyIntent 消费；既有迁移记录保留，
-Gateway 数据与 Control database、Profile 凭据解析职责分离。
+0011 新增 Reply transport terminal receipts。独立维护与发送循环分开，Control 模式启动
+Reply Consumer 和已有 Runner；既有迁移记录保留，
+Gateway 数据与 Control schema、Profile 凭据解析职责分离。
 详见 [本地 Compose](../../deploy/compose/README.md)。
+
+独立 PostgreSQL 角色契约测试使用已显式 provision 的一次性 V1 数据库，无需 NATS：
+
+```sh
+# 两个连接分别由测试环境注入；使用角色默认 search_path，不附加临时 SET。
+GATEWAY_V1_TEST_DATABASE_URL="$GATEWAY_DATABASE_URL" \
+GATEWAY_V1_TEST_MIGRATION_DATABASE_URL="$GATEWAY_MIGRATION_DATABASE_URL" \
+go test ./services/channel-gateway/internal/bootstrap -run TestGatewayV1 -count=1
+```
+
+另注入 `GATEWAY_V1_TEST_ADMIN_DATABASE_URL` 可运行隔离 schema 的迁移身份负例，验证管理员
+迁移、startup role 伪装、非 owner 迁移与其他 Workload 配置在 DDL 前拒绝，账本仍不存在。
+该测试实际迁移并验证重复启动、运行角色的业务 DML/禁止 DDL、迁移账本只读与同角色配置拒绝。
+缺少上述两个环境变量时测试跳过，不代表真实 PostgreSQL 已验收。历史 App 集成 fixture 仍使用
+专用测试 schema，但现在由管理员仅 provision，显式创建普通 owner/migrator 与独立运行角色，并移交已播种表的
+ownership；App 的迁移和业务执行都使用普通部署身份。
 
 ## 5. HTTP、健康与关闭
 
@@ -222,7 +253,9 @@ just gateway-integration
 
 未设置相应变量时测试会 Skip；带 reset 开关的 suite 会重建测试 broker 中固定命名
 的 Streams，因此使用独立测试 broker。PostgreSQL Adapter 测试建立隔离 schema，
-使用真实 workload migrations 和真实 routing generation guard，结束后清理。
+使用真实 workload migrations 和真实 routing generation guard，结束后清理。App 启动集成测试的
+`GATEWAY_TEST_DATABASE_URL` 还需要创建临时 LOGIN role 和授权的测试管理权限；常驻服务仍使用
+单独创建的 DML-only role。生产运行连接不承担测试环境准备。
 
 单独验证 Admission 的真实 PostgreSQL 行为：
 
@@ -271,3 +304,66 @@ GCI2 已在 Control 模式启动 Runner；GCI3 验证真实 Telegram 入站。Re
 
 Helm 继续排在平台 `FINAL-INTEGRATION`，待 Control、Gateway、Worker、Local IM、
 前端等所有生产 Workload 完成后统一处理。
+
+## Worker V1 Reply 接管
+
+Control account mode 现在同时运行 `channel-gateway-replies-v1` durable Consumer。
+初始化仍由独立 reconciler 创建 Stream/Consumer，Gateway runtime 只验证和消费。
+新增必填配置：
+
+```text
+GATEWAY_WORKER_URL=https://agent-worker:8093
+GATEWAY_WORKER_CA_FILE=/run/gateway-worker/ca.pem
+GATEWAY_WORKER_CERT_FILE=/run/gateway-worker/client.pem
+GATEWAY_WORKER_KEY_FILE=/run/gateway-worker/client-key.pem
+```
+
+Worker 端需要将该客户端证书身份列入 Gateway 完成查询调用方 allowlist；
+证书只证明调用方身份，正文仍必须匹配 Worker 已提交的 Completion/Final。
+查询是 `POST /internal/v1/execution/finals:verify`，与 Profile 的 live Attempt 授权分离。
+404、401/403、5xx、超时或不可解码的响应保持重试；只有已认证服务返回的明确 409
+内容不匹配，或合法响应与请求/Admission 的字段不匹配，才形成永久业务拒绝。
+
+Reply 使用已有严格 codec 和 Delivery Acceptor，不新增 Provider 发送循环。
+`0011_reply_transport_receipts.sql` 持久记录 broker stream incarnation/sequence、
+原始字节摘要、ACCEPTED/REJECTED 和稳定原因。顺序固定为：
+
+1. 根据可信 broker identity 读取 transport receipt，重复消息直接返回原终态。
+2. Delivery 业务 Receipt-first 接管；原会话目标仍由 Admission 提供。
+3. 单独提交 transport terminal receipt，然后 ACK；这不是一个跨模块原子事务。
+4. Delivery Runner 继续负责已有 Sender、重试、UNKNOWN 和连接恢复。
+
+如果第 2 步提交后第 3 步失败，重放已有 Delivery receipt 后补第 3 步，即使证明服务
+此时离线或原 deadline 已过也不重判。数据库/容量/证明故障只 NAK；坏 wire、确定冲突、
+可信永久否决、EXPIRED、UNSUPPORTED 必须先持久拒绝再 ACK。
+
+验证命令：
+
+```bash
+go test -count=1 ./services/channel-gateway/internal/delivery/adapter/inbound/nats ./services/channel-gateway/internal/delivery/adapter/outbound/workerhttp
+# 使用专属空 NATS broker；测试只创建/清理自己的 Stream 与随机 PostgreSQL Schema。
+GATEWAY_REPLY_TEST_DATABASE_URL="$DISPOSABLE_ADMIN_URL" \
+GATEWAY_REPLY_TEST_NATS_URL="$DISPOSABLE_NATS_URL" \
+go test -count=1 -v ./services/channel-gateway/internal/delivery/adapter/inbound/nats -run TestReplyHandoffPostgresNATSIntegration
+```
+
+
+### NATS TLS broker 信任
+
+跨容器 V1 部署使用 TLS broker 地址，例如 `GATEWAY_NATS_URL=tls://nats:4222`，
+并设置 `GATEWAY_NATS_CA_FILE=/run/nats/ca.pem`。Broker 服务证书 SAN 必须包含实际连接
+主机名 `nats`。该 CA 验证 broker，不是 Worker/Control HTTP mTLS 的调用方证书。
+NATS 用户名/密码继续按原角色 ACL 授权，通过 TLS 传输；没有跳过证书验证选项。
+配置 CA 后任一 failover 地址为明文 `nats://` 均在连接前拒绝，避免重连降级。
+未配置 CA 的历史本地明文 fixture 继续可用。私有 CA 轮转使用文件挂载与连接重建/重连，
+配置不会将原始证书错误、URL 或密码写入启动错误。
+
+```bash
+GATEWAY_TEST_TLS_NATS_URL="$DISPOSABLE_TLS_NATS_URL" \
+GATEWAY_TEST_TLS_NATS_CA_FILE="$DISPOSABLE_NATS_CA_FILE" \
+GATEWAY_TEST_TLS_NATS_USER=gateway \
+GATEWAY_TEST_TLS_NATS_PASSWORD="$DISPOSABLE_GATEWAY_PASSWORD" \
+go test -count=1 -race -v ./services/channel-gateway/internal/infra/nats -run 'Test(ExplicitCA|NATSTrustedTLS|Declarations)'
+```
+
+该门禁实际验证可信 TLS 握手、错误 CA 与缺失 CA 拒绝，以及声明与生成 ACL 不漂移。

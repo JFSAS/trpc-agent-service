@@ -62,15 +62,16 @@ type ResolvedCredential struct {
 
 // CredentialBatch is INTERNAL ONLY, not a public management DTO or event.
 type CredentialBatch struct {
-	TenantID       string
-	ProfileID      string
-	RunID          string
-	AttemptID      string
-	WorkerID       string
-	LeaseEpoch     int64
-	ManifestID     string
-	ManifestDigest string
-	Credentials    []ResolvedCredential
+	TenantID              string
+	ProfileID             string
+	ProfileRevisionNumber int64
+	RunID                 string
+	AttemptID             string
+	WorkerID              string
+	LeaseEpoch            int64
+	ManifestID            string
+	ManifestDigest        string
+	Credentials           []ResolvedCredential
 }
 
 func (b *CredentialBatch) Clear() {
@@ -146,7 +147,7 @@ func (s *Service) ResolveForAttempt(ctx context.Context, command ResolveAttemptC
 	}
 	auth, err := s.deps.ExecutionVerifier.VerifyAttempt(ctx, command.Authorization)
 	if err != nil {
-		return CredentialBatch{}, ErrExecutionUnauthorized
+		return CredentialBatch{}, classifyExecutionVerification(err)
 	}
 	if auth.TenantID == "" || auth.ProfileID == "" || auth.RunID == "" || auth.AttemptID == "" ||
 		auth.WorkerID != command.Authorization.WorkloadIdentity || auth.LeaseEpoch <= 0 ||
@@ -163,13 +164,16 @@ func (s *Service) ResolveForAttempt(ctx context.Context, command ResolveAttemptC
 			return CredentialBatch{}, ErrExecutionUnauthorized
 		}
 	}
-	result := CredentialBatch{TenantID: auth.TenantID, ProfileID: auth.ProfileID, RunID: auth.RunID, AttemptID: auth.AttemptID,
+	result := CredentialBatch{TenantID: auth.TenantID, ProfileID: auth.ProfileID, ProfileRevisionNumber: auth.ProfileRevisionNumber, RunID: auth.RunID, AttemptID: auth.AttemptID,
 		WorkerID: auth.WorkerID, LeaseEpoch: auth.LeaseEpoch, ManifestID: auth.ManifestID, ManifestDigest: auth.ManifestDigest}
 	err = s.deps.Credentials.WithinProfile(ctx, auth.TenantID, auth.ProfileID, func(tx CredentialTransaction) error {
 		// Acquiring the Profile lock can wait behind a write. A lease can be
 		// revoked or fenced during that wait even while its token is unexpired.
 		current, verifyErr := s.deps.ExecutionVerifier.VerifyAttempt(ctx, command.Authorization)
-		if verifyErr != nil || !sameExecutionGrant(auth, current) || !current.ExpiresAt.After(s.deps.Now()) {
+		if verifyErr != nil {
+			return classifyExecutionVerification(verifyErr)
+		}
+		if !sameExecutionGrant(auth, current) || !current.ExpiresAt.After(s.deps.Now()) {
 			return ErrExecutionUnauthorized
 		}
 		currentUses := make(map[CredentialUse]bool, len(current.AllowedUses))
@@ -251,4 +255,14 @@ func validSHA256Digest(value string) bool {
 		}
 	}
 	return true
+}
+
+// Only an explicit owner denial is permanent. Network, database, malformed
+// dependency responses and unknown verifier failures are retryable dependency
+// errors without exposing transport details or execution tokens.
+func classifyExecutionVerification(err error) error {
+	if errors.Is(err, ErrExecutionUnauthorized) {
+		return ErrExecutionUnauthorized
+	}
+	return ErrExecutionDependencyUnavailable
 }

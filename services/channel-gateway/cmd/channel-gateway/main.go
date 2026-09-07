@@ -57,7 +57,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		n, err := transport.Connect(os.Getenv("GATEWAY_NATS_URL"), topology, transport.Auth{User: os.Getenv("GATEWAY_NATS_USER"), Password: os.Getenv("GATEWAY_NATS_PASSWORD"), InboxPrefix: "_INBOX.reconciler"})
+		n, err := transport.Connect(os.Getenv("GATEWAY_NATS_URL"), topology, transport.Auth{User: os.Getenv("GATEWAY_NATS_USER"), Password: os.Getenv("GATEWAY_NATS_PASSWORD"), InboxPrefix: "_INBOX.reconciler", CAFile: os.Getenv("GATEWAY_NATS_CA_FILE")})
 		if err != nil {
 			return err
 		}

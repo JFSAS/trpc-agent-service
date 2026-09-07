@@ -135,7 +135,7 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer broker.Close()
-	for _, name := range []string{transport.RouteStream, transport.RunStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 		if e = broker.JS.DeleteStream(ctx, name); e != nil && e != jetstream.ErrStreamNotFound {
 			t.Fatal(e)
 		}
@@ -144,7 +144,7 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() {
-		for _, name := range []string{transport.RouteStream, transport.RunStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 			_ = broker.JS.DeleteStream(context.Background(), name)
 		}
 	}()
@@ -206,8 +206,9 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	query := dsn.Query()
 	query.Set("search_path", pool.Config().ConnConfig.RuntimeParams["search_path"])
 	dsn.RawQuery = query.Encode()
-	config := Config{AccountSource: "control", Control: controlConfig, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: dsn.String(), NATSURL: natsURL, Topology: topology, telegramFactory: remote}
-	app, e := New(ctx, config)
+	database := fixtureDatabaseConfig(t, dsn.String())
+	config := Config{AccountSource: "control", Worker: WorkerConfig{URL: controlConfig.URL, CAFile: controlConfig.CAFile, CertificateFile: controlConfig.CertificateFile, KeyFile: controlConfig.KeyFile}, Control: controlConfig, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, telegramFactory: remote}
+	app, e := newWithDatabaseTarget(ctx, config, database.target)
 	if e != nil {
 		t.Fatal(e)
 	}

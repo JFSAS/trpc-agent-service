@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
+
 	agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
@@ -320,6 +322,14 @@ func createCommitFixture() application.CreateCommit {
 }
 
 func publicationCommitFixture() application.PublicationCommit {
+	return publicationCommitFixtureWithPlatform(domain.DefaultPlatformExecutionContract())
+}
+
+func publicationCommitFixtureWithPlatform(platform domain.PlatformExecutionContract) application.PublicationCommit {
+	username := "agent" // Preserve historical platform-v1 fixture bytes.
+	if platform.Version == deploymentv1.WorkerV1PlatformVersion {
+		username = deploymentv1.WorkerV1SessionRuntimeRole
+	}
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	agentDigest := "sha256:" + strings.Repeat("a", 64)
 	profileDigest := "sha256:" + strings.Repeat("b", 64)
@@ -330,7 +340,6 @@ func publicationCommitFixture() application.PublicationCommit {
 	}
 	inputJSON, _ := json.Marshal(input)
 	canonicalInput, inputDigest, _ := canonicalDocument(inputJSON)
-	platform := domain.DefaultPlatformExecutionContract()
 	compiled, report := domain.Compile(domain.CompileInput{
 		TenantID: "tnt_1",
 		Agent: domain.AgentVersionSource{
@@ -372,7 +381,7 @@ func publicationCommitFixture() application.PublicationCommit {
 						DSNCredentialID: "crd_00000000000000000000000000000002",
 						Destination: profiledomain.StorageDestination{
 							Host: "state.example", Port: 5432, Database: "state",
-							Username: "agent", SSLMode: "verify-full",
+							Username: username, SSLMode: "verify-full",
 						},
 					},
 				},

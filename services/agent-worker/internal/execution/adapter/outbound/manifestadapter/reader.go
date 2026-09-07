@@ -1,0 +1,61 @@
+package manifestadapter
+
+import (
+	"context"
+	"errors"
+	protocol "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	projection "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/application"
+	manifest "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/domain"
+)
+
+type Reader struct {
+	Projection     projection.Projection
+	ContractDigest string
+}
+
+func (r Reader) Resolve(ctx context.Context, route domain.Route) (domain.Plan, error) {
+	if r.Projection == nil || !domain.DigestValid(r.ContractDigest) {
+		return domain.Plan{}, application.ErrManifestInvalid
+	}
+	m, err := r.Projection.Read(ctx, route.TenantID, route.ManifestRef)
+	if errors.Is(err, manifest.ErrMissing) {
+		return domain.Plan{}, application.ErrManifestMissing
+	}
+	if errors.Is(err, manifest.ErrConflict) {
+		return domain.Plan{}, application.ErrManifestInvalid
+	}
+	if err != nil {
+		return domain.Plan{}, application.ErrDependency
+	}
+	if m.ContentDigest != route.ManifestDigest || m.DeploymentRevisionID != route.DeploymentRevisionID {
+		return domain.Plan{}, application.ErrManifestInvalid
+	}
+	envelope, err := protocol.DecodeRuntimeManifest(m.Envelope)
+	if err != nil {
+		return domain.Plan{}, application.ErrManifestInvalid
+	}
+	if envelope.ID != route.ManifestRef || envelope.TenantID != route.TenantID || envelope.DeploymentRevisionID != route.DeploymentRevisionID || envelope.ContentDigest != route.ManifestDigest {
+		return domain.Plan{}, application.ErrManifestInvalid
+	}
+	content, err := protocol.VerifyRuntimeManifest(envelope)
+	if err != nil {
+		return domain.Plan{}, application.ErrManifestInvalid
+	}
+	if err = protocol.ValidateWorkerV1(content, r.ContractDigest); err != nil {
+		return domain.Plan{}, application.ErrManifestUnsupported
+	}
+	node := content.AgentPlan.Nodes[content.AgentPlan.Root]
+	model := content.Resources.Models[node.ModelResource]
+	storage := content.Resources.Storage[content.StorageRoles["session"]]
+	use := func(u protocol.CredentialUse) domain.CredentialUse {
+		return domain.CredentialUse{CredentialID: u.CredentialID, Purpose: u.Purpose, AudienceDigest: u.AudienceDigest}
+	}
+	p := domain.Plan{TenantID: m.TenantID, ManifestID: m.ManifestID, ManifestDigest: m.ContentDigest, DeploymentRevisionID: m.DeploymentRevisionID, ProfileID: content.Sources.Profile.ProfileID, ProfileRevision: content.Sources.Profile.RevisionNumber, NodeID: content.AgentPlan.Root, Instruction: node.Instruction, ModelEndpoint: model.BaseURL, ModelName: model.Model, MaxRunSeconds: content.Execution.MaxRunSeconds, MaxOutputTokens: content.Execution.MaxOutputTokens, ModelCredential: use(model.Credential), SessionCredential: use(storage.Credential), SessionTarget: domain.StorageTarget{Host: storage.Destination.Host, Port: uint16(storage.Destination.Port), Database: storage.Destination.Database, Username: storage.Destination.Username, SSLMode: storage.Destination.SSLMode}}
+	if node.Generation != nil {
+		p.Temperature = node.Generation.Temperature
+		p.NodeMaxOutputTokens = node.Generation.MaxOutputTokens
+	}
+	return p, nil
+}

@@ -13,7 +13,8 @@ export GATEWAY_HTTP_ADDRESS=127.0.0.1:8090
 export GATEWAY_ADMIN_ADDRESS=127.0.0.1:8091
 export GATEWAY_INSTANCE_ID=gw-1
 # 以下变量由受限运行配置提供，示例不是有效凭据/服务地址：
-# GATEWAY_DATABASE_URL, GATEWAY_NATS_URL, GATEWAY_NATS_USER, GATEWAY_NATS_PASSWORD
+# GATEWAY_DATABASE_URL, GATEWAY_MIGRATION_DATABASE_URL
+# GATEWAY_NATS_URL, GATEWAY_NATS_USER, GATEWAY_NATS_PASSWORD
 # GATEWAY_CONTROL_URL, GATEWAY_CONTROL_SCOPE_ID, GATEWAY_CONTROL_SOURCE_EPOCH
 # GATEWAY_CONTROL_CA_FILE, GATEWAY_CONTROL_CERT_FILE, GATEWAY_CONTROL_KEY_FILE
 # GATEWAY_PUBLIC_ORIGIN
@@ -40,8 +41,12 @@ go build -o ./bin/channel-gateway ./services/channel-gateway/cmd/channel-gateway
 7. Control 模式默认启动有界 Delivery Runner，由 Runner 独占 Maintenance 生命周期；fixture 才独立维护。不存在 Final 输入时不会制造发送任务。
 8. 状态变化及 30 秒心跳经 mTLS 上报，失败不修改授权或更新 freshness。
 
-当前迁移为 0001–0011。0011 新增物理 Bot receiver/调用窗口/持久游标表；0001–0010 不改写。
-本轮没有 Worker 实现，没有 ReplyIntent NATS consumer，也没有自行填造 committed-Final verifier。
+当前包含 0001–0010 及两份按完整文件名记账的增量迁移：
+`0011_telegram_receive_modes.sql` 新增物理 Bot receiver、调用窗口和持久游标；
+`0011_reply_transport_receipts.sql` 新增 Reply transport receipt。两份迁移独立保留，
+历史 SQL 与文件名保持不变。Worker V1 同时接入 ReplyIntent durable Consumer 和
+真实 mTLS committed-Final verifier；配置与事务边界见
+[Gateway Worker V1 Reply 接管](README.md#worker-v1-reply-接管)。历史入站记录仍不等同于回复验收。
 
 ## Telegram 真实入站就绪条件
 
@@ -83,6 +88,19 @@ NATS RUN_REQUESTS_V1 sequence1 的严格Schema和规范payload匹配，DeliveryI
 本次目标的模型与Storage配置仅为 admission-only fixture，没有宣称其真实执行能力。
 
 
+## 自建 Telegram Bot API origin
+
+`GATEWAY_TELEGRAM_API_URL` 是可选的运维配置，空值沿用 SDK 默认 `https://api.telegram.org`。
+同一个固定 origin 同时注入 registration 的 GetMe/SetWebhook 和 Delivery 的 GetMe/SendMessage，
+不由租户 Account/Profile 字段选择；它与入站 `GATEWAY_PUBLIC_ORIGIN` 是两个方向。
+支持 HTTPS origin，或字面量 loopback IP 的 HTTP origin（如 `http://127.0.0.1:8081`）；
+拒绝非 loopback HTTP、userinfo、非根路径、query 和 fragment。HTTPS 保留系统证书与主机名验证，
+不提供跳过验证。Compose 基线显式透传该可选变量；空值不改变公共端点。
+
+自建端点仍接收 Control 托管的 Bot Token；GetMe 的物理 Bot ID 必须与 Account 一致。
+账户资格、注册 fence、webhook secret、Route、Worker committed proof 和 Delivery A2 门禁保持不变。
+联合 gate 可将此 origin 指向本地外部 Telegram HTTP fixture，同时运行真实 Control/Gateway/
+Worker 二进制及 PG/NATS。该结果证明内部跨进程闭环，不代表真实 Telegram 账号验收。
 ## Telegram 接入预检（Gateway 实现，跨端验收独立）
 
 Gateway 在 `control` 模式由 LoadConfig 默认启用独立预检 Runner，固定4个执行槽、

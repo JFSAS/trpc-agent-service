@@ -14,10 +14,12 @@ import (
 
 func TestLoadConfig(t *testing.T) {
 	t.Setenv("GATEWAY_DATABASE_URL", "postgres://unused/unused")
+	t.Setenv("GATEWAY_MIGRATION_DATABASE_URL", "postgres://migrator/unused")
 	t.Setenv("GATEWAY_NATS_URL", "nats://unused:4222")
 	t.Setenv("GATEWAY_NATS_TOPOLOGY_FILE", "../../../../deploy/nats/streams.yaml")
 	t.Setenv("GATEWAY_HTTP_ADDRESS", ":8090")
 	t.Setenv("GATEWAY_ADMIN_ADDRESS", ":8091")
+	t.Setenv("GATEWAY_NATS_CA_FILE", "")
 	t.Setenv("GATEWAY_NATS_USER", "")
 	t.Setenv("GATEWAY_NATS_PASSWORD", "")
 	t.Setenv("TEST_WEBHOOK_SECRET", "test_secret_value_1234")
@@ -93,7 +95,7 @@ func configWithAccounts(t *testing.T, accounts []Account) Config {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Config{HTTPAddress: ":8090", AdminAddress: ":8091", DatabaseURL: "postgres://unused/unused", NATSURL: "nats://unused:4222", Topology: topology, Accounts: accounts}
+	return Config{HTTPAddress: ":8090", AdminAddress: ":8091", DatabaseURL: "postgres://unused/unused", MigrationDatabaseURL: "postgres://migrator/unused", NATSURL: "nats://unused:4222", Topology: topology, Accounts: accounts}
 }
 func TestAccountConfigCountLimit(t *testing.T) {
 	for _, count := range []int{0, 100, 101} {
@@ -104,6 +106,56 @@ func TestAccountConfigCountLimit(t *testing.T) {
 		c := configWithAccounts(t, accounts)
 		if (c.Validate() == nil) != (count <= 100) {
 			t.Fatalf("account count %d validated incorrectly", count)
+		}
+	}
+}
+
+func TestNATSCARequiresTLSWithoutChangingPlaintextFixture(t *testing.T) {
+	c := configWithAccounts(t, nil)
+	if err := c.Validate(); err != nil {
+		t.Fatal("plaintext fixture changed", err)
+	}
+	c.NATSAuth.CAFile = "private-ca.pem"
+	if c.Validate() == nil {
+		t.Fatal("CA silently accepted on plaintext")
+	}
+	c.NATSURL = "tls://broker:4222"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestLoadConfigReadsNATSCA(t *testing.T) {
+	t.Setenv("GATEWAY_ACCOUNT_SOURCE", "fixture")
+	t.Setenv("GATEWAY_DATABASE_URL", "postgres://unused/db")
+	t.Setenv("GATEWAY_MIGRATION_DATABASE_URL", "postgres://migrator/db")
+	t.Setenv("GATEWAY_NATS_URL", "tls://broker:4222")
+	t.Setenv("GATEWAY_NATS_CA_FILE", "private-ca.pem")
+	t.Setenv("GATEWAY_NATS_TOPOLOGY_FILE", "../../../../deploy/nats/streams.yaml")
+	t.Setenv("GATEWAY_WECOM_ACCOUNTS_FILE", "")
+	p := filepath.Join(t.TempDir(), "accounts.json")
+	if err := os.WriteFile(p, []byte(`[]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GATEWAY_TELEGRAM_ACCOUNTS_FILE", p)
+	c, err := LoadConfig()
+	if err != nil || c.NATSAuth.CAFile != "private-ca.pem" {
+		t.Fatal(c.NATSAuth.CAFile, err)
+	}
+}
+
+func TestTelegramAPIOriginConfig(t *testing.T) {
+	for _, raw := range []string{"", "https://api.telegram.org", "https://self-hosted.example:8443/", "http://127.0.0.1:8081", "http://[::1]:8081/"} {
+		c := configWithAccounts(t, nil)
+		c.TelegramAPIURL = raw
+		if err := c.Validate(); err != nil {
+			t.Fatalf("origin %q: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{"http://self-hosted.example", "http://localhost:8081", "http://192.0.2.1:80", "https://user:secret@host", "https://host/bot", "https://host/?x=1", "https://host/?", "https://host/#fragment", "https://host/#", "https://host/%2f", "ftp://host", "https:///", "//host", " https://host", "http://127.0.0.1.evil.example"} {
+		c := configWithAccounts(t, nil)
+		c.TelegramAPIURL = raw
+		if c.Validate() == nil {
+			t.Fatalf("invalid origin accepted: %q", raw)
 		}
 	}
 }

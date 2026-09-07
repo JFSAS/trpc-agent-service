@@ -37,7 +37,7 @@ func TestGatewayDefaultRuntimeExpiresPendingWithoutOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(broker.Close)
-	for _, name := range []string{transport.RouteStream, transport.RunStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 		if err = broker.JS.DeleteStream(ctx, name); err != nil && !errors.Is(err, jetstream.ErrStreamNotFound) {
 			t.Fatal(err)
 		}
@@ -45,7 +45,7 @@ func TestGatewayDefaultRuntimeExpiresPendingWithoutOwner(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		for _, name := range []string{transport.RouteStream, transport.RunStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 			_ = broker.JS.DeleteStream(cleanup, name)
 		}
 	})
@@ -73,10 +73,11 @@ func TestGatewayDefaultRuntimeExpiresPendingWithoutOwner(t *testing.T) {
 	q := u.Query()
 	q.Set("search_path", pool.Config().ConnConfig.RuntimeParams["search_path"])
 	u.RawQuery = q.Encode()
-	config := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: u.String(), NATSURL: natsURL, Topology: topology}
+	database := fixtureDatabaseConfig(t, u.String())
+	config := Config{HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology}
 	// Two independently constructed App instances in this process compete on the same persistent fact.
 	for range 2 {
-		gateway, err := New(ctx, config)
+		gateway, err := newWithDatabaseTarget(ctx, config, database.target)
 		if err != nil {
 			t.Fatal(err)
 		}

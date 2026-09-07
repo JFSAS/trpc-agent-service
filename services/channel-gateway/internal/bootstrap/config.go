@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 
 	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application"
@@ -24,17 +25,18 @@ type Account struct {
 	Secret    string `json:"-"`
 }
 type Config struct {
-	TelegramPreflightEnabled                        bool
-	telegramFactory                                 telegramruntime.RemoteFactory
-	AccountSource                                   string
-	Control                                         ControlConfig
-	HTTPAddress, AdminAddress, DatabaseURL, NATSURL string
-	Topology                                        transport.Topology
-	NATSAuth                                        transport.Auth
-	Accounts                                        []Account
-	WeComAccounts                                   []connectiondomain.Account
-	WeComAccountsFile, WeComURL, InstanceID         string
-	ConnectionOptions                               connection.Options
+	TelegramPreflightEnabled                                              bool
+	telegramFactory                                                       telegramruntime.RemoteFactory
+	AccountSource                                                         string
+	Control                                                               ControlConfig
+	Worker                                                                WorkerConfig
+	HTTPAddress, AdminAddress, DatabaseURL, MigrationDatabaseURL, NATSURL string
+	Topology                                                              transport.Topology
+	NATSAuth                                                              transport.Auth
+	Accounts                                                              []Account
+	WeComAccounts                                                         []connectiondomain.Account
+	WeComAccountsFile, WeComURL, InstanceID, TelegramAPIURL               string
+	ConnectionOptions                                                     connection.Options
 }
 
 func envOr(key, fallback string) string {
@@ -44,11 +46,13 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 func LoadConfig() (Config, error) {
-	c := Config{HTTPAddress: envOr("GATEWAY_HTTP_ADDRESS", ":8090"), AdminAddress: envOr("GATEWAY_ADMIN_ADDRESS", ":8091"), DatabaseURL: os.Getenv("GATEWAY_DATABASE_URL"), NATSURL: os.Getenv("GATEWAY_NATS_URL"), NATSAuth: transport.Auth{User: os.Getenv("GATEWAY_NATS_USER"), Password: os.Getenv("GATEWAY_NATS_PASSWORD"), InboxPrefix: "_INBOX.gateway"}}
+	c := Config{HTTPAddress: envOr("GATEWAY_HTTP_ADDRESS", ":8090"), AdminAddress: envOr("GATEWAY_ADMIN_ADDRESS", ":8091"), DatabaseURL: os.Getenv("GATEWAY_DATABASE_URL"), MigrationDatabaseURL: os.Getenv("GATEWAY_MIGRATION_DATABASE_URL"), NATSURL: os.Getenv("GATEWAY_NATS_URL"), NATSAuth: transport.Auth{User: os.Getenv("GATEWAY_NATS_USER"), Password: os.Getenv("GATEWAY_NATS_PASSWORD"), InboxPrefix: "_INBOX.gateway", CAFile: os.Getenv("GATEWAY_NATS_CA_FILE")}}
 	c.AccountSource = envOr("GATEWAY_ACCOUNT_SOURCE", "control")
 	c.Control = ControlConfig{URL: os.Getenv("GATEWAY_CONTROL_URL"), CAFile: os.Getenv("GATEWAY_CONTROL_CA_FILE"), CertificateFile: os.Getenv("GATEWAY_CONTROL_CERT_FILE"), KeyFile: os.Getenv("GATEWAY_CONTROL_KEY_FILE"), ScopeID: os.Getenv("GATEWAY_CONTROL_SCOPE_ID"), SourceEpoch: os.Getenv("GATEWAY_CONTROL_SOURCE_EPOCH"), PublicOrigin: os.Getenv("GATEWAY_PUBLIC_ORIGIN")}
+	c.Worker = WorkerConfig{URL: os.Getenv("GATEWAY_WORKER_URL"), CAFile: os.Getenv("GATEWAY_WORKER_CA_FILE"), CertificateFile: os.Getenv("GATEWAY_WORKER_CERT_FILE"), KeyFile: os.Getenv("GATEWAY_WORKER_KEY_FILE")}
 	c.WeComAccountsFile = os.Getenv("GATEWAY_WECOM_ACCOUNTS_FILE")
 	c.WeComURL = os.Getenv("GATEWAY_WECOM_URL")
+	c.TelegramAPIURL = os.Getenv("GATEWAY_TELEGRAM_API_URL")
 	c.InstanceID = os.Getenv("GATEWAY_INSTANCE_ID")
 	var err error
 	c.WeComAccounts, err = (accountFileSource{path: c.WeComAccountsFile}).List(context.Background())
@@ -98,6 +102,9 @@ func LoadConfig() (Config, error) {
 	return c, nil
 }
 func (c Config) Validate() error {
+	if err := validateTelegramAPIURL(c.TelegramAPIURL); err != nil {
+		return err
+	}
 	if c.AccountSource != "" && c.AccountSource != "fixture" && c.AccountSource != "control" {
 		return errors.New("invalid Gateway account source mode")
 	}
@@ -105,12 +112,18 @@ func (c Config) Validate() error {
 		if len(c.Accounts) > 0 || len(c.WeComAccounts) > 0 || c.WeComAccountsFile != "" {
 			return errors.New("Control mode does not accept file or environment accounts")
 		}
+		if err := c.Worker.validate(); err != nil {
+			return err
+		}
+		if !c.Topology.HasStream(transport.ReplyStream) {
+			return errors.New("Control mode requires the V1 Reply stream")
+		}
 		if err := c.Control.validate(c.InstanceID); err != nil {
 			return err
 		}
 	}
-	if c.DatabaseURL == "" || c.NATSURL == "" {
-		return errors.New("Gateway database and NATS URLs are required")
+	if c.DatabaseURL == "" || c.MigrationDatabaseURL == "" || c.NATSURL == "" {
+		return errors.New("Gateway runtime database, migration database and NATS URLs are required")
 	}
 	if _, _, err := net.SplitHostPort(c.HTTPAddress); err != nil {
 		return errors.New("invalid public HTTP address")
@@ -144,6 +157,9 @@ func (c Config) Validate() error {
 		return errors.New("at most 100 configured Telegram accounts")
 	}
 	if err := c.Topology.Validate(); err != nil {
+		return err
+	}
+	if err := c.NATSAuth.ValidateServerURL(c.NATSURL); err != nil {
 		return err
 	}
 	if (c.NATSAuth.User == "") != (c.NATSAuth.Password == "") {
@@ -233,4 +249,23 @@ func decodeAccounts(data []byte) ([]Account, error) {
 		return nil, errors.New("trailing Telegram account configuration")
 	}
 	return accounts, nil
+}
+
+// A self-hosted Bot API is an operator-owned origin, never an account field.
+// Plain HTTP is confined to literal loopback destinations for local servers.
+func validateTelegramAPIURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Fragment != "" || u.RawFragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("Telegram API URL must be a fixed origin")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if ip := net.ParseIP(u.Hostname()); u.Scheme == "http" && ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return errors.New("Telegram API URL requires HTTPS or literal loopback HTTP")
 }
