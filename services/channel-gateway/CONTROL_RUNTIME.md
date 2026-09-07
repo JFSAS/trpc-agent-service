@@ -154,3 +154,26 @@ exact ACL generation; their lists remain empty until configured. Bootstrap requi
 its Control scope in the topology. The Compose/example flag remains false.
 Full current-state snapshots, recovery and Principal/Admission/Worker authorization
 remain required; a running history consumer is not proof that requests are authorized.
+
+## Current authorization refresh (opt-in)
+
+`GATEWAY_AUTHORIZATION_REFRESH_ENABLED=true` independently enables current-state
+refresh in Control account mode. It defaults to false and acquires no reader or
+scheduler when disabled. Control must grant `channel_policy_projection` to the
+verified Gateway workload. Unlike retained-history consumption, this loop does
+not require a policy NATS durable. It uses the same pinned Control identity and
+private-CA mTLS settings, with a separate bounded HTTP client.
+
+The qualified account directory includes disabled accounts but rejects stale,
+unhealthy or closed observations. Each replica runs four workers with no overlap
+per account; directory changes cancel obsolete requests. Successful refreshes use
+one third of the verified policy age, capped at five seconds; failures back off
+from one to thirty seconds. Directory polling is once per second. These are
+scheduling bounds, not a revocation SLA under load. Freshness remains anchored to
+the start of the database read transaction; failed refreshes never extend it.
+
+App.Run owns cancellation and draining; initialization failures and App.Close
+release the scheduler and reader. No separate deployment unit is added. This
+installs current policy/principal state only: Admission and Worker authorization
+fences are still pending. Enabling this flag does not enable access enforcement
+or make a running Gateway a multi-tenant authorization acceptance result.

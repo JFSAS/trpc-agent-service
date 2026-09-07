@@ -258,3 +258,23 @@ func clone(a c.Account) c.Account {
 var _ interface {
 	List(context.Context) ([]d.Account, error)
 } = (*Service)(nil)
+
+// CurrentAccounts is an atomic, health-checked directory copy, including disabled
+// accounts. Unlike diagnostic Accounts it rejects unknown/stale/closed sources.
+// It discovers background projection targets; it grants no credential or ingress.
+func (s *Service) CurrentAccounts(ctx context.Context) ([]c.Account, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return nil, c.ErrUnavailable
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || !s.healthy || !time.Now().Before(s.deadline) {
+		return nil, c.ErrUnavailable
+	}
+	out := make([]c.Account, 0, len(s.records))
+	for _, r := range s.records {
+		out = append(out, clone(r.account))
+	}
+	c.SortAccounts(out)
+	return out, nil
+}

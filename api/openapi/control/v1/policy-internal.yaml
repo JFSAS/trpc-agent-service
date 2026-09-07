@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Channel access policy internal document resolution",
+    "title": "Channel authorization internal APIs",
     "version": "1.0.0"
   },
   "paths": {
@@ -478,6 +478,446 @@
                     "scope_id",
                     "source_epoch",
                     "policy"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/channel-authorizations:snapshot": {
+      "post": {
+        "operationId": "readChannelAuthorizationSnapshot",
+        "security": [
+          {
+            "workloadMTLS": []
+          }
+        ],
+        "description": "Internal mTLS and explicit channel_policy_projection capability. Current account-local snapshot, not an admission grant. All responses no-store. Pages share a SQL generation; any mutation requires restarting all pages. Manifest captured_at is never renewed by pagination. Request 8KiB; page max 128 records and 1MiB. No query or compression.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "schema_version": {
+                    "const": 1
+                  },
+                  "account_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "not": {
+                      "pattern": "[^A-Za-z0-9._:-]"
+                    }
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "account_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Verified client certificate required"
+          },
+          "403": {
+            "description": "Workload or capability denied"
+          },
+          "404": {
+            "description": "Account or published policy absent in scope"
+          },
+          "409": {
+            "description": "Snapshot changed or epoch mismatch; discard staged pages"
+          },
+          "413": {
+            "description": "Body too large"
+          },
+          "500": {
+            "description": "Source integrity error"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          },
+          "200": {
+            "description": "Bounded current-state manifest or page; independently verify complete digest before installing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1
+                    },
+                    "scope_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "source_epoch": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "tenant_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "account_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "provider": {
+                      "enum": [
+                        "telegram",
+                        "wecom"
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "account_revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "account_enabled": {
+                      "type": "boolean"
+                    },
+                    "policy": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "digest": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$",
+                          "minLength": 71,
+                          "maxLength": 71
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision",
+                        "digest"
+                      ]
+                    },
+                    "captured_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "authorization_max_age_ms": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 30000
+                    },
+                    "principal_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "principal_digest": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$",
+                      "minLength": 71,
+                      "maxLength": 71
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "scope_id",
+                    "source_epoch",
+                    "tenant_id",
+                    "account_id",
+                    "provider",
+                    "generation",
+                    "account_revision",
+                    "account_enabled",
+                    "policy",
+                    "captured_at",
+                    "authorization_max_age_ms",
+                    "principal_count",
+                    "principal_digest"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/channel-authorizations:page": {
+      "post": {
+        "operationId": "readChannelAuthorizationPage",
+        "security": [
+          {
+            "workloadMTLS": []
+          }
+        ],
+        "description": "Internal mTLS and explicit channel_policy_projection capability. Current account-local snapshot, not an admission grant. All responses no-store. Pages share a SQL generation; any mutation requires restarting all pages. Manifest captured_at is never renewed by pagination. Request 8KiB; page max 128 records and 1MiB. No query or compression.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "schema_version": {
+                    "const": 1
+                  },
+                  "account_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "not": {
+                      "pattern": "[^A-Za-z0-9._:-]"
+                    }
+                  },
+                  "source_epoch": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "after_principal_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                        "not": {
+                          "pattern": "[^A-Za-z0-9._:-]"
+                        }
+                      },
+                      {
+                        "const": ""
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "account_id",
+                  "source_epoch",
+                  "generation",
+                  "after_principal_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Verified client certificate required"
+          },
+          "403": {
+            "description": "Workload or capability denied"
+          },
+          "404": {
+            "description": "Account or published policy absent in scope"
+          },
+          "409": {
+            "description": "Snapshot changed or epoch mismatch; discard staged pages"
+          },
+          "413": {
+            "description": "Body too large"
+          },
+          "500": {
+            "description": "Source integrity error"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          },
+          "200": {
+            "description": "Bounded current-state manifest or page; independently verify complete digest before installing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1
+                    },
+                    "scope_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "source_epoch": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "tenant_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "account_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                      "not": {
+                        "pattern": "[^A-Za-z0-9._:-]"
+                      }
+                    },
+                    "provider": {
+                      "enum": [
+                        "telegram",
+                        "wecom"
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "after_principal_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        {
+                          "const": ""
+                        }
+                      ]
+                    },
+                    "next_principal_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "not": {
+                            "pattern": "[^A-Za-z0-9._:-]"
+                          }
+                        },
+                        {
+                          "const": ""
+                        }
+                      ]
+                    },
+                    "principals": {
+                      "type": "array",
+                      "maxItems": 128,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "principal_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "not": {
+                              "pattern": "[^A-Za-z0-9._:-]"
+                            }
+                          },
+                          "external_user_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          },
+                          "state": {
+                            "enum": [
+                              "ACTIVE",
+                              "REVOKED"
+                            ]
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "principal_id",
+                          "external_user_id",
+                          "state",
+                          "revision"
+                        ]
+                      }
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "scope_id",
+                    "source_epoch",
+                    "tenant_id",
+                    "account_id",
+                    "provider",
+                    "generation",
+                    "after_principal_id",
+                    "next_principal_id",
+                    "principals",
+                    "complete"
                   ]
                 }
               }

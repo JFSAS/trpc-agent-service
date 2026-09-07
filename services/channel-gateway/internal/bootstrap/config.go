@@ -26,6 +26,7 @@ type Account struct {
 	Secret    string `json:"-"`
 }
 type Config struct {
+	AuthorizationRefreshEnabled                                           bool
 	PolicyProjectionEnabled                                               bool
 	WeComPreflightEnabled                                                 bool
 	TelegramPreflightEnabled                                              bool
@@ -59,6 +60,13 @@ func LoadConfig() (Config, error) {
 		return Config{}, errors.New("invalid policy projection enablement")
 	}
 
+	switch envOr("GATEWAY_AUTHORIZATION_REFRESH_ENABLED", "false") {
+	case "true":
+		c.AuthorizationRefreshEnabled = true
+	case "false":
+	default:
+		return Config{}, errors.New("invalid authorization refresh enablement")
+	}
 	c.Control = ControlConfig{URL: os.Getenv("GATEWAY_CONTROL_URL"), CAFile: os.Getenv("GATEWAY_CONTROL_CA_FILE"), CertificateFile: os.Getenv("GATEWAY_CONTROL_CERT_FILE"), KeyFile: os.Getenv("GATEWAY_CONTROL_KEY_FILE"), ScopeID: os.Getenv("GATEWAY_CONTROL_SCOPE_ID"), SourceEpoch: os.Getenv("GATEWAY_CONTROL_SOURCE_EPOCH"), PublicOrigin: os.Getenv("GATEWAY_PUBLIC_ORIGIN")}
 	c.Worker = WorkerConfig{URL: os.Getenv("GATEWAY_WORKER_URL"), CAFile: os.Getenv("GATEWAY_WORKER_CA_FILE"), CertificateFile: os.Getenv("GATEWAY_WORKER_CERT_FILE"), KeyFile: os.Getenv("GATEWAY_WORKER_KEY_FILE")}
 	c.WeComAccountsFile = os.Getenv("GATEWAY_WECOM_ACCOUNTS_FILE")
@@ -120,6 +128,9 @@ func LoadConfig() (Config, error) {
 	return c, nil
 }
 func (c Config) Validate() error {
+	if c.AuthorizationRefreshEnabled && c.AccountSource != "control" {
+		return errors.New("authorization refresh requires Control mode")
+	}
 	if c.PolicyProjectionEnabled && (c.AccountSource != "control" || !c.Topology.HasStream(wire.AccessPolicyStream) || !c.Topology.HasPolicyScope(c.Control.ScopeID)) {
 		return errors.New("policy projection requires Control mode and access-policy stream")
 	}

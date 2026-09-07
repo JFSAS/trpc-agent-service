@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jfsas.dev/schemas/channel/v1/authorization-snapshot-page.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "scope_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "source_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tenant_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "account_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "provider": {
+      "enum": [
+        "telegram",
+        "wecom"
+      ]
+    },
+    "generation": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "after_principal_id": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/id"
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "next_principal_id": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/id"
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "principals": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "authorization-principal.schema.json"
+      }
+    },
+    "complete": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "scope_id",
+    "source_epoch",
+    "tenant_id",
+    "account_id",
+    "provider",
+    "generation",
+    "after_principal_id",
+    "next_principal_id",
+    "principals",
+    "complete"
+  ]
+}

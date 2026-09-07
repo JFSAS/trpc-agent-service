@@ -88,3 +88,10 @@ The owner publisher now commits definition, publication/audit outboxes and recei
 atomically under OWNER and revision checks. Management API, production bootstrap
 and event relay remain pending. These are policy configuration records, not
 Worker Session facts or runtime quota consumption.
+
+### 0008：账户授权快照 generation
+
+`0008_channel_authorization_generation.sql` 为现存及新建账户维护数据库事务级单调
+fence。主体、策略 head、账户变化都会失效旧快照分页；原有 0001–0007 内容不变。
+新增 `COLLATE "C"` keyset 索引以匹配跨语言摘要顺序。generation 不是 Broker offset，
+也不代表 Gateway/Worker 已安装当前授权。迁移不会启用策略投影或运行授权开关。

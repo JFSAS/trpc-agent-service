@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jfsas.dev/schemas/channel/v1/authorization-page-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "account_id": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "source_epoch": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "after_principal_id": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/id"
+        },
+        {
+          "const": ""
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "account_id",
+    "source_epoch",
+    "generation",
+    "after_principal_id"
+  ]
+}

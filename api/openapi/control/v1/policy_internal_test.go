@@ -27,3 +27,20 @@ func TestPolicyResolveRemainsPrivateAndClosed(t *testing.T) {
 		t.Fatal("missing operation guards")
 	}
 }
+
+func TestAuthorizationSnapshotPathsRemainPrivate(t *testing.T) {
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromFile("policy-internal.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/internal/v1/channel-authorizations:snapshot", "/internal/v1/channel-authorizations:page"} {
+		if loadControlOpenAPI(t).Paths.Value(path) != nil {
+			t.Fatal("snapshot leaked to public contract")
+		}
+		op := doc.Paths.Value(path).Post
+		if op == nil || op.Security == nil || !op.RequestBody.Value.Required || op.Responses.Value("409") == nil {
+			t.Fatal("incomplete snapshot contract")
+		}
+	}
+}

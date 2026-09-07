@@ -258,3 +258,11 @@ principal/policy authorization snapshot or freshness proof. Admission must not
 query this endpoint per message or use a historical response to bypass revocation.
 Gateway consumers, snapshot/gap recovery, current-state fences and Worker checks
 remain separate implementation work.
+
+## 当前授权快照（显式 policy projection capability）
+
+内部 listener 新增 `POST /internal/v1/channel-authorizations:snapshot` 和 `:page`。
+正式 RuntimeService 接同 scope/epoch 的 PostgreSQL 当前头与主体分页；权限在解析前
+检查，响应 no-store，generation 变化要求整份重取。详见
+[当前快照协议与边界](internal/channelbinding/adapter/outbound/postgres/AUTHORIZATION_SNAPSHOT.md)。
+这与已有精确历史策略 resolver 分开；Gateway 暂存/原子安装和授权新鲜度仍待接线。

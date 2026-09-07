@@ -590,3 +590,73 @@ Worker授权与完整F01–F12继续进行。证据：`artifacts/channel-policy-
 当前快照/恢复、Principal 撤销传播、有界授权新鲜度、Admission/Worker 事务授权及
 完整 F01–F12 验收仍待完成。Bootstrap 使用真实 PG/NATS 和 HTTP 协议夹具，不是正式
 Control/Worker 或真实 Bot 联测。本次不新增 Node connector 或部署单元，不提前实施 Helm。
+
+## 2026-09-08 续作：Control 当前授权快照与分页完整性
+
+- 在已合入 8080eca 的基础上新增 0008 数据库 generation：覆盖既有/新建账户，
+  principal/head/account 变更在同事务递增，回滚不推进、上限溢出不留部分写入。
+- 正式 RuntimeService 和 mTLS listener 接当前 manifest/page；tenant/scope 派生，
+  复用显式 policy projection capability。不同于历史 resolver，manifest 读当前策略头、
+  account gate 及完整主体集合，含 REVOKED。未向公开 Session router 添加接口。
+- 同一 repeatable-read 事务流式生成主体 count/digest；每页最多 128 条并校验 SQL
+  generation。索引、排序和游标均用 C collation。共享 proof 检查完整身份、游标链、
+  顺序、终止、count/digest，拒绝拼接、截断、篡改和额外页。
+- 首轮真实 PG 发现复用 Tenant owner 的 FOR SHARE 与 READ ONLY 冲突；保留 owner
+  校验和 repeatable-read，取消 READ ONLY 标志，不写业务数据，保留 5 秒事务上限。
+- 真实测试包括 257 主体/三页、两租户相同局部主体/外部 ID、撤销/最新策略/账户门禁、
+  未提交写不可见、回滚、scope/epoch、generation 耗尽。另经真实 mTLS 调用正式
+  RuntimeService/PG，验证 manifest -> page -> shared complete proof，再经 OWNER
+  撤销获得旧 page HTTP 409；非仅 HTTP fake。安全负例单独验证无证书/错误映射和
+  缺 capability 在解析前拒绝。精确计数、命令与首次失败保留于本轮证据目录。
+
+captured_at 不晚于最初 MVCC 快照；分页不续期。SQL generation 不是 NATS watermark，
+proof 成功不直接赋予当前授权。Gateway 完整安装/新鲜度、撤销传播、恢复执行和
+Admission/Worker 同库授权 fence 仍待完成，全部 F01–F12 目标保持。当前修改仅在工作树，
+本轮未提交/推送、部署或操作真实 Bot。证据：artifacts/channel-current-snapshot-20260908。
+
+## 2026-09-08 续作：Gateway 当前快照 reader 与原子 PG 安装
+
+- 新增 ReadAuthorization：真实 mTLS manifest -> 精确策略 -> 顺序分页 -> 全量 proof，
+  身份/epoch/generation/cursor/count/digest 全匹配；要求当前响应 no-store。整次读取
+  和 stage 消耗最初请求起点的 monotonic 年龄预算，409 不隐式重试或续期。历史 Fetch
+  行为保留，精确读取不伪造 publication event。
+- 新增 Admission domain reader port 与 authorizationpostgres.Store.Refresh；0015
+  分离当前 snapshot/head、主体表和事务暂存表。默认运行开关及现有接纳路径不变。
+- PG clock anchor 在调用 reader 前取得；暂存不锁活跃 head，完整校验后才短暂串行化
+  账户安装。较早开始但晚到达的读取返回 SUPERSEDED；之后开始的版本回退、epoch
+  冲突或同版本异内容持久阻断，重启不清除。SQL guard 拒绝回退、篡改及解封。
+- 暂存和实际安装行均独立重算摘要；半份读取、错误被吞掉、取消、过期、Copy/trigger
+  改写和 deferred commit 失败都不替换旧集合或续期。持久阻断分支首轮漏清 stage 的
+  真实测试失败已修复，保留 RED_BLOCK_STAGE 日志；成功/阻断提交不留暂存行。
+- 对齐现有数据库 CONNECT-only 约束，采用迁移创建的暂存表和普通 DML，不执行 TEMP
+  DDL，不增加 runtime 权限。真实角色测试检查无 TEMP/CREATE 仍可安装 257 条主体。
+- 联合测试实际运行 Gateway mTLS reader、精确文档、三页 proof 与 PG 安装，保留 128
+  个 REVOKED 主体；HTTP409 回滚 stage 且原 fresh_until 不变。HTTP 对端为协议夹具，
+  不冒充本轮正式 Control/真实 Bot/Worker 联测。命令、计数和回滚证据在本轮目录。
+
+当前读取与安装已具备实现，但生产刷新调度/Bootstrap、新鲜度和 blocked 的 Admission
+同库检查、Worker 复核、完整依赖解析及全部 F01–F12 仍待完成。数据库时钟稳定性
+需要后续测量，不宣称 30 秒撤销 SLA；generation 不是 NATS watermark。无提交/推送、
+部署或真实 Bot 操作。证据：artifacts/channel-snapshot-reader-20260908。
+
+### 2026-09-08 — Current snapshot lifecycle and merge review
+
+- Added opt-in `GATEWAY_AUTHORIZATION_REFRESH_ENABLED` (default false) to existing
+  Gateway Bootstrap and Compose. No new workload. The qualified Control account
+  directory supplies enabled and disabled targets; stale/unhealthy/closed sources
+  cancel outstanding refreshes. Four bounded workers refresh without per-account
+  overlap; revision changes cancel old work; errors use bounded backoff.
+- Added scheduler race tests, qualified-directory clone/outage tests, strict flag
+  and disabled-construction tests, plus a real PostgreSQL/NATS/mTLS Bootstrap test
+  for ACTIVE installation and periodic REVOKED installation without a catalog
+  mutation. The Control endpoint in the Bootstrap test is a protocol fixture;
+  the separate Control HTTP integration exercises its real service/store.
+- Merge review found and fixed same-policy-revision reinterpretation across newer
+  snapshot generations. Application installation persistently blocks it; SQL also
+  rejects changes to the immutable revision's digest/body. Fixtures now reuse a
+  stable published document; the negative test preserves the prior installed set.
+- This is a current-state foundation slice, not completion of F01–F12. Admission
+  receipt/authorization transaction fences, Worker independent authorization,
+  source recovery and the remaining optimization gates stay open. No real IM or
+  deployment acceptance is asserted by this merge. Test evidence and exact source
+  rollback are in `artifacts/channel-snapshot-main-review-20260908-0537/VERIFICATION.txt`.

@@ -42,6 +42,7 @@ import (
 
 type App struct {
 	policy                    *policyProjectionRuntime
+	authorization             *policyProjectionRuntime
 	workerProof               *workerhttp.Client
 	replyAcceptor             *deliveryapp.Acceptor
 	replyConsumer             *replyconsumer.Consumer
@@ -88,8 +89,12 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	}
 	var controlClient *controlhttp.Client
 	var policy *policyProjectionRuntime
+	var authorization *policyProjectionRuntime
 	var workerProof *workerhttp.Client
 	fail := func(err error) (*App, error) {
+		if authorization != nil {
+			authorization.Close()
+		}
 		if policy != nil {
 			policy.Close()
 		}
@@ -169,7 +174,11 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	app := &App{policy: policy, catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+	authorization, err = newAuthorizationRefresh(c, pool, catalog)
+	if err != nil {
+		return fail(err)
+	}
+	app := &App{authorization: authorization, policy: policy, catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
 	if err := app.consumer.Initialize(ctx); err != nil {
 		return fail(err)
 	}
@@ -274,6 +283,9 @@ func (a *App) Handler() http.Handler      { return a.server.Handler }
 func (a *App) AdminHandler() http.Handler { return a.admin.Handler }
 func (a *App) Close() {
 	a.closeOnce.Do(func() {
+		if a.authorization != nil {
+			a.authorization.Close()
+		}
 		if a.policy != nil {
 			a.policy.Close()
 		}
@@ -343,6 +355,9 @@ func (a *App) Run(ctx context.Context) error {
 	g.Go(func() error { return a.consumer.Run(runCtx) })
 	if a.policy != nil {
 		g.Go(func() error { return a.policy.Run(runCtx) })
+	}
+	if a.authorization != nil {
+		g.Go(func() error { return a.authorization.Run(runCtx) })
 	}
 	if a.replyConsumer != nil {
 		g.Go(func() error { return a.replyConsumer.Run(runCtx) })

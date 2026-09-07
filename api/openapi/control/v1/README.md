@@ -275,3 +275,7 @@ is not a runtime activation or authorization-propagation status.
 reader. `channel_policy_projection` must be explicitly present in the verified
 workload mapping. This contract is not linked from the public API. The response
 contains one validated historical revision, not current authorization/freshness.
+
+`policy-internal.yaml` 另包含当前账户授权 manifest/page 两个内部 POST。它们复用
+显式 `channel_policy_projection` mTLS workload capability；未加入 public OpenAPI。
+409 包括 `CHANNEL_AUTHORIZATION_SNAPSHOT_CHANGED`，必须丢弃此前暂存的所有分页。

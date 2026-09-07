@@ -79,6 +79,8 @@ type ObservationView struct {
 }
 
 type RuntimeStore interface {
+	ReadAuthorizationManifest(context.Context, string, string) (channelv1.AuthorizationSnapshotManifest, error)
+	ReadAuthorizationPage(context.Context, string, string, string, int64, string) (channelv1.AuthorizationSnapshotPage, error)
 	ReadAccessPolicy(context.Context, string, string, domain.PolicyRevisionReference) (PolicyResolveResponse, error)
 	ReadSnapshot(context.Context, string) (domain.Snapshot, error)
 	WithCredentials(context.Context, string, string, string, func(domain.Account, []domain.CredentialRecord, string) error) error

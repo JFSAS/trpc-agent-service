@@ -161,3 +161,11 @@ set/opaque conversation validation and full-envelope JCS/SHA256 verification. It
 imports neither Control nor Gateway internals. The Control owner tests prove its
 actual prepared DENY_ALL/ALLOWLIST/PUBLIC_LIMITED documents decode consistently;
 Gateway's reader additionally compares all trusted notification identities.
+
+## 当前授权快照与完整主体证明
+
+新增 authorization-manifest-request / authorization-page-request / authorization-
+snapshot-manifest / authorization-snapshot-page / authorization-principal 闭合 Schema。
+`AuthorizationSnapshotProof` 流式验证 generation、身份、游标链、全量条数和主体摘要；
+`Finish` 成功只表示完整集合，不表示仍新鲜或允许创建 Run。每页固定最多 128 条，
+Telegram ID 必须为无前导零的正十进制 ID；企微 ID 保留不透明值但拒绝空白/控制字符。

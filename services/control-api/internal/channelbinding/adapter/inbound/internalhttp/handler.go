@@ -20,6 +20,8 @@ import (
 )
 
 type Runtime interface {
+	ReadAuthorizationManifest(context.Context, application.WorkloadPrincipal, application.AuthorizationManifestRequest) (channelv1.AuthorizationSnapshotManifest, error)
+	ReadAuthorizationPage(context.Context, application.WorkloadPrincipal, application.AuthorizationPageRequest) (channelv1.AuthorizationSnapshotPage, error)
 	ResolveAccessPolicy(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyResolveResponse, error)
 	ReadSnapshot(context.Context, application.WorkloadPrincipal) (domain.Snapshot, error)
 	ResolveCredentials(context.Context, application.WorkloadPrincipal, string, string, application.ResolveRequest) (application.ResolveResponse, error)
@@ -59,6 +61,8 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		instances[p.InstanceID] = true
 	}
 	h.mux.HandleFunc("GET /internal/v1/channel-accounts/snapshot", h.snapshot)
+	h.mux.HandleFunc("POST /internal/v1/channel-authorizations:snapshot", h.authorizationManifest)
+	h.mux.HandleFunc("POST /internal/v1/channel-authorizations:page", h.authorizationPage)
 	h.mux.HandleFunc("POST /internal/v1/channel-access-policies:resolve", h.resolvePolicy)
 	h.mux.HandleFunc("POST /internal/v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials:resolve", h.resolve)
 	h.mux.HandleFunc("POST /internal/v1/channel-account-observations", h.observations)
@@ -194,6 +198,8 @@ func handleError(w http.ResponseWriter, err error) {
 		status, code = 404, "CHANNEL_POLICY_NOT_FOUND"
 	case errors.Is(err, application.ErrAccountNotFound):
 		status, code = 404, "CHANNEL_ACCOUNT_NOT_FOUND"
+	case errors.Is(err, application.ErrAuthorizationSnapshotChanged):
+		status, code = 409, "CHANNEL_AUTHORIZATION_SNAPSHOT_CHANGED"
 	case errors.Is(err, application.ErrEpochMismatch):
 		status, code = 409, "CHANNEL_SOURCE_EPOCH_MISMATCH"
 	}
