@@ -116,7 +116,7 @@ func TestCompilerOutputsMatchPublishedSchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, mode := range []string{"optional", "no-optional", "managed"} {
+	for _, mode := range []string{"optional", "no-optional", "managed", "data"} {
 		optionalCredentials := mode != "no-optional"
 		name := mode
 		if !optionalCredentials {
@@ -126,6 +126,9 @@ func TestCompilerOutputsMatchPublishedSchemas(t *testing.T) {
 			input := validCompileInput()
 			if mode == "managed" {
 				input = managedExecutableInput()
+			}
+			if mode == "data" {
+				input = fullDataInput()
 			}
 			if !optionalCredentials {
 				tool := input.Profile.Spec.Tools["search"]

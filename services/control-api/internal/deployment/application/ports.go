@@ -93,6 +93,7 @@ type QueryStore interface {
 }
 
 type Dependencies struct {
+	ManagedBackends    ManagedBackendResolver
 	Publications       PublicationStore
 	Queries            QueryStore
 	TenantAccess       TenantAccess

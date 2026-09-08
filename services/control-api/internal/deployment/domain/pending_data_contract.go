@@ -2,8 +2,9 @@ package domain
 
 import agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 
-// P0a accepts source declarations, not execution support. P0b replaces this
-// guard together with Manifest DTO/codec compilation; never silently drop fields.
+// Preserve fail-closed behavior for production Worker V1 and static contracts
+// without data capabilities. Explicit tested data contracts use the complete
+// compiler path; declaration support alone never enables production execution.
 func pendingDataContractDiagnostics(s agentdomain.Spec) []Diagnostic {
 	var out []Diagnostic
 	reject := func(path string) {

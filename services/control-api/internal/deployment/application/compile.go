@@ -57,8 +57,14 @@ func (s *Service) compileAndCheck(ctx context.Context, tenantID, deploymentID, a
 	if err := json.Unmarshal(profileRevision.Spec, &profileSpec); err != nil {
 		return compilationResult{}, ErrPublicationIntegrity
 	}
+	requests := domain.ManagedBackendRequests(agentSpec, profileSpec)
+	backends, backendDiagnostics := s.resolveManagedBackends(ctx, tenantID, actorUserID, requests)
+	if len(backendDiagnostics) > 0 {
+		return compilationResult{Agent: agentVersion, Profile: profileRevision, Report: domain.NewValidationReport(s.deps.Platform.CompilerVersion, s.deps.Platform.Digest, backendDiagnostics)}, nil
+	}
 	compiled, report := domain.Compile(domain.CompileInput{
-		TenantID: tenantID,
+		ManagedBackends: backends,
+		TenantID:        tenantID,
 		Agent: domain.AgentVersionSource{
 			TenantID: agentVersion.TenantID, AgentID: agentVersion.AgentID,
 			VersionID: agentVersion.ID, VersionNumber: agentVersion.VersionNumber,

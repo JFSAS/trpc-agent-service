@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	StorageAdapterManagedSessionV1 = "managed-session-v1"
-	StorageAdapterManagedMemoryV1  = "managed-memory-v1"
-	KnowledgeAdapterManagedV1      = "managed-knowledge-v1"
+	StorageAdapterManagedArtifactV1 = "managed-artifact-v1"
+	StorageAdapterManagedSessionV1  = "managed-session-v1"
+	StorageAdapterManagedMemoryV1   = "managed-memory-v1"
+	KnowledgeAdapterManagedV1       = "managed-knowledge-v1"
 )
 
 type ManagedBackendView struct {

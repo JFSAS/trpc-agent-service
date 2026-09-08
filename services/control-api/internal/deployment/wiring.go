@@ -18,6 +18,7 @@ import (
 // module. Agent and Runtime Profile are consumed through their published owner
 // queries; the module never reads either owner's tables directly.
 type Dependencies struct {
+	ManagedBackends    application.ManagedBackendResolver
 	DB                 postgresadapter.DB
 	Routes             gin.IRouter
 	Authenticate       gin.HandlerFunc
@@ -47,6 +48,7 @@ func NewModule(deps Dependencies) (*Module, error) {
 
 	store := postgresadapter.NewStore(deps.DB)
 	service := application.NewService(application.Dependencies{
+		ManagedBackends:    deps.ManagedBackends,
 		Publications:       store,
 		Queries:            store,
 		TenantAccess:       deps.TenantAccess,

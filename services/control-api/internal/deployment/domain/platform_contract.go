@@ -52,12 +52,13 @@ type ExecutionPolicy struct {
 // PlatformExecutionContract is a process configuration snapshot. It is not a
 // user-selectable environment and is never mutated during one compilation.
 type PlatformExecutionContract struct {
-	ManagedCatalogDigest   string `json:"managed_catalog_digest,omitempty"`
-	Version                string `json:"version"`
-	Digest                 string `json:"digest"`
-	CompilerVersion        string `json:"compiler_version"`
-	ManifestSchemaVersion  string `json:"manifest_schema_version"`
-	RuntimeContractVersion string `json:"runtime_contract_version"`
+	RuntimeDataCapabilities []string `json:"runtime_data_capabilities,omitempty"`
+	ManagedCatalogDigest    string   `json:"managed_catalog_digest,omitempty"`
+	Version                 string   `json:"version"`
+	Digest                  string   `json:"digest"`
+	CompilerVersion         string   `json:"compiler_version"`
+	ManifestSchemaVersion   string   `json:"manifest_schema_version"`
+	RuntimeContractVersion  string   `json:"runtime_contract_version"`
 
 	ModelAdapters     map[profiledomain.ModelKind]AdapterContract              `json:"model_adapters"`
 	ToolAdapters      map[profiledomain.ToolKind]AdapterContract               `json:"tool_adapters"`
@@ -71,6 +72,7 @@ type PlatformExecutionContract struct {
 // Clone detaches collection fields so a caller cannot mutate the process
 // snapshot after module assembly.
 func (c PlatformExecutionContract) Clone() PlatformExecutionContract {
+	c.RuntimeDataCapabilities = append([]string(nil), c.RuntimeDataCapabilities...)
 	c.ModelAdapters = cloneMap(c.ModelAdapters)
 	c.ToolAdapters = cloneMap(c.ToolAdapters)
 	c.KnowledgeAdapters = cloneMap(c.KnowledgeAdapters)
@@ -136,6 +138,7 @@ func DefaultPlatformExecutionContract() PlatformExecutionContract {
 // itself. Set-shaped host lists and adapter maps are normalized first.
 func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 	payload := struct {
+		RuntimeDataCapabilities  []string                                                 `json:"runtime_data_capabilities,omitempty"`
 		ManagedCatalogDigest     string                                                   `json:"managed_catalog_digest,omitempty"`
 		Version                  string                                                   `json:"version"`
 		CompilerVersion          string                                                   `json:"compiler_version"`
@@ -149,8 +152,9 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 		Limits                   CompileLimits                                            `json:"limits"`
 		WorkerSessionRuntimeRole string                                                   `json:"worker_session_runtime_role,omitempty"`
 	}{
-		ManagedCatalogDigest: c.ManagedCatalogDigest,
-		Version:              c.Version, CompilerVersion: c.CompilerVersion,
+		RuntimeDataCapabilities: sortedUnique(c.RuntimeDataCapabilities),
+		ManagedCatalogDigest:    c.ManagedCatalogDigest,
+		Version:                 c.Version, CompilerVersion: c.CompilerVersion,
 		ManifestSchemaVersion:  c.ManifestSchemaVersion,
 		RuntimeContractVersion: c.RuntimeContractVersion,
 		ModelAdapters:          cloneMap(c.ModelAdapters), ToolAdapters: cloneMap(c.ToolAdapters),
@@ -176,6 +180,11 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 }
 
 func (c PlatformExecutionContract) Validate() error {
+	for _, capability := range c.RuntimeDataCapabilities {
+		if capability != "memory" && capability != "artifact" && capability != "summary" {
+			return ErrInvalidPlatformExecutionContract
+		}
+	}
 	if c.ManagedCatalogDigest != "" && !validDigest(c.ManagedCatalogDigest) {
 		return ErrInvalidPlatformExecutionContract
 	}
@@ -235,6 +244,9 @@ func (c PlatformExecutionContract) Validate() error {
 	if err := validateAdapterMap(c.StorageAdapters, "storage", func(kind profiledomain.StorageKind) (string, bool) {
 		if kind == profiledomain.StorageKindManagedSession {
 			return StorageAdapterManagedSessionV1, true
+		}
+		if kind == profiledomain.StorageKindManagedArtifact {
+			return StorageAdapterManagedArtifactV1, true
 		}
 		if kind == profiledomain.StorageKindManagedMemory {
 			return StorageAdapterManagedMemoryV1, true

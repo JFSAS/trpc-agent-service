@@ -1,4 +1,4 @@
-# Managed backend descriptor fixtures (P0b1)
+# Managed backend descriptor fixtures
 
 These examples describe PostgreSQL, Redis, Qdrant and S3 connection targets;
 they do not provision services, grant database privileges or enable Worker roles.
@@ -15,7 +15,17 @@ while physical target ID/revision stay fixed. Existing Session snapshots are byt
 identical. A consumer must not compare whole role-bound snapshots to decide whether
 two roles selected the same physical target.
 
-P0b1 exposes configuration types and Profile eligibility through an injected Port;
-Control Bootstrap/Manifest compilation/runtime registration are subsequent batches.
+Control now wires the directory, Profile eligibility Port, and Deployment resolver
+from release-pinned catalog/target files. The compiler handles declared capabilities
+under an explicit static contract; production runtime registration remains gated.
 No backend is silently enabled, no runtime client is created by Profile publication,
 and absent BackendAccess rejects managed selection rather than trusting syntax.
+
+
+Configure `CONTROL_PLATFORM_BACKEND_CATALOG_FILE` and its SHA256 together with
+`CONTROL_PLATFORM_BACKEND_TARGETS_FILE` and its SHA256. Keep private targets mode
+600. Refresh the release-pinned expected Deployment contract digest using the
+existing digest tooling when these hashes change. Startup rejects mismatches
+before opening the database. Empty configuration yields an empty directory.
+The authenticated `GET /v1/tenants/{tenant_id}/runtime-backends` endpoint returns
+logical metadata only; available selections do not automatically enable execution.

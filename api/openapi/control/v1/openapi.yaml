@@ -28,6 +28,44 @@ tags:
       value transport. Public manifest_view is an explicit projection without
       Credential IDs, purposes, audiences, values, or dynamic credential state.
 paths:
+  /v1/tenants/{tenant_id}/runtime-backends:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: listRuntimeBackends
+      summary: List platform backends available to the current tenant
+      description: Requires active membership; returns metadata only, never physical targets or credentials.
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Authorized backend metadata, including disabled selections
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, revision, label, kind, roles, available]
+                      properties:
+                        id: {type: string}
+                        revision: {type: integer, minimum: 1, maximum: 9007199254740991}
+                        label: {type: string}
+                        kind: {type: string, enum: [postgresql, redis, qdrant, s3]}
+                        roles:
+                          type: array
+                          items: {type: string, enum: [session, memory, knowledge, artifact]}
+                        available: {type: boolean}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503':
+          description: Current membership or directory dependency unavailable
   /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights:
     $ref: "./preflight-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts~1{account_id}~1preflights"
   /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}:

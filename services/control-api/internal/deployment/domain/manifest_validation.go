@@ -55,6 +55,14 @@ func validateManifestSemantics(content ManifestContent) error {
 		},
 		Nodes: make(map[string]agentdomain.Node, len(content.AgentPlan.Nodes)),
 	}
+	if content.Runtime != nil {
+		if content.Runtime.Summary == nil || content.Runtime.Summary.Validate() != nil {
+			return ErrInvalidManifestContent
+		}
+		summary := content.Runtime.Summary
+		threshold := summary.EventThreshold
+		agent.Runtime = &agentdomain.Runtime{Summary: &agentdomain.Summary{Enabled: true, ModelSlot: summary.ModelResource, EventThreshold: &threshold}}
+	}
 	for name, resource := range profile.Models {
 		agent.Requirements.Models[name] = agentdomain.ModelRequirement{Capabilities: resource.Capabilities}
 	}
@@ -74,7 +82,7 @@ func validateManifestSemantics(content ManifestContent) error {
 				return ErrInvalidManifestContent
 			}
 			model, exists := profile.Models[node.ModelResource]
-			if !exists || (len(node.CallableEntries) > 0 && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
+			if !exists || ((len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0)) && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
 				return ErrInvalidManifestContent
 			}
 			if node.Generation != nil && node.Generation.MaxOutputTokens != nil &&
@@ -82,7 +90,31 @@ func validateManifestSemantics(content ManifestContent) error {
 				return ErrInvalidManifestContent
 			}
 		}
+		if node.Kind != agentdomain.NodeKindLLM && (node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil) {
+			return ErrInvalidManifestContent
+		}
+		var memory *agentdomain.Memory
+		var artifact *agentdomain.Artifact
+		if node.Memory != nil {
+			if node.Memory.Validate() != nil || node.Memory.Resource != "memory" || content.StorageRoles["memory"] != "memory" {
+				return ErrInvalidManifestContent
+			}
+			if validateNodeCallableNames(node.CallableEntries, node.Memory.Tools, ProviderCallableNames) != nil {
+				return ErrInvalidManifestContent
+			}
+			memory = &agentdomain.Memory{Tools: append([]string{}, node.Memory.Tools...), PreloadLimit: node.Memory.PreloadLimit}
+		}
+		if node.Artifact != nil {
+			if node.Artifact.Validate() != nil || node.Artifact.Resource != "artifact" || content.StorageRoles["artifact"] != "artifact" {
+				return ErrInvalidManifestContent
+			}
+			artifact = &agentdomain.Artifact{Enabled: true}
+		}
+		if node.AddSessionSummary != nil && !*node.AddSessionSummary {
+			return ErrInvalidManifestContent
+		}
 		agent.Nodes[id] = agentdomain.Node{
+			Memory: memory, Artifact: artifact, AddSessionSummary: node.AddSessionSummary,
 			Kind: node.Kind, Name: node.Name, Instruction: node.Instruction,
 			ModelSlot: node.ModelResource, ToolSlots: node.ToolResources,
 			KnowledgeSlots: node.KnowledgeResources, Generation: node.Generation,
@@ -109,10 +141,15 @@ func validateManifestSemantics(content ManifestContent) error {
 		return ErrInvalidManifestContent
 	}
 	for role, name := range content.StorageRoles {
-		if (role != StorageRoleSession && role != StorageRoleMemory) || role != name {
+		if (role != StorageRoleSession && role != StorageRoleMemory && role != "artifact") || role != name {
 			return ErrInvalidManifestContent
 		}
 		if _, exists := profile.Storage[name]; !exists {
+			return ErrInvalidManifestContent
+		}
+	}
+	for role, resource := range profile.Storage {
+		if resource.Kind.Managed() && role != "session" && !agentUsesStorageRole(agent, role) {
 			return ErrInvalidManifestContent
 		}
 	}
@@ -227,6 +264,12 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 			adapter := StorageAdapterManagedSessionV1
 			if resource.Kind == profiledomain.StorageKindManagedMemory {
 				adapter = StorageAdapterManagedMemoryV1
+			}
+			if resource.Kind == profiledomain.StorageKindManagedArtifact {
+				adapter = StorageAdapterManagedArtifactV1
+			}
+			if (resource.Kind == profiledomain.StorageKindManagedArtifact && resource.MetadataContract != ArtifactMetadataContract) || (resource.Kind != profiledomain.StorageKindManagedArtifact && resource.MetadataContract != "") {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
 			}
 			if name != r.Role || !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != adapter || resource.Credential != (CredentialUse{}) || resource.Destination != (profiledomain.StorageDestination{}) {
 				return profiledomain.Spec{}, ErrInvalidManifestContent

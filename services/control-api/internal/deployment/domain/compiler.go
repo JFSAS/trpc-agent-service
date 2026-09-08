@@ -23,7 +23,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	compilerVersion := CompilerVersionV1
 	diagnostics := validateCompileInput(input)
 	diagnostics = append(diagnostics, ValidateManagedSnapshots(input)...)
-	diagnostics = append(diagnostics, pendingDataContractDiagnostics(input.Agent.Spec)...)
+	diagnostics = append(diagnostics, dataContractDiagnostics(input.Agent.Spec, input.Platform)...)
 	if len(errorDiagnostics(diagnostics)) > 0 {
 		return CompiledManifest{}, NewValidationReport(
 			compilerVersion, input.Platform.Digest, diagnostics,
@@ -77,6 +77,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 				Digest: input.Profile.SpecDigest,
 			},
 		},
+		Runtime:   compileManifestRuntime(input.Agent.Spec),
 		AgentPlan: plan, Resources: resources,
 		ResolvedRequirements: ResolvedRequirements{
 			Models:    identityResolution(used.models, resolvedModels),
@@ -209,6 +210,9 @@ func collectUsedRequirements(spec agentdomain.Spec) usedRequirements {
 			used.knowledge[name] = true
 		}
 	}
+	if spec.Runtime != nil && spec.Runtime.Summary != nil && spec.Runtime.Summary.Enabled {
+		used.models[spec.Runtime.Summary.ModelSlot] = true
+	}
 	return used
 }
 
@@ -334,6 +338,26 @@ func selectStorageRoles(
 			))
 		}
 	}
+	if len(agents) > 0 {
+		for _, role := range []string{StorageRoleMemory, "artifact"} {
+			if !agentUsesStorageRole(agents[0], role) {
+				continue
+			}
+			r, ok := profile.Storage[role]
+			if !ok {
+				*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticStorageRoleMissing, SeverityError, DiagnosticSourceProfile, "/storage/"+role, "storage", role, "required runtime role is missing"))
+				continue
+			}
+			if role == "artifact" {
+				if r.Kind != profiledomain.StorageKindManagedArtifact {
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourceProfile, "/storage/artifact", "storage", role, "artifact requires a managed artifact resource"))
+					continue
+				}
+				selected[role] = r
+				roles[role] = role
+			}
+		}
+	}
 	return selected, roles
 }
 
@@ -368,6 +392,7 @@ func compileAgentPlan(
 					"node callable entries do not satisfy the fixed provider naming contract",
 				))
 			}
+			compileNodeData(&node, source, id, platform, diagnostics)
 			node.Generation = cloneGeneration(source.Generation)
 			if len(node.CallableEntries) > platform.Limits.MaxCallableEntriesPerNode {
 				*diagnostics = append(*diagnostics, nodeResourceDiagnostic(
@@ -385,7 +410,7 @@ func compileAgentPlan(
 					"node max_output_tokens exceeds the platform execution limit",
 				))
 			}
-			if len(node.CallableEntries) > 0 {
+			if len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) {
 				model, exists := profile.Models[source.ModelSlot]
 				requirement := agent.Requirements.Models[source.ModelSlot]
 				if exists && !containsString(model.ProvidedCapabilities(), profiledomain.CapabilityToolCall) &&
@@ -551,7 +576,11 @@ func compileResources(
 			snapshot := backends["storage/"+name].Clone()
 			host, _ := snapshot.EndpointHost()
 			hosts[host] = true
-			resources.Storage[name] = ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
+			compiledResource := ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
+			if resource.Kind == profiledomain.StorageKindManagedArtifact {
+				compiledResource.MetadataContract = ArtifactMetadataContract
+			}
+			resources.Storage[name] = compiledResource
 			continue
 		}
 		checkHost(resource.Destination.Host,

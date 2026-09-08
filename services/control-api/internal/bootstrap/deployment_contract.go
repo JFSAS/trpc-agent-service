@@ -2,7 +2,9 @@ package bootstrap
 
 import (
 	"fmt"
+	"os"
 	"regexp"
+	"strings"
 
 	deploymentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 )
@@ -10,13 +12,15 @@ import (
 var deploymentContractDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // DeploymentContractDigestFromEnvironment computes the effective frozen platform
-// contract using only CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS. It does not load
+// contract using endpoint hosts and optional pinned backend catalog digests. It does not load
 // database, credential-key, or expected-digest configuration and has no side effects.
 // Deployment tooling must persist this value once per release for all replicas;
 // process startup must never use it to manufacture its own expected value.
 func DeploymentContractDigestFromEnvironment() (string, error) {
 	contract, err := deploymentPlatformContract(Config{
 		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS"),
+		PlatformBackendCatalogSHA256:   strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_CATALOG_SHA256")),
+		PlatformBackendTargetsSHA256:   strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_TARGETS_SHA256")),
 	})
 	if err != nil {
 		return "", err

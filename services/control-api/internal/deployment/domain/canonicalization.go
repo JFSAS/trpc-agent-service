@@ -87,14 +87,6 @@ func VerifyManifestContent(raw json.RawMessage, digest string) (ManifestContent,
 }
 
 func validateManifestCredentialShape(content ManifestContent) error {
-	if content.Runtime != nil {
-		return ErrInvalidManifestContent
-	}
-	for _, node := range content.AgentPlan.Nodes {
-		if node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
-			return ErrInvalidManifestContent
-		}
-	}
 	if content.SchemaVersion != SchemaVersionV1 || content.CompilerVersion != CompilerVersionV1 ||
 		content.RuntimeContractVersion != RuntimeContractVersionV1 || content.TenantID == "" ||
 		content.PlatformContract.Version == "" || !validDigest(content.PlatformContract.Digest) ||
