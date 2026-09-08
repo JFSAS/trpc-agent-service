@@ -210,7 +210,8 @@ export function validateAgentSpecLocally(value: unknown): AgentSpecDiagnostic[] 
   const diagnostics: AgentSpecDiagnostic[] = [];
   const summary = spec.runtime?.summary;
   if (summary?.enabled) {
-    const model = spec.requirements.models[summary.model_slot ?? ""];
+    const slot = summary.model_slot ?? "";
+    const model = Object.hasOwn(spec.requirements.models, slot) ? spec.requirements.models[slot] : undefined;
     if (!model) diagnostics.push(error("AGENT_SPEC_MODEL_SLOT_NOT_FOUND", "/runtime/summary/model_slot", "Summary 模型槽未声明。"));
     else if (!model.capabilities.includes("chat")) diagnostics.push(error("AGENT_SPEC_SUMMARY_MODEL_CAPABILITY", "/runtime/summary/model_slot", "Summary 模型必须声明 chat 能力。"));
   }

@@ -80,3 +80,30 @@ describe("P0a runtime data source contract", () => {
     expect(validateAgentSpecShape({ ...spec, nodes: { assistant: { ...spec.nodes.assistant, ...fields } } }).length).toBeGreaterThan(0);
   });
 });
+
+describe("Summary model own-property lookup", () => {
+  it("diagnoses undeclared constructor instead of reading Object.prototype", () => {
+    const spec = createSingleLLMAgentSpec();
+    spec.runtime = { summary: { enabled: true, model_slot: "constructor", event_threshold: 1 } };
+    expect(validateAgentSpecShape(spec)).toEqual([]);
+    expect(() => validateAgentSpecLocally(spec)).not.toThrow();
+    expect(validateAgentSpecLocally(spec)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "AGENT_SPEC_MODEL_SLOT_NOT_FOUND", pointer: "/runtime/summary/model_slot" }),
+    ]));
+  });
+  it("accepts an explicitly declared constructor slot with chat capability", () => {
+    const spec = createSingleLLMAgentSpec();
+    spec.requirements.models = { ...spec.requirements.models, constructor: { capabilities: ["chat"] } };
+    spec.runtime = { summary: { enabled: true, model_slot: "constructor", event_threshold: 1 } };
+    expect(validateAgentSpecShape(spec)).toEqual([]);
+    expect(validateAgentSpecLocally(spec)).toEqual([]);
+  });
+  it.each(["toString", "valueOf", "hasOwnProperty"])("rejects inherited mixed-case name %s at the schema boundary without throwing", (model_slot) => {
+    const spec = createSingleLLMAgentSpec();
+    spec.runtime = { summary: { enabled: true, model_slot, event_threshold: 1 } };
+    expect(() => validateAgentSpecLocally(spec)).not.toThrow();
+    expect(validateAgentSpecLocally(spec)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "AGENT_SPEC_INVALID_IDENTIFIER", pointer: "/runtime/summary/model_slot" }),
+    ]));
+  });
+});
