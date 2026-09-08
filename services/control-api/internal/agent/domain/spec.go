@@ -31,6 +31,7 @@ type Spec struct {
 	Root          string          `json:"root"`
 	Requirements  Requirements    `json:"requirements"`
 	Nodes         map[string]Node `json:"nodes"`
+	Runtime       *Runtime        `json:"runtime,omitempty"`
 }
 
 type Requirements struct {
@@ -55,30 +56,36 @@ type Generation struct {
 // Node is a discriminated union. MarshalJSON emits only fields belonging to
 // the selected kind so the canonical document cannot leak inactive options.
 type Node struct {
-	Kind           NodeKind
-	Name           string
-	Instruction    string
-	ModelSlot      string
-	ToolSlots      []string
-	KnowledgeSlots []string
-	Generation     *Generation
-	Children       []string
-	Body           string
-	MaxIterations  int64
+	Kind              NodeKind
+	Name              string
+	Instruction       string
+	ModelSlot         string
+	ToolSlots         []string
+	KnowledgeSlots    []string
+	Generation        *Generation
+	Memory            *Memory
+	Artifact          *Artifact
+	AddSessionSummary *bool
+	Children          []string
+	Body              string
+	MaxIterations     int64
 }
 
 func (n *Node) UnmarshalJSON(data []byte) error {
 	type wireNode struct {
-		Kind           NodeKind    `json:"kind"`
-		Name           string      `json:"name"`
-		Instruction    string      `json:"instruction"`
-		ModelSlot      string      `json:"model_slot"`
-		ToolSlots      []string    `json:"tool_slots"`
-		KnowledgeSlots []string    `json:"knowledge_slots"`
-		Generation     *Generation `json:"generation"`
-		Children       []string    `json:"children"`
-		Body           string      `json:"body"`
-		MaxIterations  int64       `json:"max_iterations"`
+		Kind              NodeKind    `json:"kind"`
+		Name              string      `json:"name"`
+		Instruction       string      `json:"instruction"`
+		ModelSlot         string      `json:"model_slot"`
+		ToolSlots         []string    `json:"tool_slots"`
+		KnowledgeSlots    []string    `json:"knowledge_slots"`
+		Generation        *Generation `json:"generation"`
+		Memory            *Memory     `json:"memory"`
+		Artifact          *Artifact   `json:"artifact"`
+		AddSessionSummary *bool       `json:"add_session_summary"`
+		Children          []string    `json:"children"`
+		Body              string      `json:"body"`
+		MaxIterations     int64       `json:"max_iterations"`
 	}
 	var wire wireNode
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -87,7 +94,7 @@ func (n *Node) UnmarshalJSON(data []byte) error {
 	*n = Node{
 		Kind: wire.Kind, Name: wire.Name, Instruction: wire.Instruction,
 		ModelSlot: wire.ModelSlot, ToolSlots: wire.ToolSlots,
-		KnowledgeSlots: wire.KnowledgeSlots, Generation: wire.Generation,
+		KnowledgeSlots: wire.KnowledgeSlots, Generation: wire.Generation, Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary,
 		Children: wire.Children, Body: wire.Body, MaxIterations: wire.MaxIterations,
 	}
 	return nil
@@ -97,14 +104,17 @@ func (n Node) MarshalJSON() ([]byte, error) {
 	switch n.Kind {
 	case NodeKindLLM:
 		return json.Marshal(struct {
-			Kind           NodeKind    `json:"kind"`
-			Name           string      `json:"name,omitempty"`
-			Instruction    string      `json:"instruction"`
-			ModelSlot      string      `json:"model_slot"`
-			ToolSlots      []string    `json:"tool_slots"`
-			KnowledgeSlots []string    `json:"knowledge_slots"`
-			Generation     *Generation `json:"generation,omitempty"`
-		}{n.Kind, n.Name, n.Instruction, n.ModelSlot, n.ToolSlots, n.KnowledgeSlots, n.Generation})
+			Kind              NodeKind    `json:"kind"`
+			Name              string      `json:"name,omitempty"`
+			Instruction       string      `json:"instruction"`
+			ModelSlot         string      `json:"model_slot"`
+			ToolSlots         []string    `json:"tool_slots"`
+			KnowledgeSlots    []string    `json:"knowledge_slots"`
+			Generation        *Generation `json:"generation,omitempty"`
+			Memory            *Memory     `json:"memory,omitempty"`
+			Artifact          *Artifact   `json:"artifact,omitempty"`
+			AddSessionSummary *bool       `json:"add_session_summary,omitempty"`
+		}{n.Kind, n.Name, n.Instruction, n.ModelSlot, n.ToolSlots, n.KnowledgeSlots, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary})
 	case NodeKindSequence, NodeKindParallel:
 		return json.Marshal(struct {
 			Kind     NodeKind `json:"kind"`

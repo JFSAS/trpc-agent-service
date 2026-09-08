@@ -21,6 +21,7 @@ import (
 func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	compilerVersion := CompilerVersionV1
 	diagnostics := validateCompileInput(input)
+	diagnostics = append(diagnostics, pendingDataContractDiagnostics(input.Agent.Spec)...)
 	if len(errorDiagnostics(diagnostics)) > 0 {
 		return CompiledManifest{}, NewValidationReport(
 			compilerVersion, input.Platform.Digest, diagnostics,

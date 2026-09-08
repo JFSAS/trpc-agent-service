@@ -9,6 +9,7 @@
     "schema_version": {"const": "v1"},
     "root": {"$ref": "#/$defs/identifier"},
     "requirements": {"$ref": "#/$defs/requirements"},
+    "runtime": {"$ref": "#/$defs/runtime"},
     "nodes": {
       "type": "object",
       "minProperties": 1,
@@ -113,7 +114,10 @@
         "model_slot": {"$ref": "#/$defs/identifier"},
         "tool_slots": {"$ref": "#/$defs/identifier_array"},
         "knowledge_slots": {"$ref": "#/$defs/identifier_array"},
-        "generation": {"$ref": "#/$defs/generation"}
+        "generation": {"$ref": "#/$defs/generation"},
+        "memory": {"$ref": "#/$defs/memory"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "add_session_summary": {"type": "boolean"}
       }
     },
     "sequence_node": {
@@ -164,6 +168,95 @@
         {"$ref": "#/$defs/parallel_node"},
         {"$ref": "#/$defs/loop_node"}
       ]
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "memory_add",
+              "memory_update",
+              "memory_delete",
+              "memory_clear",
+              "memory_search",
+              "memory_load"
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 6
+        },
+        "preload_limit": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "tools"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ]
+    },
+    "summary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "const": false
+            }
+          },
+          "required": [
+            "enabled"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "model_slot": {
+              "$ref": "#/$defs/identifier"
+            },
+            "event_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "enabled",
+            "model_slot",
+            "event_threshold"
+          ]
+        }
+      ]
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/summary"
+        }
+      },
+      "required": []
     }
   }
 }
