@@ -412,6 +412,81 @@ Telegram 预检只读取 Bot 信息和当前 Webhook 状态；不启用账户，
 
 只保存模式不会启动接收，也不会清空积压。停用与重启不等于自动恢复此前由其他平台管理的 Webhook。
 
+### 7.6 不连接官方 Telegram：用 Channel Lab 测试 Agent
+
+**Channel Lab 是独立的本地消息实验室，不是控制台中的真实 Telegram 客户端。** 它模拟文本消息、Bot 身份和 Update 队列，让你在不创建官方机器人、不需要公网 IP 的情况下，测试自己的 Agent。Lab 本身不会伪造 Agent 回复；完整对话仍需 Gateway、Worker 和已发布的 Deployment。
+
+#### 打开实验室
+
+由部署负责人在项目根目录启动独立 Lab：
+
+```sh
+docker compose -p channel-lab-dev -f deploy/compose/compose.channel-lab.yaml --profile testing up -d --build
+```
+
+然后在运行它的电脑上打开 `http://127.0.0.1:18090`。这个命令适合先浏览、创建 Bot；**接入主平台时，需要将同一个 Lab Compose 文件加入主平台使用的 Compose 配置，并使用同一个项目名，让 Gateway、Worker 与 Lab 共享网络。** 不要同时启动两个占用 18090 端口的 Lab 实例。Gateway 使用固定地址 `http://channel-lab:8080`；浏览器能打开 Lab，并不代表容器已经能互相访问。
+
+Lab 是本地测试服务，页面中的测试凭据和聊天历史应仅供可信测试环境使用。正式 Telegram 账户与模拟 Bot 分开创建，不要混用身份、Token 或消息历史。
+
+#### 四个页面分别做什么
+
+| 页面 | 你可以做什么 | 如何理解结果 |
+| --- | --- | --- |
+| **聊天测试** | 选择模拟用户与聊天 ID、发送文本、查看 Agent 回复与链路概览 | “消息已提交”仅表示进入 Lab，不等于 Agent 已执行 |
+| **Bot 接入** | 创建与切换测试 Bot、查看 Bot ID / Token、复制账户配置 | 这些是 Lab 生成的测试身份，不是 BotFather 颁发的官方凭据 |
+| **模型设置** | 选择本地回显或真实模型代理，查看 Runtime Profile 接入参数 | 只有 Profile 使用 Lab 模型端点时，模式切换才影响执行 |
+| **投递记录** | 查看当前 Bot 最近 10 条 Update、状态与 ACK，重投同一 Update | ACK 是消息消费观察信息，不表示 Agent 已完成或回复成功 |
+
+桌面端从左侧切换页面；窄屏端从顶部导航切换，需要更换 Bot 时进入 **Bot 接入**。
+
+#### 从创建 Bot 到第一条真实回复
+
+1. 在 Lab 的 **Bot 接入** 页填写名称，点击 **创建 Bot**，记录 Bot ID 和 Token。**复制账户配置** 会复制接入 JSON，可供核对或 API 配置；控制台表单仍按字段填写，不要求粘贴整段 JSON。
+2. 在主平台创建并发布 Agent、Runtime Profile 和 Deployment（见第 4～6 章）。初次测试建议使用已有的真实模型 Profile。
+3. 在控制台 **渠道接入** 创建独立测试账户，选择 **测试 Telegram（Channel Lab）**，接收方式选择 **长轮询**，填写 Lab 的 Bot ID 和 Token，保持账户停用。底层配置为 `endpoint_profile=test`、`receive_mode=long_polling`。若未出现测试选项，先确认 Web、Control、Gateway 均已部署支持 Lab 的版本。
+4. 执行 Telegram 接入预检。此时检查的是模拟平台，不证明官方 Telegram 网络可用。
+5. 为账户保存固定的 Deployment Revision，再依次 **启用本平台接入**、**开启消息路由**。这两个开关的影响与正式渠道一致。
+6. 返回 Lab 的 **聊天测试**，选择用户 A，发送一条文本。只有 Gateway 消费消息、Worker 执行 Agent 并调用回复接口后，页面才出现 Agent 回复。
+7. 继续追问，验证同一会话的上下文；切换用户 B，确认聊天 ID 随之切换，再测试用户隔离。需要验证重复消息处理时，到 **投递记录** 点击 **重投 Update**，同时观察主平台执行和回复是否重复。
+
+#### 模型如何选择
+
+- **直接使用真实模型：** 在主平台 Runtime Profile 配置模型提供方，Lab 只模拟消息平台。无需改 Lab 的模型设置。
+- **本地回显：** 在 Profile 中配置下方 Lab 端点，在 Lab 选择本地回显。适合检查消息链路，不具备语义推理能力。
+- **代理真实 LLM：** Profile 仍使用下方端点，在 Lab 的 **模型设置** 选择代理，填写上游 Base URL（通常以 `/v1` 结尾）、真实模型 ID 和 API Key，然后保存。
+
+```text
+base_url: http://channel-lab:8080/v1
+model: lab-echo
+api_key: 使用当前 Lab「模型设置」页展示的实验室密钥
+```
+
+Profile 中填写的是实验室密钥；上游密钥填写在 Lab，不要对调。保存 Profile 的修改后，还需发布 Profile 并发布、选择使用新配置的 Deployment Revision。单独切换 Lab 上游模式则影响该模型端点的后续请求，无需修改下游 `lab-echo` 别名。
+
+代理模式会将完整对话发给上游，可能产生费用。上游密钥保存在本地数据卷中，不回显；同一 Base URL 下留空保留已保存密钥，更换地址后需要重新填写。保存设置会影响所有使用该 Lab 模型端点的 Bot 后续请求，不是只影响当前选中的 Bot。代理失败不会自动降级为回显。
+
+#### 没有回复时，按这个顺序查
+
+| 现象 | 优先检查 |
+| --- | --- |
+| Lab 页面连接异常 | Lab 进程、端口与页面的错误提示 |
+| 能打开 Lab，但预检失败 | Gateway 与 Lab 是否共享网络，是否选了测试端点，Bot ID / Token 是否匹配 |
+| 消息出现、Update 一直排队 | 账户是否启用，Gateway 是否启动长轮询，是否有其他接收者或 Webhook 冲突 |
+| Update 已消费但没有回复 | 路由开关、固定部署目标、Worker 执行记录、模型与存储连接，以及回复投递错误 |
+| 切换模型后回复没变化 | 当前 Deployment 使用的 Profile 是否指向 Lab 端点；已在执行的请求保留原配置 |
+
+**验收标准是看到真实回复并完成追问，而不是只看到绿色状态或 ACK。** 当前 Lab 仅支持文本，不支持附件、交互按钮或 Telegram 草稿。Lab 验收通过后，官方 Telegram 网络与真实 Bot 仍需单独验收。
+
+#### 停止与保留数据
+
+独立启动的 Lab 可使用下面的命令停止；Bot、消息与模型配置保留在 SQLite 数据卷中：
+
+```sh
+docker compose -p channel-lab-dev -f deploy/compose/compose.channel-lab.yaml --profile testing down
+```
+
+如果 Lab 与主平台使用同一 Compose 项目，请使用原有完整 Compose 参数仅停止 `channel-lab` 服务，不要对整个项目执行 `down`。
+
 ## 8. 接入企业微信智能机器人
 
 ### 8.1 选对机器人类型
