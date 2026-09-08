@@ -40,9 +40,10 @@ type Credential struct {
 	Configured bool   `json:"configured"`
 }
 type Config struct {
-	ReceiveMode string `json:"receive_mode,omitempty"`
-	WebhookPath string `json:"webhook_path,omitempty"`
-	BotID       string `json:"bot_id,omitempty"`
+	ReceiveMode     string `json:"receive_mode,omitempty"`
+	EndpointProfile string `json:"endpoint_profile,omitempty"`
+	WebhookPath     string `json:"webhook_path,omitempty"`
+	BotID           string `json:"bot_id,omitempty"`
 }
 type Account struct {
 	TenantID           string       `json:"tenant_id"`
@@ -90,12 +91,15 @@ func (a Account) Validate() error {
 	var purposes []string
 	switch a.Provider {
 	case "telegram":
+		if a.Config.EndpointProfile != "" && a.Config.EndpointProfile != "test" {
+			return ErrInvalid
+		}
 		if (a.Config.ReceiveMode != "" && a.Config.ReceiveMode != "webhook" && a.Config.ReceiveMode != "long_polling") || !decimal.MatchString(a.ProviderAccountID) || a.Config.BotID != "" || a.Config.WebhookPath != "/v1/telegram/"+a.ID {
 			return ErrInvalid
 		}
 		purposes = []string{"telegram.bot_token", "telegram.webhook_secret"}
 	case "wecom":
-		if a.Config.ReceiveMode != "" || a.Config.WebhookPath != "" || a.Config.BotID != a.ProviderAccountID {
+		if a.Config.EndpointProfile != "" || a.Config.ReceiveMode != "" || a.Config.WebhookPath != "" || a.Config.BotID != a.ProviderAccountID {
 			return ErrInvalid
 		}
 		purposes = []string{"wecom.bot_secret"}

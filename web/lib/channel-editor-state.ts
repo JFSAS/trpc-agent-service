@@ -50,7 +50,7 @@ function credentialMarker(input: Record<string, unknown>, secret: boolean): bool
     && (secret ? input.action === "replace" : input.action === "keep" || input.action === "clear");
 }
 function modeConfig(value: unknown): boolean {
-  return record(value) && fields(value, ["receive_mode"]) && isTelegramReceiveMode(value.receive_mode);
+  return record(value) && fields(value, ["receive_mode"], ["endpoint_profile"]) && isTelegramReceiveMode(value.receive_mode) && (value.endpoint_profile === undefined || value.endpoint_profile === "official" || value.endpoint_profile === "test");
 }
 function createModeMarker(input: Record<string, unknown>): boolean {
   // An old marker remains intact and distinguishable; the form locks legacy Telegram recovery.

@@ -64,7 +64,7 @@ func New(o Options) (*Client, error) {
 		return nil, ErrConfig
 	}
 	ip := net.ParseIP(u.Hostname())
-	if u.Scheme != "https" && !(u.Scheme == "http" && ip != nil && ip.IsLoopback()) {
+	if u.Scheme != "https" && !(u.Scheme == "http" && ((ip != nil && ip.IsLoopback()) || o.BaseURL == TestAPIURL)) {
 		return nil, ErrConfig
 	}
 	var h http.Client

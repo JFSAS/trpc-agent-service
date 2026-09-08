@@ -326,7 +326,7 @@ func (s *PreflightService) createOnce(ctx context.Context, actor Actor, account,
 		if err != nil {
 			return ErrDependencyUnavailable
 		}
-		r := PreflightRecord{ScopeID: s.deps.ScopeID, SourceEpoch: tx.SourceEpoch(), CredentialID: token.Meta.ID, BotTokenConfigured: token.Meta.Configured, WebhookSecretConfigured: preflightWebhookConfigured(a), WebhookPath: a.Account.Config.WebhookPath, LastCheckedAt: now, View: channelv1.PreflightView{ReceiveMode: preflightMode(a.Account), DiagnosticPolicy: preflightPolicy(a.Account.Provider), PreflightID: id, TenantID: actor.TenantID, AccountID: account, Provider: string(a.Account.Provider), ProviderAccountID: a.Account.ProviderAccountID, RequestedBy: actor.UserID, AccountRevision: a.Account.Revision, ConnectionRevision: a.Account.ConnectionRevision, BotTokenVersion: token.Meta.Version, State: "QUEUED", Outcome: "UNKNOWN", ReasonCode: "CHANNEL_PREFLIGHT_QUEUED", Freshness: "NOT_CHECKED", RequestedAt: now, JobDeadlineAt: now.Add(preflightLifetime), Checks: []channelv1.PreflightCheck{}}}
+		r := PreflightRecord{ScopeID: s.deps.ScopeID, SourceEpoch: tx.SourceEpoch(), CredentialID: token.Meta.ID, BotTokenConfigured: token.Meta.Configured, WebhookSecretConfigured: preflightWebhookConfigured(a), WebhookPath: a.Account.Config.WebhookPath, LastCheckedAt: now, View: channelv1.PreflightView{EndpointProfile: a.Account.Config.EndpointProfile, ReceiveMode: preflightMode(a.Account), DiagnosticPolicy: preflightPolicy(a.Account.Provider), PreflightID: id, TenantID: actor.TenantID, AccountID: account, Provider: string(a.Account.Provider), ProviderAccountID: a.Account.ProviderAccountID, RequestedBy: actor.UserID, AccountRevision: a.Account.Revision, ConnectionRevision: a.Account.ConnectionRevision, BotTokenVersion: token.Meta.Version, State: "QUEUED", Outcome: "UNKNOWN", ReasonCode: "CHANNEL_PREFLIGHT_QUEUED", Freshness: "NOT_CHECKED", RequestedAt: now, JobDeadlineAt: now.Add(preflightLifetime), Checks: []channelv1.PreflightCheck{}}}
 		if a.Account.Provider == domain.WeCom {
 			r.View.BotSecretVersion, r.View.BotTokenVersion = token.Meta.Version, 0
 			r.View.AllowConnectionProbe = true
@@ -407,7 +407,7 @@ func (s *PreflightService) Get(ctx context.Context, actor Actor, account, id str
 
 func preflightGrant(r PreflightRecord, now time.Time) channelv1.PreflightGrant {
 	v := r.View
-	return channelv1.PreflightGrant{AllowConnectionProbe: v.AllowConnectionProbe, ReceiveMode: v.ReceiveMode, DiagnosticPolicy: v.DiagnosticPolicy, EffectiveConfigDigest: v.EffectiveConfigDigest, SchemaVersion: 1, ServerTime: now, PreflightID: v.PreflightID, ScopeID: r.ScopeID, SourceEpoch: r.SourceEpoch, TenantID: v.TenantID, AccountID: v.AccountID, Provider: v.Provider, ProviderAccountID: v.ProviderAccountID, AccountRevision: v.AccountRevision, ConnectionRevision: v.ConnectionRevision, WebhookPath: r.WebhookPath, Credentials: channelv1.PreflightCredential{Purpose: preflightPurpose(domain.Provider(v.Provider)), CredentialID: r.CredentialID, CredentialVersion: v.CredentialVersion(), Configured: r.CredentialConfigured()}, WebhookSecretConfigured: r.WebhookSecretConfigured, LeaseEpoch: r.LeaseEpoch, LeaseExpiresAt: *r.LeaseExpiresAt, JobDeadlineAt: v.JobDeadlineAt, GatewayConfigDigest: *v.GatewayConfigDigest}
+	return channelv1.PreflightGrant{EndpointProfile: v.EndpointProfile, AllowConnectionProbe: v.AllowConnectionProbe, ReceiveMode: v.ReceiveMode, DiagnosticPolicy: v.DiagnosticPolicy, EffectiveConfigDigest: v.EffectiveConfigDigest, SchemaVersion: 1, ServerTime: now, PreflightID: v.PreflightID, ScopeID: r.ScopeID, SourceEpoch: r.SourceEpoch, TenantID: v.TenantID, AccountID: v.AccountID, Provider: v.Provider, ProviderAccountID: v.ProviderAccountID, AccountRevision: v.AccountRevision, ConnectionRevision: v.ConnectionRevision, WebhookPath: r.WebhookPath, Credentials: channelv1.PreflightCredential{Purpose: preflightPurpose(domain.Provider(v.Provider)), CredentialID: r.CredentialID, CredentialVersion: v.CredentialVersion(), Configured: r.CredentialConfigured()}, WebhookSecretConfigured: r.WebhookSecretConfigured, LeaseEpoch: r.LeaseEpoch, LeaseExpiresAt: *r.LeaseExpiresAt, JobDeadlineAt: v.JobDeadlineAt, GatewayConfigDigest: *v.GatewayConfigDigest}
 }
 func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input channelv1.PreflightClaimRequest) (*channelv1.PreflightGrant, error) {
 	if err := s.authorize(p, input.ScopeID, input.SourceEpoch, preflightClaimConsumer(input.DiagnosticPolicy)); err != nil {
@@ -524,7 +524,7 @@ func (s *PreflightService) Claim(ctx context.Context, p WorkloadPrincipal, input
 		effective := ""
 		configChanged := r.View.GatewayConfigDigest != nil && *r.View.GatewayConfigDigest != input.GatewayConfigDigest
 		if r.View.DiagnosticPolicy != "" {
-			effective, err = channelv1.PreflightEffectiveConfigDigest(input.ScopeID, input.SourceEpoch, r.View.ReceiveMode, r.View.ConnectionRevision, input.ExpectedPublicOrigin, input.OriginStatus)
+			effective, err = channelv1.PreflightEffectiveConfigDigest(input.ScopeID, input.SourceEpoch, r.View.ReceiveMode, r.View.ConnectionRevision, input.ExpectedPublicOrigin, input.OriginStatus, r.View.EndpointProfile)
 			if err != nil {
 				return invalid("/gateway_config_digest")
 			}
@@ -731,7 +731,7 @@ func (s *PreflightService) Complete(ctx context.Context, p WorkloadPrincipal, id
 		if operationErr = preflightUsable(r, now); operationErr != nil {
 			return nil
 		}
-		if input.DiagnosticPolicy != r.View.DiagnosticPolicy || input.ReceiveMode != r.View.ReceiveMode || (input.DiagnosticPolicy != "" && input.ConnectionRevision != r.View.ConnectionRevision) {
+		if input.EndpointProfile != r.View.EndpointProfile || input.DiagnosticPolicy != r.View.DiagnosticPolicy || input.ReceiveMode != r.View.ReceiveMode || (input.DiagnosticPolicy != "" && input.ConnectionRevision != r.View.ConnectionRevision) {
 			return preflightError("RESULT_CONFLICT")
 		}
 		originStatus := input.Checks[2].Code

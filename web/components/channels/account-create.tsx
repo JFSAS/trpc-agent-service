@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { channelApi, ChannelApiError, channelError, isChannelUncertain, validateChannelAccount, isTelegramReceiveMode, receiveModeLabel, type CredentialPurpose, type TelegramReceiveMode, type ChannelProvider, type CreateAccountInput } from "../../lib/channel-api";
+import { channelApi, ChannelApiError, channelError, isChannelUncertain, validateChannelAccount, isTelegramReceiveMode, receiveModeLabel, type CredentialPurpose, type TelegramReceiveMode, type TelegramEndpointProfile, type ChannelProvider, type CreateAccountInput } from "../../lib/channel-api";
 import { channelHref, channelPendingKey, loadChannelPending, readChannelTarget, saveChannelPending, channelTargetQuery } from "../../lib/channel-editor-state";
 import { Button, PageHeader, StatusBadge } from "../ui";
 import { ChannelDialog } from "./confirmation-dialog";
@@ -29,6 +29,7 @@ function AccountCreateForm({ tenantId, query, access }: { tenantId: string; quer
   const suffix = target ? `?${channelTargetQuery(target)}` : "";
   const rootHref = channelHref(tenantId) + suffix;
   const [provider, setProvider] = useState<ChannelProvider>("telegram");
+  const [endpointProfile, setEndpointProfile] = useState<TelegramEndpointProfile>("official");
   const [receiveMode, setReceiveMode] = useState<TelegramReceiveMode>("long_polling");
   const [physicalID, setPhysicalID] = useState("");
   const [name, setName] = useState("");
@@ -71,9 +72,9 @@ function AccountCreateForm({ tenantId, query, access }: { tenantId: string; quer
       storage.getItem(storageKey);
       const marker = loadChannelPending(storage, storageKey);
       if (marker?.operation === "createAccount" && marker.secret && (marker.input.provider === "telegram" || marker.input.provider === "wecom") && typeof marker.input.provider_account_id === "string" && typeof marker.input.name === "string") {
-        const restoredMarker: CreateMarker = { operation: "createAccount", secret: true, key: marker.key, createdAt: marker.createdAt, input: { provider: marker.input.provider, provider_account_id: marker.input.provider_account_id, name: marker.input.name, ...(typeof marker.input.description === "string" ? { description: marker.input.description } : {}), ...(marker.input.config ? { config: marker.input.config as { receive_mode: TelegramReceiveMode }, supplied_purposes: marker.input.supplied_purposes as CredentialPurpose[] } : {}) } };
+        const restoredMarker: CreateMarker = { operation: "createAccount", secret: true, key: marker.key, createdAt: marker.createdAt, input: { provider: marker.input.provider, provider_account_id: marker.input.provider_account_id, name: marker.input.name, ...(typeof marker.input.description === "string" ? { description: marker.input.description } : {}), ...(marker.input.config ? { config: marker.input.config as { receive_mode: TelegramReceiveMode; endpoint_profile?: TelegramEndpointProfile }, supplied_purposes: marker.input.supplied_purposes as CredentialPurpose[] } : {}) } };
         setPending(restoredMarker); setProvider(restoredMarker.input.provider); setPhysicalID(restoredMarker.input.provider_account_id);
-        if (restoredMarker.input.config) setReceiveMode(restoredMarker.input.config.receive_mode);
+        if (restoredMarker.input.config) { setReceiveMode(restoredMarker.input.config.receive_mode); setEndpointProfile(restoredMarker.input.config.endpoint_profile ?? "official"); }
         setName(restoredMarker.input.name); setDescription(restoredMarker.input.description ?? ""); setRestored(true);
       }
       setRecoveryError(""); setInitialized(true);
@@ -89,7 +90,7 @@ function AccountCreateForm({ tenantId, query, access }: { tenantId: string; quer
     const identity: Omit<CreateAccountInput, "credentials"> = saved ? {
       provider: saved.provider, provider_account_id: saved.provider_account_id, name: saved.name,
       ...(saved.description !== undefined ? { description: saved.description } : {}), ...(saved.config ? { config: saved.config } : {}),
-    } : { provider, provider_account_id: provider === "telegram" ? physicalID.replace(/^0+/, "") : physicalID, name: name.trim(), description, ...(provider === "telegram" ? { config: { receive_mode: receiveMode } } : {}) };
+    } : { provider, provider_account_id: provider === "telegram" ? physicalID.replace(/^0+/, "") : physicalID, name: name.trim(), description, ...(provider === "telegram" ? { config: { receive_mode: receiveMode, ...(endpointProfile === "test" ? {endpoint_profile: endpointProfile} : {}) } } : {}) };
     // A legacy marker always used both replace purposes; a modern one preserves exact presence.
     const includeSecret = saved ? saved.supplied_purposes ? saved.supplied_purposes.includes("telegram.webhook_secret") : true : receiveMode === "webhook" || webhookSecret.length > 0;
     return { ...identity, credentials: identity.provider === "telegram" ? {
@@ -197,7 +198,7 @@ function AccountCreateForm({ tenantId, query, access }: { tenantId: string; quer
             <label className={`${styles.field} ${styles.full}`}><span>说明（可选）</span><textarea value={description} disabled={metadataLocked} aria-invalid={fieldInvalid("description")} onChange={(e) => setDescription(e.target.value)} /><small>最多 4096 个字符；不在说明中填写凭据。</small>{fieldError("description")}</label>
           </div>
         </section>
-        {provider === "telegram" && <section className={styles.card}><h2>2. 接收方式</h2>{legacyRecovery ? <p className={styles.warning}>升级前的 Webhook 创建请求。身份与原请求标识保持锁定；仅在明确确认后，以 webhook-v1 兼容契约和原始两项凭据恢复，不套用长轮询默认。</p> : <ReceiveModeSelector value={receiveMode} onChange={(value) => { if (isTelegramReceiveMode(value)) { setReceiveMode(value); setErrors({}); } }} disabled={metadataLocked} />}<p className={styles.small}>这里只保存接收方式；不会启动接收、切换 Telegram 远端配置或清空积压。</p></section>}
+        {provider === "telegram" && <section className={styles.card}><h2>2. 接收方式</h2><label>接入环境<select value={endpointProfile} disabled={metadataLocked} onChange={(e) => setEndpointProfile(e.target.value === "test" ? "test" : "official")}><option value="official">官方 Telegram</option><option value="test">测试 Telegram（Channel Lab）</option></select></label><p>测试环境使用 Channel Lab 生成的 Token，不使用官方 Bot Token。</p>{legacyRecovery ? <p className={styles.warning}>升级前的 Webhook 创建请求。身份与原请求标识保持锁定；仅在明确确认后，以 webhook-v1 兼容契约和原始两项凭据恢复，不套用长轮询默认。</p> : <ReceiveModeSelector value={receiveMode} onChange={(value) => { if (isTelegramReceiveMode(value)) { setReceiveMode(value); setErrors({}); } }} disabled={metadataLocked} />}<p className={styles.small}>这里只保存接收方式；不会启动接收、切换 Telegram 远端配置或清空积压。</p></section>}
         <section className={styles.card} aria-labelledby="channel-credential-title"><h2 id="channel-credential-title">{provider === "telegram" ? "3" : "2"}. 接入凭据</h2><p className={styles.small}>凭据仅用于本账户接入，不放入 Runtime Profile。保存后只显示配置状态，不回显原值。</p>
           <div className={styles.grid}>{provider === "telegram" ? <>
             <label className={`${styles.field} ${styles.full}`}><span>Bot Token</span><input type="password" autoComplete="new-password" value={botToken} disabled={secretLocked} aria-invalid={fieldInvalid("credentials.telegram.bot_token")} onChange={(e) => setBotToken(e.target.value)} />{fieldError("credentials.telegram.bot_token")}</label>

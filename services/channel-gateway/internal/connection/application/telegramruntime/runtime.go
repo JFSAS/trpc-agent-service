@@ -270,7 +270,16 @@ func (s *Runtime) reconcile(ctx context.Context, listed c.Account) {
 		reason = "CREDENTIAL_UNAVAILABLE"
 		return
 	}
-	remote, e := s.factory.New(values[0].Value)
+	var remote Remote
+	if f, ok := s.factory.(interface {
+		NewAccount(string, c.Account) (Remote, error)
+	}); ok {
+		remote, e = f.NewAccount(values[0].Value, a)
+	} else if a.Config.EndpointProfile == "test" {
+		e = c.ErrInvalid
+	} else {
+		remote, e = s.factory.New(values[0].Value)
+	}
 	values[0].Value = ""
 	if e != nil {
 		reason = "CREDENTIAL_UNAVAILABLE"

@@ -23,6 +23,18 @@ Telegram 预检是只读检查，查询机器人身份与 Webhook 状态。它�
 
 “通过”不等于入站与回复已验收。真实消息投递仍需单独验证；结果中的 UNKNOWN 不应被当作失败或成功回复。
 
+## Channel Lab：本地模拟 Telegram
+
+不准备官方 Bot、也不需要公网 IP 时，可以使用独立的 **Channel Lab** 测试文本消息。默认本机入口是 `http://127.0.0.1:18090`，包含聊天测试、Bot 接入、模型设置、投递记录四个页面。
+
+接入顺序：在 Lab 创建 Bot → 在控制台选择 **测试 Telegram（Channel Lab）** 与长轮询 → 填写 Lab Bot ID / Token → 预检 → 绑定已发布的 Deployment Revision → 启用接入和消息路由 → 回到 Lab 发消息、观察真实回复。
+
+Gateway、Worker 与 Lab 应共享可解析 `channel-lab` 的网络。模拟平台不生成 Agent 回复；需要真实执行链路。可直接使用 Profile 中的真实模型，也可将 Profile 指向 Lab 模型端点，使用本地回显或上游代理。回显只验证链路，代理设置影响使用该端点的所有 Bot 后续请求。
+
+Update 的 ACK 不等于 Agent 执行成功。没有回复时，依次检查网络与凭据、接收状态、路由与部署目标、Worker 执行和回复投递。测试账户与官方账户分开，当前仅支持文本。
+
+完整启动、逐页操作、模型配置与排查步骤见 [使用指南第 7.6 节：Channel Lab](/docs/guide.html#chapter-7)。
+
 ## 企业微信：使用智能机器人长连接
 
 准备**智能机器人长连接专用 Bot ID 和 Bot Secret**，不是群机器人 Webhook，也不是旧回调模式的 URL、Token、AESKey。

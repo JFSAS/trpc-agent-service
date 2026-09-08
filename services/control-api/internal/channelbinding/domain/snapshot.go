@@ -124,10 +124,10 @@ func (s Snapshot) validateContent() error {
 		}
 		physical[key] = true
 		if a.Provider == Telegram {
-			if a.Config.WebhookPath != "/v1/telegram/"+a.AccountID || a.Config.BotID != "" || (a.Config.ReceiveMode != "" && !ValidReceiveMode(a.Config.ReceiveMode)) {
+			if (a.Config.EndpointProfile != "" && a.Config.EndpointProfile != "test") || a.Config.WebhookPath != "/v1/telegram/"+a.AccountID || a.Config.BotID != "" || (a.Config.ReceiveMode != "" && !ValidReceiveMode(a.Config.ReceiveMode)) {
 				return failure(SourceIntegrity, "/accounts/config")
 			}
-		} else if a.Config.BotID != value || a.Config.WebhookPath != "" || a.Config.ReceiveMode != "" {
+		} else if a.Config.EndpointProfile != "" || a.Config.BotID != value || a.Config.WebhookPath != "" || a.Config.ReceiveMode != "" {
 			return failure(SourceIntegrity, "/accounts/config")
 		}
 		if err := ValidateCredentialSet(a.Provider, a.Credentials, a.Enabled, a.Config.ReceiveMode); err != nil {

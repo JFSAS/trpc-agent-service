@@ -86,6 +86,13 @@
         "PUBLIC_ORIGIN_NOT_PUBLIC",
         "PUBLIC_ORIGIN_NOT_APPLICABLE"
       ]
+    },
+    "endpoint_profile": {
+      "type": "string",
+      "enum": [
+        "official",
+        "test"
+      ]
     }
   },
   "required": [
@@ -171,6 +178,13 @@
           "properties": {
             "receive_mode": {
               "const": "long_polling"
+            },
+            "endpoint_profile": {
+              "type": "string",
+              "enum": [
+                "official",
+                "test"
+              ]
             }
           },
           "required": [
@@ -214,6 +228,13 @@
           },
           "origin_status": {
             "const": "PUBLIC_ORIGIN_NOT_APPLICABLE"
+          },
+          "endpoint_profile": {
+            "type": "string",
+            "enum": [
+              "official",
+              "test"
+            ]
           }
         }
       },
@@ -230,6 +251,13 @@
               "PUBLIC_ORIGIN_STATIC_VALID",
               "PUBLIC_ORIGIN_INVALID",
               "PUBLIC_ORIGIN_NOT_PUBLIC"
+            ]
+          },
+          "endpoint_profile": {
+            "type": "string",
+            "enum": [
+              "official",
+              "test"
             ]
           }
         }

@@ -232,6 +232,14 @@ func (s *Store) applyAccounts(ctx context.Context, tx pgx.Tx, accounts []c.Accou
 	}
 	// New rows have no consumers yet. Existing rows were locked in account order.
 	for _, a := range accounts {
+		// Offsets and registered URLs belong to a Telegram server, not merely
+		// a Bot ID. Never carry an official cursor into the local simulator.
+		if o, ok := old[a.ID]; ok && o.account.Config.EndpointProfile != a.Config.EndpointProfile {
+			_, err = tx.Exec(ctx, `UPDATE gateway_telegram_receivers SET next_offset=0,last_update_at='epoch',last_poll_at='epoch',managed_url='',pending_url='',managed_revision=0,next_due='epoch' WHERE scope_id=$1 AND account_id=$2`, s.scope, a.ID)
+			if err != nil {
+				return dbError(err)
+			}
+		}
 		raw, _ := json.Marshal(a)
 		_, err = tx.Exec(ctx, `INSERT INTO gateway_account_directory(scope_id,account_id,tenant_id,provider,provider_account_id,connection_revision,min_route_generation,enabled,present,account_json,source_epoch)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10) ON CONFLICT(scope_id,account_id) DO UPDATE SET connection_revision=EXCLUDED.connection_revision,min_route_generation=EXCLUDED.min_route_generation,enabled=EXCLUDED.enabled,present=true,account_json=EXCLUDED.account_json`, s.scope, a.ID, a.TenantID, a.Provider, a.ProviderAccountID, a.ConnectionRevision, a.MinRouteGeneration, a.Enabled, raw, s.epoch)

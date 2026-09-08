@@ -15,7 +15,23 @@ const PreflightReceiveModesPolicy = "telegram-receive-modes-v1"
 // PreflightEffectiveConfigDigest binds mode and connection identity without
 // allowing an unrelated inbound origin to invalidate long-polling diagnostics.
 // Account/task identity and lease authorization are separately fixed by grant.
-func PreflightEffectiveConfigDigest(scope, epoch, mode string, connectionRevision int64, origin *string, originStatus string) (string, error) {
+func PreflightEffectiveConfigDigest(scope, epoch, mode string, connectionRevision int64, origin *string, originStatus string, endpoint ...string) (string, error) {
+	apiOrigin := "https://api.telegram.org"
+	if len(endpoint) > 1 {
+		return "", ErrInvalidDocument
+	}
+	if len(endpoint) == 1 {
+		switch endpoint[0] {
+		case "", "official":
+		case "test":
+			if mode == PreflightWeComMode {
+				return "", ErrInvalidDocument
+			}
+			apiOrigin = "http://channel-lab:8080"
+		default:
+			return "", ErrInvalidDocument
+		}
+	}
 	if mode == PreflightWeComMode {
 		return preflightWeComEffectiveDigest(scope, epoch, connectionRevision, origin, originStatus)
 	}
@@ -38,7 +54,7 @@ func PreflightEffectiveConfigDigest(scope, epoch, mode string, connectionRevisio
 		TelegramAPIOrigin string  `json:"telegram_api_origin"`
 		Origin            *string `json:"public_origin"`
 		OriginStatus      string  `json:"origin_status"`
-	}{PreflightReceiveModesPolicy, scope, epoch, mode, connectionRevision, "https://api.telegram.org", origin, originStatus})
+	}{PreflightReceiveModesPolicy, scope, epoch, mode, connectionRevision, apiOrigin, origin, originStatus})
 	if err != nil {
 		return "", ErrInvalidDocument
 	}

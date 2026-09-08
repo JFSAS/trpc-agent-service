@@ -15,6 +15,13 @@ import (
 type Factory struct{ ServerURL string }
 type client struct{ api *protocol.Client }
 
+func (f Factory) NewAccount(token string, a c.Account) (app.Remote, error) {
+	endpoint, e := protocol.Endpoint(a.Config.EndpointProfile, f.ServerURL)
+	if e != nil {
+		return nil, e
+	}
+	return (Factory{ServerURL: endpoint}).New(token)
+}
 func (f Factory) New(token string) (app.Remote, error) {
 	api, e := protocol.New(protocol.Options{Token: token, BaseURL: f.ServerURL})
 	if e != nil {
