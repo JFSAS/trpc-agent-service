@@ -295,6 +295,9 @@ type credentialHarness struct {
 }
 
 func newCredentialHarness(t *testing.T) *credentialHarness {
+	return newCredentialHarnessWithBackend(t, nil)
+}
+func newCredentialHarnessWithBackend(t *testing.T, backend application.BackendAccess) *credentialHarness {
 	t.Helper()
 	base := seededStore("tnt_a", "rpf_a")
 	store := &credentialMemoryStore{base: base, records: map[string]domain.ProfileCredential{}, receipts: map[string]application.CredentialReceipt{}}
@@ -309,7 +312,7 @@ func newCredentialHarness(t *testing.T) *credentialHarness {
 	h := &credentialHarness{store: store, cipher: cipher, owners: credentialOwnerStub{"tnt_a/usr_owner": true}, now: testClock}
 	var sequence int64
 	h.service = application.NewService(application.Dependencies{
-		Store: base, Credentials: store, Cipher: cipher, OwnerAccess: h.owners,
+		Store: base, Credentials: store, Cipher: cipher, OwnerAccess: h.owners, Backends: backend,
 		TenantAccess:    accessStub{members: map[string]bool{"tnt_a/usr_owner": true, "tnt_a/usr_member": true}},
 		NewProfileID:    func() (string, error) { return "rpf_unused", nil },
 		NewRevisionID:   func() (string, error) { return "rpr_unused", nil },

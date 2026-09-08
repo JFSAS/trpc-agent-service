@@ -34,10 +34,15 @@ func credentialSlots(spec domain.Spec) []credentialSlot {
 		}
 	}
 	for n, r := range spec.Knowledge {
-		slots = append(slots, credentialSlot{"knowledge", n, "qdrant_api_key", r.QdrantAPIKeyCredentialID, audience(r.Kind, r.Host, r.Port, r.TLS)})
+		if r.Kind != domain.KnowledgeKindManaged {
+			slots = append(slots, credentialSlot{"knowledge", n, "qdrant_api_key", r.QdrantAPIKeyCredentialID, audience(r.Kind, r.Host, r.Port, r.TLS)})
+		}
 		slots = append(slots, credentialSlot{"knowledge", n, "embedding_api_key", r.Embedding.APIKeyCredentialID, audience(r.Kind, r.Embedding.BaseURL)})
 	}
 	for n, r := range spec.Storage {
+		if r.Kind.Managed() {
+			continue
+		}
 		slots = append(slots, credentialSlot{"storage", n, "dsn", r.DSNCredentialID, audience(r.Kind, r.Destination)})
 	}
 	sort.Slice(slots, func(i, j int) bool { return slots[i].key() < slots[j].key() })

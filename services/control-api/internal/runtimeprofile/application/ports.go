@@ -41,6 +41,7 @@ type Store interface {
 }
 
 type Dependencies struct {
+	Backends          BackendAccess
 	ExecutionVerifier ExecutionAuthorizationVerifier
 	Credentials       CredentialStore
 	Cipher            CredentialCipher

@@ -1,0 +1,68 @@
+package domain
+
+import (
+	"encoding/json"
+	"regexp"
+)
+
+var managedBackendID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+
+const (
+	StorageKindManagedSession  StorageKind   = "managed_session"
+	StorageKindManagedMemory   StorageKind   = "managed_memory"
+	StorageKindManagedArtifact StorageKind   = "managed_artifact"
+	KnowledgeKindManaged       KnowledgeKind = "managed_knowledge"
+)
+
+func (k StorageKind) Managed() bool {
+	return k == StorageKindManagedSession || k == StorageKindManagedMemory || k == StorageKindManagedArtifact
+}
+func (k StorageKind) Role() string {
+	switch k {
+	case StorageKindManagedSession:
+		return "session"
+	case StorageKindManagedMemory:
+		return "memory"
+	case StorageKindManagedArtifact:
+		return "artifact"
+	}
+	return ""
+}
+func (r StorageResource) MarshalJSON() ([]byte, error) {
+	if r.Kind.Managed() {
+		if r.DSNCredentialID != "" || r.Destination != (StorageDestination{}) {
+			return nil, ErrCredentialInput
+		}
+		return json.Marshal(struct {
+			Kind            StorageKind `json:"kind"`
+			BackendID       string      `json:"backend_id"`
+			BackendRevision uint64      `json:"backend_revision"`
+		}{r.Kind, r.BackendID, r.BackendRevision})
+	}
+	type plain StorageResource
+	return json.Marshal(plain(r))
+}
+func (r KnowledgeResource) MarshalJSON() ([]byte, error) {
+	if r.Kind == KnowledgeKindManaged {
+		if r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" || r.QdrantAPIKeyCredentialID != "" {
+			return nil, ErrCredentialInput
+		}
+		return json.Marshal(struct {
+			Kind            KnowledgeKind     `json:"kind"`
+			BackendID       string            `json:"backend_id"`
+			BackendRevision uint64            `json:"backend_revision"`
+			Embedding       EmbeddingResource `json:"embedding"`
+		}{r.Kind, r.BackendID, r.BackendRevision, r.Embedding})
+	}
+	type plain KnowledgeResource
+	return json.Marshal(plain(r))
+}
+func validateManagedSelection(pointer string, object map[string]any, fields []string, diagnostics *[]Diagnostic) {
+	validateAllowedFields(object, pointer, fields, diagnostics)
+	requireFields(object, pointer, fields, diagnostics)
+	validateBoundedString(object, "backend_id", pointer, 1, 128, diagnostics)
+	if v, ok := object["backend_id"].(string); ok && !managedBackendID.MatchString(v) {
+		*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/backend_id", "backend identifier is invalid"))
+	}
+	validateIntegerField(object, "backend_revision", pointer, 1, 9007199254740991, diagnostics)
+}

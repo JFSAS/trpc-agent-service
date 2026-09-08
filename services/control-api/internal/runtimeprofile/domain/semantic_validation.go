@@ -10,6 +10,12 @@ func validateSemantics(spec Spec) []Diagnostic {
 	for _, key := range sortedMapKeys(spec.Tools) {
 		validateToolSemantics(key, spec.Tools[key], &diagnostics)
 	}
+	for _, key := range sortedMapKeys(spec.Storage) {
+		r := spec.Storage[key]
+		if r.Kind.Managed() && key != r.Kind.Role() {
+			diagnostics = append(diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_STORAGE_ROLE", "/storage/"+escapeJSONPointer(key), "managed storage resource must use its explicit runtime role name"))
+		}
+	}
 	return diagnostics
 }
 

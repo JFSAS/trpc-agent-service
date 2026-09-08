@@ -445,7 +445,7 @@ func TestCapabilityRulesAndDerivedCapabilities(t *testing.T) {
 	if got := (domain.KnowledgeResource{}).ProvidedCapabilities(); !reflect.DeepEqual(got, []string{domain.CapabilityKnowledgeSearch}) {
 		t.Fatalf("knowledge capabilities = %v", got)
 	}
-	if got := (domain.StorageResource{}).ProvidedCapabilities(); !reflect.DeepEqual(got, []string{
+	if got := (domain.StorageResource{Kind: domain.StorageKindPostgresState}).ProvidedCapabilities(); !reflect.DeepEqual(got, []string{
 		domain.CapabilityStorageSession, domain.CapabilityStorageMemory,
 	}) {
 		t.Fatalf("storage capabilities = %v", got)

@@ -165,6 +165,14 @@ func validateToolAuth(value any, pointer string, diagnostics *[]Diagnostic) {
 }
 
 func validateKnowledgeResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
+	if object["kind"] == string(KnowledgeKindManaged) {
+		validateManagedSelection(pointer, object, []string{"kind", "backend_id", "backend_revision", "embedding"}, diagnostics)
+		if v, ok := object["embedding"]; ok {
+			validateEmbedding(v, pointer+"/embedding", diagnostics)
+		}
+		return
+	}
+
 	kind, ok := validateResourceKind(object, pointer, string(KnowledgeKindQdrantOpenAI), diagnostics)
 	if !ok || kind != string(KnowledgeKindQdrantOpenAI) {
 		return
@@ -206,6 +214,11 @@ func validateEmbedding(value any, pointer string, diagnostics *[]Diagnostic) {
 }
 
 func validateStorageResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
+	if k, ok := object["kind"].(string); ok && StorageKind(k).Managed() {
+		validateManagedSelection(pointer, object, []string{"kind", "backend_id", "backend_revision"}, diagnostics)
+		return
+	}
+
 	kind, ok := validateResourceKind(object, pointer, string(StorageKindPostgresState), diagnostics)
 	if !ok || kind != string(StorageKindPostgresState) {
 		return

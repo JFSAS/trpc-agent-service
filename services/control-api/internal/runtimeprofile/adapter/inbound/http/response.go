@@ -152,6 +152,8 @@ func usableIdentity(c *gin.Context) (identityapp.IdentityContext, bool) {
 
 func handleApplicationError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, application.ErrManagedBackend):
+		writeError(c, http.StatusConflict, "RUNTIME_PROFILE_BACKEND_UNAVAILABLE", "selected platform backend is unavailable")
 	case errors.Is(err, domain.ErrCredentialInput):
 		writeError(c, http.StatusBadRequest, "INVALID_CREDENTIAL_REQUEST", "credential request is invalid")
 	case errors.Is(err, domain.ErrCredentialAssociation):

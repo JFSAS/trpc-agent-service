@@ -106,6 +106,8 @@ func (a ToolAuth) MarshalJSON() ([]byte, error) {
 }
 
 type KnowledgeResource struct {
+	BackendID                string            `json:"backend_id,omitempty"`
+	BackendRevision          uint64            `json:"backend_revision,omitempty"`
 	Kind                     KnowledgeKind     `json:"kind"`
 	Host                     string            `json:"host"`
 	Port                     int64             `json:"port"`
@@ -127,6 +129,8 @@ type EmbeddingResource struct {
 }
 
 type StorageResource struct {
+	BackendID       string             `json:"backend_id,omitempty"`
+	BackendRevision uint64             `json:"backend_revision,omitempty"`
 	Kind            StorageKind        `json:"kind"`
 	DSNCredentialID string             `json:"dsn_credential_id"`
 	Destination     StorageDestination `json:"destination"`
@@ -141,8 +145,19 @@ type StorageDestination struct {
 	SSLMode  string `json:"sslmode"`
 }
 
-func (StorageResource) ProvidedCapabilities() []string {
-	return []string{CapabilityStorageSession, CapabilityStorageMemory}
+func (r StorageResource) ProvidedCapabilities() []string {
+	switch r.Kind {
+	case StorageKindManagedSession:
+		return []string{CapabilityStorageSession}
+	case StorageKindManagedMemory:
+		return []string{CapabilityStorageMemory}
+	case StorageKindManagedArtifact:
+		return []string{"storage.artifact"}
+	case StorageKindPostgresState:
+		return []string{CapabilityStorageSession, CapabilityStorageMemory}
+	default:
+		return nil
+	}
 }
 
 // CanonicalSpec is the immutable publishable representation.

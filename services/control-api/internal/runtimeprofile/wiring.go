@@ -20,6 +20,7 @@ import (
 // ExecutionVerifier and AuthenticateWorker opt into the internal runtime HTTP
 // route as a pair. The current process bootstrap leaves both unset.
 type Dependencies struct {
+	Backends           application.BackendAccess
 	ExecutionVerifier  application.ExecutionAuthorizationVerifier
 	AuthenticateWorker gin.HandlerFunc
 	DB                 postgresadapter.DB
@@ -54,7 +55,7 @@ func NewModule(deps Dependencies) (*Module, error) {
 	}
 	store := postgresadapter.NewStore(deps.DB)
 	service := application.NewService(application.Dependencies{
-		Store: store, TenantAccess: deps.TenantAccess,
+		Store: store, TenantAccess: deps.TenantAccess, Backends: deps.Backends,
 		Credentials: store, Cipher: cipher, OwnerAccess: deps.OwnerAccess,
 		ExecutionVerifier: deps.ExecutionVerifier,
 		NewCredentialID:   generateCredentialID,
