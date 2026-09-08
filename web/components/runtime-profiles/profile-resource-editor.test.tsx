@@ -23,6 +23,15 @@ async function selectCategory(name: string) {
 }
 
 describe("Runtime Profile resource forms", () => {
+  it("keeps category labels and selection independent of their visual color", async () => {
+    render(<Harness />);
+    for (const [label, category] of [["Models", "models"], ["Tools", "tools"], ["Knowledge", "knowledge"], ["Storage", "storage"]]) {
+      const button = screen.getByRole("button", { name: new RegExp(`^${label} ·`) });
+      expect(button.parentElement).toHaveAttribute("data-resource-category", category);
+      await userEvent.click(button);
+      expect(button).toHaveAttribute("aria-expanded", "true");
+    }
+  });
   it("edits model fields and fixed capabilities without losing empty input", async () => {
     const user = userEvent.setup(); const changed = vi.fn();
     render(<Harness changed={changed} />);

@@ -14,7 +14,7 @@ export function RequirementsEditor({ state, dispatch, disabled }: {
   return (
     <section aria-label="资源需求槽位" style={panelStyle}>
       <header style={panelHeaderStyle}>
-        <div><strong>Requirements</strong><small style={{ color: "#778292", display: "block", marginTop: 3 }}>只声明逻辑槽位，不填写密钥</small></div>
+        <div><strong>Requirements</strong><small style={{ color: "var(--muted)", display: "block", marginTop: 3 }}>只声明逻辑槽位，不填写密钥</small></div>
       </header>
       <RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.models} kind="models" />
       <RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.tools} kind="tools" />
@@ -58,8 +58,8 @@ function RequirementGroup({ kind, entries, dispatch, disabled }: {
   }
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <span style={{ color: "#344054", fontSize: 10, fontWeight: 700 }}>{title}</span>
+    <div data-resource-category={kind} style={{ display: "grid", gap: 8 }}>
+      <span style={{ color: "var(--resource-color)", fontSize: 12, fontWeight: 700 }}>{title}</span>
       {Object.entries(entries).map(([slotID, item]) => {
         const existingError = validateCapabilities(kind, "capabilities" in item ? item.capabilities : [item.capability]);
         const existingErrorID = `${errorID}-${slotID}`;
@@ -138,10 +138,10 @@ function validateCapabilities(kind: RequirementKind, capabilities: readonly stri
   return "";
 }
 
-const panelStyle: CSSProperties = { background: "#fff", border: "1px solid #e5eaf1", borderRadius: 10, display: "grid", gap: 12, minWidth: 0, padding: 13 };
-const panelHeaderStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid #edf0f4", display: "flex", justifyContent: "space-between", paddingBottom: 10 };
+const panelStyle: CSSProperties = { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 10, display: "grid", gap: 12, minWidth: 0, padding: 13 };
+const panelHeaderStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", paddingBottom: 10 };
 const requirementStyle: CSSProperties = { alignItems: "center", display: "grid", gap: 6, gridTemplateColumns: "minmax(82px,.7fr) minmax(0,1.3fr) 34px", minWidth: 0 };
-const requirementInputStyle: CSSProperties = { background: "#fff", border: "1px solid #d8e0ea", borderRadius: 7, color: "#111827", fontSize: 11, fontWeight: 500, height: 34, minWidth: 0, padding: "0 9px", width: "100%" };
-const requirementSlotStyle: CSSProperties = { alignItems: "center", background: "#f7f9fc", border: "1px solid #e5eaf1", borderRadius: 7, color: "#344054", display: "flex", fontSize: 11, height: 34, minWidth: 0, overflow: "hidden", padding: "0 9px", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+const requirementInputStyle: CSSProperties = { background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: 7, color: "var(--ink)", fontSize: 11, fontWeight: 500, height: 34, minWidth: 0, padding: "0 9px", width: "100%" };
+const requirementSlotStyle: CSSProperties = { alignItems: "center", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 7, color: "var(--ink-soft)", display: "flex", fontSize: 11, height: 34, minWidth: 0, overflow: "hidden", padding: "0 9px", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 const requirementActionStyle: CSSProperties = { height: 34, minHeight: 34, padding: 0, width: 34 };
-const errorStyle: CSSProperties = { color: "#b42318", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" };
+const errorStyle: CSSProperties = { color: "var(--danger)", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" };

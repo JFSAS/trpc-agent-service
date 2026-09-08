@@ -1,5 +1,15 @@
 # 文档索引
 
+## 项目主页与文档中心
+
+Web 根地址 `/` 提供公开项目主页；`/docs` 是教程与六篇主题参考文档入口；
+原会话恢复入口位于 `/console`。站点内容与更新方式见 [主页与站内文档](site/README.md)。
+
+## 给使用者的指南
+
+- [Agent tRPC V1 部署与使用指南](user-guide/v1/README.md)：逐页操作、单 LLM Agent 上线、Telegram / 企微接入、升级回退与常见问题，附图文。另提供[可独立阅读的 HTML 版](user-guide/v1/部署与使用指南.html)。
+
+
 本仓库的架构文档分为两类：
 
 - [`architecture-next/`](architecture-next/README.md)：当前重构使用的规范性文档，
@@ -61,3 +71,5 @@ Helm 仍待全部生产 Workload 完成后进入 FINAL-INTEGRATION。
 - [Channel Gateway：Telegram 与企业微信智能机器人](architecture-next/channel-gateway/im-channel-sdk-semantics.md)：机器人行为、SDK 接纳边界与真实实验记录；历史 SDK 实验与当前真实 Gateway 入站验收分列，均不表示完整 Worker 回复链路已验收。
 
 - [公开 Go Connector 设计](architecture-next/channel-gateway/public-go-connector.md)：企微库直接导入，Telegram SDK 直接引用；无独立 Connector 部署单元。
+
+公开官网与文档现由独立的 `site/` 工程构建；管理 Web 的 `/help` 使用运行时 `DOCS_SITE_URL` 跳转。详见 [站点维护](../site/README.md)。

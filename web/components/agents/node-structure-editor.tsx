@@ -55,7 +55,7 @@ export function NodeToolbar({ state, dispatch, disabled }: StructureProps) {
       <Button disabled={disabled} onClick={() => dispatch({ type: "layout.reset" })} variant="secondary"><LayoutGrid size={13} />自动布局</Button>
       <small style={hintStyle}>{mode === "child" ? `添加到 ${parentID || "指定父节点"}；保留此父节点，便于连续添加兄弟节点。` : `只包装 ${mode === "wrap-root" ? `Root ${state.spec.root}` : `选中节点 ${state.selectedNodeID ?? "（未选择）"}`}，保留原有子树。`}</small>
     </div>
-    {nodeID && error && <small role="alert" style={{ color: "#b42338" }}>{error}</small>}
+    {nodeID && error && <small role="alert" style={{ color: "var(--danger)" }}>{error}</small>}
     {mode === "child" && kind === "loop" && !nodeID && <small style={hintStyle}>Loop 需要已有 Body；请选择包装选中节点或包装 Root。</small>}
   </section>;
 }
@@ -76,7 +76,7 @@ export function NodeStructureFields({ nodeID, state, dispatch, disabled }: Struc
         {node.children.length === 0 && <small style={hintStyle}>尚无子节点；可在工具栏添加新子节点，或连接下方已有节点。</small>}
         <ol style={{ display: "grid", gap: 6, listStyle: "none", margin: 0, padding: 0 }}>
           {node.children.map((childID, index) => <li key={`${childID}-${index}`} style={childRowStyle}>
-            <span style={{ color: "#778292", fontSize: 11 }}>{index + 1}</span>
+            <span style={{ color: "var(--muted)", fontSize: 11 }}>{index + 1}</span>
             <Button disabled={!state.spec.nodes[childID]} onClick={() => dispatch({ type: "node.select", nodeID: childID })} style={{ justifyContent: "flex-start", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} variant="ghost">{childID}</Button>
             <Button aria-label={`上移 ${childID}`} disabled={disabled || index === 0} onClick={() => dispatch({ type: "child.move", parentID: nodeID, from: index, to: index - 1 })} style={iconStyle} variant="secondary"><ArrowUp size={13} /></Button>
             <Button aria-label={`下移 ${childID}`} disabled={disabled || index === node.children.length - 1} onClick={() => dispatch({ type: "child.move", parentID: nodeID, from: index, to: index + 1 })} style={iconStyle} variant="secondary"><ArrowDown size={13} /></Button>
@@ -134,8 +134,8 @@ function canOwnChildren(state: AgentEditorState, nodeID: string): boolean {
   return node?.kind === "sequence" || node?.kind === "parallel";
 }
 
-const hintStyle: CSSProperties = { color: "#778292", fontSize: 11, lineHeight: 1.5 };
-const toolbarStyle: CSSProperties = { background: "#fff", border: "1px solid #e5eaf1", borderRadius: 11, display: "grid", gap: 10, padding: 12 };
+const hintStyle: CSSProperties = { color: "var(--muted)", fontSize: 11, lineHeight: 1.5 };
+const toolbarStyle: CSSProperties = { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 11, display: "grid", gap: 10, padding: 12 };
 const toolbarFieldsStyle: CSSProperties = { display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))" };
-const childRowStyle: CSSProperties = { alignItems: "center", background: "#f8fafc", border: "1px solid #e5eaf1", borderRadius: 7, display: "grid", gap: 4, gridTemplateColumns: "18px minmax(0,1fr) 28px 28px", padding: 5 };
+const childRowStyle: CSSProperties = { alignItems: "center", background: "var(--surface-subtle)", border: "1px solid var(--line)", borderRadius: 7, display: "grid", gap: 4, gridTemplateColumns: "18px minmax(0,1fr) 28px 28px", padding: 5 };
 const iconStyle: CSSProperties = { height: 28, padding: 0, width: 28 };

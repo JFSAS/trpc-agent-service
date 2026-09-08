@@ -24,6 +24,8 @@ import { clearChannelPreflightPreparations, establishChannelPreflightIdentity } 
 
 import { controlApi, type Tenant, type User } from "../lib/control-api";
 
+import { HelpLink } from "./help-link";
+
 type AppShellProps = {
   user: User;
   capabilities?: string[];
@@ -87,13 +89,13 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
           {isOperator && adminNavigation.map(({ href, label, icon: Icon }) => {
             const active = href === "/admin" ? pathname === href : pathname.startsWith(href);
             return (
-              <Link className={active ? "nav-link active" : "nav-link"} href={href} key={href}>
+              <Link className={active ? "nav-link active" : "nav-link"} href={href} key={href} aria-label={label} title={label}>
                 <Icon size={18} />
                 <span>{label}</span>
               </Link>
             );
           })}
-          <Link className={pathname === "/tenants" ? "nav-link active" : "nav-link"} href="/tenants">
+          <Link className={pathname === "/tenants" ? "nav-link active" : "nav-link"} href="/tenants" aria-label={tenantPath ? "切换租户" : "选择租户"} title={tenantPath ? "切换租户" : "选择租户"}>
             <Building2 size={18} />
             <span>{tenantPath ? "切换租户" : "选择租户"}</span>
           </Link>
@@ -104,14 +106,14 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
             <nav className="sidebar-nav" aria-label="租户工作区">
               <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/agents`) ? "nav-link active" : "nav-link"}
-                href={`/tenants/${tenantPath}/agents`}
+                href={`/tenants/${tenantPath}/agents`} aria-label="Agent 工作台" title="Agent 工作台"
               >
                 <Bot size={18} />
                 <span>Agent 工作台</span>
               </Link>
               <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/runtime-profiles`) ? "nav-link active" : "nav-link"}
-                href={`/tenants/${tenantPath}/runtime-profiles`}
+                href={`/tenants/${tenantPath}/runtime-profiles`} aria-label="运行配置" title="运行配置"
               >
                 <SlidersHorizontal size={18} />
                 <span>运行配置</span>
@@ -124,13 +126,13 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
               </Link>
               <Link
                 className={pathname === `/tenants/${tenantPath}/channels` || pathname.startsWith(`/tenants/${tenantPath}/channels/`) ? "nav-link active" : "nav-link"}
-                href={`/tenants/${tenantPath}/channels`}
+                href={`/tenants/${tenantPath}/channels`} aria-label="渠道接入" title="渠道接入"
               >
                 <Radio size={18} /><span>渠道接入</span>
               </Link>
               {activeTenant?.role === "OWNER" && <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/members`) ? "nav-link active" : "nav-link"}
-                href={`/tenants/${tenantPath}/members`}
+                href={`/tenants/${tenantPath}/members`} aria-label="成员管理" title="成员管理"
               >
                 <Users size={18} />
                 <span>成员管理</span>
@@ -147,15 +149,15 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
             </span>
             <ChevronDown size={15} />
           </div>
-          <button className="logout-button" onClick={() => void logout()} type="button">
-            <LogOut size={16} />退出登录
+          <button className="logout-button" aria-label="退出登录" title="退出登录" onClick={() => void logout()} type="button">
+            <LogOut size={16} /><span>退出登录</span>
           </button>
         </div>
       </aside>
       <main className="workspace">
         <header className="workspace-header">
           <div><span>{tenantPath ? activeTenant?.name ?? "租户工作区" : isOperator ? "平台管理" : "租户空间"}</span><b>/</b><strong>{pageLabel(pathname)}</strong></div>
-          <div className="header-user" title="登录状态不代表渠道连接、路由应用或 Agent 执行正常"><span className="status-dot" />已登录</div>
+          <div className="workspace-header-actions"><HelpLink /><div className="header-user" title="登录状态不代表渠道连接、路由应用或 Agent 执行正常"><span className="status-dot" />已登录</div></div>
         </header>
         <div className="workspace-content">{children}</div>
       </main>

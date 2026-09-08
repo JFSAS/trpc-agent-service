@@ -3,8 +3,29 @@
 `control-web` is the Next.js management console for the implemented Control API
 V1 Identity, Platform Admin, Tenant membership, Agent authoring, Runtime
 Profile, Deployment, and Channel management capabilities.
-It uses the shadcn `dashboard-01` source layout with the selected A-style
-white, slate, and cloud-blue visual system.
+It uses the selected F-style ivory, forest-green, terracotta, and mist-blue
+visual system. Shared color roles live in `app/theme.css`; see [theme guide](THEME.md).
+
+## Public documentation and Help
+
+The project homepage and user documentation now build independently in `../site`.
+The management service `/` redirects a signed-out browser directly to `/login`.
+A non-empty session cookie routes to `/console` for the existing authoritative
+session/role check; cookie presence alone never grants access.
+
+Every console page and the login page provide **帮助文档**. It opens `/help` in a
+new tab without sending tenant, account, session or current-page information.
+Set `DOCS_SITE_URL` on the running Web service to the complete documentation
+center URL (including a project subpath and `/docs/` when applicable). Only
+absolute HTTP(S) URLs without credentials, query strings or fragments are
+accepted. Missing/invalid configuration shows an actionable 503 page.
+
+Example for local preview: `DOCS_SITE_URL=http://127.0.0.1:13642/docs/`.
+This is a server-side runtime setting, not a NEXT_PUBLIC build-time setting;
+restart the Web process after changing it. Set `CONTROL_SESSION_COOKIE_NAME`
+only if Control uses a custom session cookie name (default: `control_session`).
+Neither variable requires rebuilding the Web image. Existing API authorization
+and business pages are unchanged; the public site does not need a Control API.
 
 ## Local development
 
@@ -19,6 +40,10 @@ handler forwards requests and the opaque HttpOnly session cookie to Control
 API, avoiding a cross-origin authentication path.
 
 ## Implemented pages
+
+- `/` (signed-out login / signed-in console entry)
+- `/help` (runtime-configured external documentation redirect)
+- `/console` (role-aware authenticated console entry)
 
 - `/login` and `/change-password`
 - `/admin`, `/admin/users`, `/admin/operators`, `/admin/tenants`

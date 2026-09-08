@@ -14,7 +14,7 @@ export function DiagnosticsPanel({
 }) {
   if (diagnostics.length === 0) {
     return (
-      <div style={{ ...panelStyle, color: "#157347", background: "#f0fbf5" }} data-testid="diagnostics-empty">
+      <div style={{ ...panelStyle, color: "var(--success)", background: "var(--success-soft)" }} data-testid="diagnostics-empty">
         <CheckCircle2 size={16} />
         <span>本地结构检查通过；发布仍以服务端校验结果为准。</span>
       </div>
@@ -25,7 +25,7 @@ export function DiagnosticsPanel({
     <section aria-label="AgentSpec 诊断" style={panelStyle}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
         <strong style={{ fontSize: 13 }}>诊断</strong>
-        <span style={{ color: "#667085", fontSize: 11 }}>
+        <span style={{ color: "var(--muted)", fontSize: 11 }}>
           {diagnostics.filter((item) => item.severity === "error").length} 个错误 · {diagnostics.filter((item) => item.severity === "warning").length} 个警告
         </span>
       </header>
@@ -38,7 +38,7 @@ export function DiagnosticsPanel({
               {warning ? <AlertTriangle size={15} /> : <AlertCircle size={15} />}
               <span style={{ minWidth: 0, flex: 1 }}>
                 <strong style={{ display: "block", fontSize: 11 }}>{item.message}</strong>
-                <code style={{ display: "block", color: "#778292", fontSize: 9, marginTop: 3, overflowWrap: "anywhere" }}>
+                <code style={{ display: "block", color: "var(--muted)", fontSize: 9, marginTop: 3, overflowWrap: "anywhere" }}>
                   {item.code} · {item.pointer || "/"}
                 </code>
               </span>
@@ -46,10 +46,10 @@ export function DiagnosticsPanel({
           );
           const style: CSSProperties = {
             alignItems: "flex-start",
-            background: warning ? "#fff8e8" : "#fff2f3",
-            border: `1px solid ${warning ? "#f7dfaa" : "#ffd4d9"}`,
+            background: warning ? "var(--warning-soft)" : "var(--danger-soft)",
+            border: `1px solid ${warning ? "var(--warning-border)" : "var(--danger-border)"}`,
             borderRadius: 8,
-            color: warning ? "#8a5600" : "#a72d3a",
+            color: warning ? "var(--warning)" : "var(--danger)",
             display: "flex",
             gap: 8,
             padding: "9px 10px",
@@ -71,8 +71,8 @@ export function DiagnosticsPanel({
 
 const panelStyle: CSSProperties = {
   alignItems: "center",
-  background: "#fff",
-  border: "1px solid #e5eaf1",
+  background: "var(--surface)",
+  border: "1px solid var(--line)",
   borderRadius: 10,
   display: "flex",
   flexDirection: "column",
