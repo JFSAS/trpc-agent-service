@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
+	"strings"
 )
 
 // Share resolved component semantics rather than maintaining a second codec.
@@ -29,8 +30,10 @@ func validateDataCapabilityPresence(raw []byte) error {
 	present := len(wire.Runtime) > 0
 	for _, n := range wire.AgentPlan.Nodes {
 		for _, key := range []string{"memory", "artifact", "add_session_summary"} {
-			if _, ok := n[key]; ok {
-				present = true
+			for candidate := range n {
+				if strings.EqualFold(candidate, key) {
+					present = true
+				}
 			}
 		}
 	}
