@@ -32,7 +32,7 @@ Summary enabled=false 禁止带模型/阈值，避免非活动参数。Memory �
 
 Memory 使用最终 SDK `memory.Service`，同时装配工具与 Runner 服务。SDK 六工具从 invocation 获取 MemoryService；因此 Runner 必须传入执行语义包装后的同一服务。禁止 SDK 默认 Session UserID（当前为固定 `session`）直接成为长期记忆隔离键。
 
-Summary 复用 SDK `summary.NewSummarizer(model, summary.WithEventThreshold(n))` 和 Session 摘要方法。PostgreSQL/Redis Session 后端有 Summarizer 选项，但当前 Worker overlay 的摘要方法是 no-op，必须另行补齐持久语义，不能只开上下文注入选项。
+Summary 复用 SDK `summary.NewSummarizer(model, summary.WithEventThreshold(n))` 和 Session 摘要方法。PostgreSQL/Redis Session 后端有 Summarizer 选项。默认 Worker overlay 保持关闭；下述显式 Summary overlay 已复用 SDK 生成与边界逻辑并进入原 Session candidate，生产 factory 与 accepted-head 联合接线仍待完成，不能只开上下文注入选项。
 
 Artifact 组合 S3 字节与 Worker SQL 元数据，提供一个 SDK `artifact.Service`。SQL 元数据不增加用户第二逻辑槽。SDK 初始文件版本为 0。管理上传与模型工具开放分开。
 
@@ -128,3 +128,37 @@ Final。模型为确定性测试 Model；Memory 为 traced Attempt 私有视图�
 下一运行切片：平台固定后端连接/凭据适配、Session PG/Redis 与 Summary
 持久语义、Memory accepted candidate/CAS/恢复、Artifact S3+SQL 元数据、
 Knowledge 检索与独立导入；随后联合 Web/真实 Provider/IM 验收。
+
+
+## Session Summary 与真实 PostgreSQL 候选（2026-09-09）
+
+`BuildManifestSummarizer` 从固定 `runtime.summary.model_resource` 选择已初始化
+模型，复用 SDK `summary.NewSummarizer` / `WithEventThreshold`。不另加字数、
+Token、跳过最近事件限制。SDK v1.11.2 事件阈值语义为 count > threshold，
+不是 >=；模型、Session 资源缺失或不匹配时返回错误。
+
+`newSummaryOverlay` 是显式启用构造。它把 `Session.Summaries` 和 SDK structural
+boundary 放在原 snapshot 中，继续复用 `runtime_session.session_candidates`。
+默认 `newOverlay` 仍拒绝带摘要的输入。输入来自 owned Session 深拷贝，模型
+调用不持有 overlay mutex；模型期间新事件保留，不被旧摘要边界覆盖。结果
+分别深拷贝到 stored 和 caller.Summaries，兼容 SDK 直接读取 Invocation.Session。
+
+Enqueue 在当前调用同步处理请求的 filter，不 detach context、不提交后台任务。
+暂不复制 SDK 默认 branch → full-session cascade；需要全局摘要时显式请求空
+filter。正常 Runner 未指定 EventFilterKey 时使用 effective AppName，而不是
+Agent 名称（SDK runner.go sessionRestoreFilterKey）；集成测试遵循这一默认值，
+不修改 BranchFilterMode 来绕过匹配。
+
+SDK 临时 inmemory service 会创建一个空闲 worker；直接同步 Create 后通过
+Close/Stop/wg.Wait 释放。overlay.Close 只标记关闭，不取消/等待在途模型；调用者
+必须等待同步调用返回再释放借用模型。Snapshot 在生成中或关闭后明确拒绝并记录
+sticky failure，迟到结果不导入；失败/取消/容量错误也阻止候选输出。
+
+`test-worker-summary-postgres.sh` 创建独立临时 PostgreSQL，使用 session_migrator
+和 session_runtime 分离角色，执行现有迁移/Store。测试观察到：真实 SDK 摘要
+生成 → 同一 Session candidate Put → 重开池 Load → overlay 恢复 → 下一次 SDK
+LLMAgent 请求实际包含摘要。原 Head 对应字节不变、重复 Put 幂等、Tenant/Session
+错配读拒绝、失败摘要不输出新候选；容器随后删除。
+
+这些是真实 PostgreSQL 候选/SDK 消费证据，仍不等同于生产 accepted-head 事务、
+外部 LLM、Redis 或 IM 验收。生产 factory/gate 暂未开启 Summary。
