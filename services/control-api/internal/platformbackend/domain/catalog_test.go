@@ -113,3 +113,27 @@ func TestClosedConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCatalogRevisionIsJavaScriptSafe(t *testing.T) {
+	for _, revision := range []uint64{0, 9007199254740992, ^uint64(0)} {
+		es := entries()
+		es[0].Revision = revision
+		if _, err := NewCatalog(es); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("revision %d: %v", revision, err)
+		}
+	}
+	es := entries()
+	es[0].Revision = 9007199254740991
+	c, err := NewCatalog(es)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := c.Resolve("tenant-a", Selection{"pg", es[0].Revision, Session})
+	if err != nil || v.Revision != es[0].Revision {
+		t.Fatal(v, err)
+	}
+	b, err := json.Marshal(v)
+	if err != nil || !strings.Contains(string(b), `"revision":9007199254740991`) {
+		t.Fatal(string(b), err)
+	}
+}

@@ -67,7 +67,7 @@ type Catalog struct{ entries map[string]Entry }
 func NewCatalog(entries []Entry) (*Catalog, error) {
 	c := &Catalog{entries: make(map[string]Entry, len(entries))}
 	for _, e := range entries {
-		if !identifier.MatchString(e.ID) || e.Revision == 0 || len(e.Label) == 0 || len(e.Label) > 256 || len(e.Roles) == 0 || len(e.TenantIDs) == 0 {
+		if !identifier.MatchString(e.ID) || e.Revision == 0 || e.Revision > 9007199254740991 || len(e.Label) == 0 || len(e.Label) > 256 || len(e.Roles) == 0 || len(e.TenantIDs) == 0 {
 			return nil, ErrInvalid
 		}
 		if _, exists := c.entries[e.ID]; exists {
