@@ -16,7 +16,7 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 		}
 		var credential *CredentialUse
 		if r.Credential != (CredentialUse{}) {
-			if r.Kind != "managed_memory" || r.Backend.Kind != datav1.PostgreSQL {
+			if r.Kind != "managed_memory" || (r.Backend.Kind != datav1.PostgreSQL && r.Backend.Kind != datav1.Redis) {
 				return nil, ErrInvalidManifest
 			}
 			c := r.Credential
@@ -74,7 +74,7 @@ func validateManagedResourceRoles(c ManifestContent) error {
 		if name != role || r.Backend == nil || r.Backend.TenantID != c.TenantID || r.Backend.ValidateForRole(role) != nil {
 			return ErrInvalidManifest
 		}
-		if role == "memory" && r.Backend.Kind == datav1.PostgreSQL {
+		if role == "memory" && (r.Backend.Kind == datav1.PostgreSQL || (r.Backend.Kind == datav1.Redis && r.Credential != (CredentialUse{}))) {
 			digest, err := r.Backend.Digest()
 			if err != nil || r.Credential.Purpose != CredentialPurposeDSNPassword || !regexp.MustCompile(`^crd_[0-9a-f]{32}$`).MatchString(r.Credential.CredentialID) || r.Credential.AudienceDigest != digest {
 				return ErrInvalidManifest

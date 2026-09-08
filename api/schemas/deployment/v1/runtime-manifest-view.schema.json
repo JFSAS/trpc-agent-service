@@ -906,10 +906,24 @@
             ]
           },
           "else": {
-            "not": {
-              "required": [
-                "credential_present"
-              ]
+            "if": {
+              "properties": {
+                "backend": {
+                  "properties": {
+                    "kind": {
+                      "const": "redis"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {},
+            "else": {
+              "not": {
+                "required": [
+                  "credential_present"
+                ]
+              }
             }
           }
         }

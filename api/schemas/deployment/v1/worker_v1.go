@@ -31,7 +31,7 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion || (expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest) {
 		return reject("contract identity")
 	}
-	// Summary and explicitly declared PostgreSQL Memory are executable.
+	// Summary and explicitly declared PostgreSQL/Redis Memory are executable.
 	if c.Runtime != nil && (c.Runtime.Summary == nil || c.Runtime.Summary.Validate() != nil) {
 		return reject("invalid session summary configuration")
 	}
@@ -102,8 +102,11 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		backend := resource.Backend
 		d, err := backend.Digest()
-		if err != nil || backend.ValidateForRole("memory") != nil || backend.TenantID != c.TenantID || backend.Kind != "postgresql" || backend.PostgreSQL.Username != "memory_runtime" {
-			return reject("fixed PostgreSQL memory backend")
+		if err != nil || backend.ValidateForRole("memory") != nil || backend.TenantID != c.TenantID {
+			return reject("fixed memory backend")
+		}
+		if (backend.Kind == "postgresql" && backend.PostgreSQL.Username != "memory_runtime") || (backend.Kind == "redis" && backend.Redis.Username != "memory_runtime") {
+			return reject("fixed memory runtime identity")
 		}
 		u := resource.Credential
 		if u.CredentialID == "" || u.Purpose != "dsn_password" || u.AudienceDigest != d {
@@ -113,7 +116,11 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 			return reject("credential closure")
 		}
 		credentials[u.CredentialID] = u
-		expectedHosts = append(expectedHosts, strings.ToLower(backend.PostgreSQL.Host))
+		host, err := backend.EndpointHost()
+		if err != nil {
+			return reject("memory endpoint")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
 	for key := range selectedModels {
 		model, exists := c.Resources.Models[key]
