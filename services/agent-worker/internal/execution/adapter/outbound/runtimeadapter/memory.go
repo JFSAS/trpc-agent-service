@@ -26,7 +26,10 @@ func validateMemoryPlan(p domain.Plan) error {
 	}
 	b := m.Backend
 	digest, err := b.Digest()
-	if err != nil || b.ValidateForRole("memory") != nil || b.Kind != datav1.PostgreSQL || b.TenantID != p.TenantID || b.PostgreSQL.Username != "memory_runtime" || m.AgentID == "" || b.Limits.MaxBytes > int64(int(b.Limits.MaxBytes)) || p.MaxToolCalls < 1 {
+	if err != nil || b.ValidateForRole("memory") != nil || b.TenantID != p.TenantID || m.AgentID == "" || b.Limits.MaxBytes > int64(int(b.Limits.MaxBytes)) || p.MaxToolCalls < 1 {
+		return application.ErrManifestInvalid
+	}
+	if (b.Kind == datav1.PostgreSQL && b.PostgreSQL.Username != "memory_runtime") || (b.Kind == datav1.Redis && b.Redis.Username != "memory_runtime") {
 		return application.ErrManifestInvalid
 	}
 	if m.Credential.CredentialID == "" || m.Credential.Purpose != "dsn_password" || m.Credential.AudienceDigest != digest {
@@ -45,16 +48,28 @@ func (f *Factory) prepareMemory(ctx context.Context, p domain.Plan, password str
 		return nil, err
 	}
 	b := p.Memory.Backend
-	t := b.PostgreSQL
-	target := memorystore.Target{Host: t.Host, Port: uint16(t.Port), Database: t.Database, Username: t.Username, SSLMode: t.SSLMode, MaxConcurrency: int32(b.Limits.MaxConcurrency)}
-	dsn, err := memorystore.CredentialDSN(target, password)
-	if err != nil {
-		return nil, application.ErrCredentialDenied
-	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(b.Limits.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	ctx, span := telemetrytrace.Start(f.options.Tracer, ctx, "worker.memory.open")
-	ms, err := f.openMemory(ctx, dsn, target, int(b.Limits.MaxBytes))
+	var ms memoryStore
+	var err error
+	switch b.Kind {
+	case datav1.PostgreSQL:
+		t := b.PostgreSQL
+		target := memorystore.Target{Host: t.Host, Port: uint16(t.Port), Database: t.Database, Username: t.Username, SSLMode: t.SSLMode, MaxConcurrency: int32(b.Limits.MaxConcurrency)}
+		dsn, e := memorystore.CredentialDSN(target, password)
+		if e != nil {
+			err = memorystore.ErrIdentity
+		} else {
+			ms, err = f.openMemory(ctx, dsn, target, int(b.Limits.MaxBytes))
+		}
+	case datav1.Redis:
+		t := b.Redis
+		target := memorystore.RedisTarget{Host: t.Host, Port: uint16(t.Port), Database: int(t.Database), Username: t.Username, TLS: t.TLS, MaxConcurrency: int(b.Limits.MaxConcurrency)}
+		ms, err = f.openRedisMemory(ctx, target, password, int(b.Limits.MaxBytes))
+	default:
+		err = memorystore.ErrIdentity
+	}
 	telemetrytrace.End(span, memoryError(err))
 	return ms, memoryError(err)
 }

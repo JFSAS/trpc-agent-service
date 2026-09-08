@@ -42,12 +42,13 @@ type Options struct {
 	Observer              application.Observer
 }
 type Factory struct {
-	options    Options
-	client     *http.Client
-	mu         sync.Mutex
-	started    map[attemptKey]time.Time
-	openMemory func(context.Context, string, memorystore.Target, int) (memoryStore, error)
-	openStore  func(context.Context, string, sessionstore.Target, int) (candidateStore, error)
+	options         Options
+	client          *http.Client
+	mu              sync.Mutex
+	started         map[attemptKey]time.Time
+	openRedisMemory func(context.Context, memorystore.RedisTarget, string, int) (memoryStore, error)
+	openMemory      func(context.Context, string, memorystore.Target, int) (memoryStore, error)
+	openStore       func(context.Context, string, sessionstore.Target, int) (candidateStore, error)
 }
 type attemptKey struct {
 	TenantID, RunID, AttemptID string
@@ -73,6 +74,9 @@ func New(o Options) (*Factory, error) {
 	}
 	f.openMemory = func(ctx context.Context, dsn string, target memorystore.Target, capacity int) (memoryStore, error) {
 		return memorystore.Open(ctx, dsn, target, capacity)
+	}
+	f.openRedisMemory = func(ctx context.Context, target memorystore.RedisTarget, password string, capacity int) (memoryStore, error) {
+		return memorystore.OpenRedis(ctx, target, password, capacity)
 	}
 	return f, nil
 }

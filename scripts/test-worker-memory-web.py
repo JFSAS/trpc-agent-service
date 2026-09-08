@@ -18,7 +18,7 @@ from memory_joint_fixture import MemoryHarness, MemoryModelFixture, TOOLS
 import channel_lab_fixture as gateway_fixture
 from faults import wait_success
 
-class WebHarness(MemoryHarness):
+class WebPublicationMixin:
     def api(self, method, path, body=None, status=200, idem=None):
         if method == 'POST' and path == '/v1/auth/login':
             self.login_user = body['username']
@@ -29,14 +29,25 @@ class WebHarness(MemoryHarness):
             body['target']['revision_number'] = self.revision_number
         return super().api(method, path, body, status, idem)
 
+class WebHarness(WebPublicationMixin, MemoryHarness):
+    pass
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--coordination', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
+    parser.add_argument('--backend', choices=('postgresql', 'redis'), default='postgresql')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    h = WebHarness(root, args.artifacts)
+    harness = WebHarness
+    if args.backend == 'redis':
+        from redis_memory_joint_fixture import RedisMemoryHarness
+        class RedisWebHarness(WebPublicationMixin, RedisMemoryHarness):
+            pass
+        harness = RedisWebHarness
+    h = harness(root, args.artifacts)
+    backend_id = 'joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'
     web = None
     web_log = None
     evidence = {'result': 'PENDING', 'gui': 'PENDING', 'external_model': 'DETERMINISTIC_HTTP_FIXTURE', 'shared_services_changed': False}
@@ -72,7 +83,7 @@ def main():
                     raise RuntimeError('isolated Web readiness timeout') from None
                 time.sleep(.5)
         access = Path(h.work) / 'gui-access.json'
-        access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, 'memory_password': h.memory_password, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': 'joint-memory-pg', 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
+        access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, 'memory_password': h.memory_password, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
         access.chmod(0o600)
         args.coordination.mkdir(parents=True, exist_ok=True)
         (args.coordination / 'ready.json').write_text(json.dumps({'url': web_url, 'private_access_file': str(access), 'artifacts': str(h.artifacts)}))
@@ -92,7 +103,7 @@ def main():
         view = publication['manifest_view']
         node = view['agent_plan']['nodes'][view['agent_plan']['root']]
         assert sorted(node['memory']['tools']) == sorted(TOOLS)
-        assert view['resources']['storage'][node['memory']['resource']]['backend']['backend_id'] == 'joint-memory-pg'
+        assert view['resources']['storage'][node['memory']['resource']]['backend']['backend_id'] == backend_id
         h.revision_id = publication['id']
         h.manifest_id, h.manifest_digest = publication['manifest_id'], publication['manifest_digest']
         evidence.update(gui='PASS', publication=publication, browser=marker)
