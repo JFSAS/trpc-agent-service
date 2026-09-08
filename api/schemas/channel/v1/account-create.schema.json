@@ -37,6 +37,13 @@
             "long_polling",
             "webhook"
           ]
+        },
+        "endpoint_profile": {
+          "type": "string",
+          "enum": [
+            "official",
+            "test"
+          ]
         }
       }
     }
@@ -125,6 +132,13 @@
                   "properties": {
                     "receive_mode": {
                       "const": "webhook"
+                    },
+                    "endpoint_profile": {
+                      "type": "string",
+                      "enum": [
+                        "official",
+                        "test"
+                      ]
                     }
                   },
                   "required": [

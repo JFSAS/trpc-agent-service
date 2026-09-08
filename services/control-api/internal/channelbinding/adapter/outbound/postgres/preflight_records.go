@@ -107,7 +107,7 @@ func validatePreflightRecord(r application.PreflightRecord) error {
 		origin := v.ExpectedPublicOrigin
 		if v.DiagnosticPolicy != "" {
 			origin = r.GatewayPublicOrigin
-			effective, err := channelv1.PreflightEffectiveConfigDigest(r.ScopeID, r.SourceEpoch, v.ReceiveMode, v.ConnectionRevision, origin, r.OriginStatus)
+			effective, err := channelv1.PreflightEffectiveConfigDigest(r.ScopeID, r.SourceEpoch, v.ReceiveMode, v.ConnectionRevision, origin, r.OriginStatus, v.EndpointProfile)
 			if err != nil || effective != v.EffectiveConfigDigest || (v.ReceiveMode == domain.Webhook && !reflect.DeepEqual(origin, v.ExpectedPublicOrigin)) {
 				return integrity()
 			}

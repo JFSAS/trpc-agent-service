@@ -304,3 +304,27 @@ func TestPGDuplicateSnapshotDigestAndExpiredPoll(t *testing.T) {
 		t.Fatal("same revision changed digest")
 	}
 }
+
+func TestPGEndpointSwitchClearsRemoteCursor(t *testing.T) {
+	pool := setup(t)
+	s := store(t, pool, "endpoint-test")
+	snap := snapshot(1)
+	apply(t, s, snap)
+	_, e := pool.Exec(context.Background(), `INSERT INTO gateway_telegram_receivers(bot_id,scope_id,account_id,source_epoch,connection_revision,next_offset,managed_url,pending_url) VALUES('123','pool','cha_test',$1,1,99999,'https://old.example/callback','https://old.example/pending')`, sourceEpoch)
+	if e != nil {
+		t.Fatal(e)
+	}
+	snap.Revision = 2
+	snap.Accounts[0].Revision = 2
+	snap.Accounts[0].ConnectionRevision = 2
+	snap.Accounts[0].Enabled = false
+	snap.Accounts[0].Config.EndpointProfile = "test"
+	seal(&snap)
+	apply(t, s, snap)
+	var offset int64
+	var managed, pending string
+	e = pool.QueryRow(context.Background(), `SELECT next_offset,managed_url,pending_url FROM gateway_telegram_receivers WHERE bot_id='123'`).Scan(&offset, &managed, &pending)
+	if e != nil || offset != 0 || managed != "" || pending != "" {
+		t.Fatal(offset, managed, pending, e)
+	}
+}

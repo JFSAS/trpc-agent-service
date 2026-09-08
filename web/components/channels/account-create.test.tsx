@@ -35,6 +35,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Channel account create", () => {
+  it("saves the test endpoint selected in the existing account form", async () => {
+    render(<AccountCreate tenantId="t" />); await fillTelegram();
+    inputValue("接入环境", "test"); openConfirmation(); confirmCreate();
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+    expect(mocks.create.mock.calls[0][1].config).toEqual({receive_mode:"long_polling",endpoint_profile:"test"});
+  });
+
   it("requires all fields and credentials before creating or opening confirmation", async () => {
     render(<AccountCreate tenantId="t" />);
     fireEvent.click(await screen.findByRole("button", { name: "检查并创建账户" }));

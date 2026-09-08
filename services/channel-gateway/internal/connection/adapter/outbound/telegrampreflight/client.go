@@ -5,6 +5,7 @@ package telegrampreflight
 import (
 	"context"
 	"errors"
+	protocol "github.com/liuzengh/trpc-agent-service/platform/im/telegram"
 	"net"
 	"net/http"
 	"strconv"
@@ -24,7 +25,8 @@ type Client struct {
 }
 
 // New uses only the deployment's ordinary outbound proxy configuration. Neither
-// the account nor the caller can supply a Telegram API endpoint or proxy.
+// the account nor the caller can supply an arbitrary endpoint or proxy. A test
+// account selects only the fixed Compose laboratory endpoint.
 func New() *Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DialContext = (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext
@@ -46,16 +48,21 @@ func (c *Client) Close() {
 	}
 }
 
-func (c *Client) newBot(token string) (*bot.Bot, error) {
+func (c *Client) newBot(token string) (*bot.Bot, error) { return c.newBotAt(token, "") }
+func (c *Client) newBotAt(token, profile string) (*bot.Bot, error) {
+	endpoint, e := protocol.Endpoint(profile, "")
+	if e != nil {
+		return nil, app.ErrInvalid
+	}
 	if c == nil || c.transport == nil || !validToken(token) {
 		return nil, app.ErrInvalid
 	}
 	h := &http.Client{
-		Transport:     &readOnlyTransport{next: c.transport, token: token},
+		Transport:     &readOnlyTransport{next: c.transport, token: token, endpoint: endpoint},
 		Timeout:       callTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	b, err := bot.New(token, bot.WithSkipGetMe(), bot.WithHTTPClient(callTimeout, h),
+	b, err := bot.New(token, bot.WithServerURL(endpoint), bot.WithSkipGetMe(), bot.WithHTTPClient(callTimeout, h),
 		bot.WithErrorsHandler(func(error) {}), bot.WithDebugHandler(func(string, ...any) {}))
 	if err != nil {
 		return nil, app.ErrInvalid
@@ -80,7 +87,7 @@ func (c *Client) Inspect(ctx context.Context, r app.ProbeRequest) (app.ProbeResu
 		out.IdentityCode = "TOKEN_REJECTED"
 		return out, nil
 	}
-	b, err := c.newBot(r.Token.Reveal())
+	b, err := c.newBotAt(r.Token.Reveal(), r.EndpointProfile)
 	if err != nil {
 		return out, err
 	}

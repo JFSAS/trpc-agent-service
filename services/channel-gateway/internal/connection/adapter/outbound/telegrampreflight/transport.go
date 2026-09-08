@@ -29,14 +29,16 @@ var (
 )
 
 type readOnlyTransport struct {
-	next  http.RoundTripper
-	token string
+	next     http.RoundTripper
+	token    string
+	endpoint string
 }
 
 func invalidResponse() error { return &providerError{code: "PROVIDER_RESPONSE_INVALID"} }
 
 func (t *readOnlyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r == nil || r.URL == nil || r.Method != http.MethodPost || r.URL.Scheme != "https" || r.URL.Hostname() != "api.telegram.org" || (r.URL.Port() != "" && r.URL.Port() != "443") || (r.Host != "" && r.Host != r.URL.Host) || r.URL.User != nil || r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || r.URL.RawPath != "" || r.URL.Opaque != "" || !validToken(t.token) {
+	validOrigin := r != nil && r.URL != nil && ((t.endpoint == "" || t.endpoint == "https://api.telegram.org") && r.URL.Scheme == "https" && r.URL.Hostname() == "api.telegram.org" && (r.URL.Port() == "" || r.URL.Port() == "443") || t.endpoint == "http://channel-lab:8080" && r.URL.Scheme == "http" && r.URL.Host == "channel-lab:8080")
+	if r == nil || r.URL == nil || r.Method != http.MethodPost || !validOrigin || (r.Host != "" && r.Host != r.URL.Host) || r.URL.User != nil || r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || r.URL.RawPath != "" || r.URL.Opaque != "" || !validToken(t.token) {
 		return nil, invalidResponse()
 	}
 	method := strings.TrimPrefix(r.URL.Path, "/bot"+t.token+"/")

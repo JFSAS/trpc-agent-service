@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/go-telegram/bot"
+	protocol "github.com/liuzengh/trpc-agent-service/platform/im/telegram"
 	use "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
 	c "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain/accountcatalog"
 	telegram "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/telegram"
@@ -93,9 +94,12 @@ func (b controlSenders) Reserve(ctx context.Context, r app.SendRequest) (app.Res
 		close = tr.CloseIdleConnections
 		h := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		options := []bot.Option{bot.WithSkipGetMe(), bot.WithHTTPClient(5*time.Second, h)}
-		if b.telegramAPIURL != "" {
-			options = append(options, bot.WithServerURL(strings.TrimSuffix(b.telegramAPIURL, "/")))
+		endpoint, err := protocol.Endpoint(v.Account.Config.EndpointProfile, b.telegramAPIURL)
+		if err != nil {
+			close()
+			return nil, d.ErrUnavailable
 		}
+		options = append(options, bot.WithServerURL(strings.TrimSuffix(endpoint, "/")))
 		client, err := bot.New(values[0].Value, options...)
 		values[0].Value = ""
 		if err != nil {

@@ -72,9 +72,10 @@ func ValidPurpose(p Provider, purpose string) bool {
 
 // ConnectionConfig is closed by provider; callers cannot submit endpoints or paths.
 type ConnectionConfig struct {
-	ReceiveMode string `json:"receive_mode,omitempty"`
-	WebhookPath string `json:"webhook_path,omitempty"`
-	BotID       string `json:"bot_id,omitempty"`
+	ReceiveMode     string `json:"receive_mode,omitempty"`
+	EndpointProfile string `json:"endpoint_profile,omitempty"`
+	WebhookPath     string `json:"webhook_path,omitempty"`
+	BotID           string `json:"bot_id,omitempty"`
 }
 type Account struct {
 	TenantID           string           `json:"tenant_id"`
@@ -155,6 +156,9 @@ func NewAccount(tenant, id, scope, actor string, provider Provider, physicalID, 
 	return a, nil
 }
 func (a Account) Validate() error {
+	if a.Config.EndpointProfile != "" && (a.Provider != Telegram || a.Config.EndpointProfile != "test") {
+		return failure(InputInvalid, "/config/endpoint_profile")
+	}
 	physical, err := NormalizeProviderAccountID(a.Provider, a.ProviderAccountID)
 	if err != nil || physical != a.ProviderAccountID || !ValidID(a.ID) || !ValidID(a.TenantID) || !ValidID(a.ScopeID) || !ValidVersion(a.Revision) || !ValidVersion(a.ConnectionRevision) || a.ConnectionRevision > a.Revision || a.MinRouteGeneration < 0 || a.MinRouteGeneration > MaxVersion {
 		return failure(SourceIntegrity, "")
@@ -237,11 +241,29 @@ func (a Account) AdvanceConnection(now time.Time) (Account, error) {
 	return a, nil
 }
 
-// ChangeConfiguration changes metadata and the single user-owned connection
-// field atomically. Generated paths and physical identity remain immutable.
-func (a Account) ChangeConfiguration(expected int64, name, description *string, mode *string, now time.Time) (Account, bool, error) {
+// ChangeConfiguration changes metadata, receive mode and endpoint selection
+// atomically. Generated paths and physical identity remain immutable.
+func (a Account) ChangeConfiguration(expected int64, name, description *string, mode *string, now time.Time, endpoint ...string) (Account, bool, error) {
+	profile := a.Config.EndpointProfile
+	if len(endpoint) > 0 {
+		profile = endpoint[0]
+		if profile == "official" {
+			profile = ""
+		}
+	}
+	if len(endpoint) > 1 || (profile != "" && profile != "test") || (a.Provider != Telegram && profile != "") {
+		return a, false, failure(InputInvalid, "/config/endpoint_profile")
+	}
+	changedEndpoint := profile != a.Config.EndpointProfile
+	if changedEndpoint && a.Enabled {
+		return a, false, failure(AccountMustBeDisabled, "/config/endpoint_profile")
+	}
 	if expected != a.Revision || !ValidVersion(expected) {
 		return a, false, failure(RevisionConflict, "/expected_account_revision")
+	}
+	if mode == nil && changedEndpoint {
+		v := a.Config.ReceiveMode
+		mode = &v
 	}
 	if mode == nil {
 		return a.ChangeMetadata(expected, name, description, now)
@@ -261,7 +283,7 @@ func (a Account) ChangeConfiguration(expected int64, name, description *string, 
 			return a, false, err
 		}
 	}
-	if changedMode {
+	if changedMode || changedEndpoint {
 		c, err := a.AdvanceConnection(now)
 		if err != nil {
 			return a, false, err
@@ -270,6 +292,7 @@ func (a Account) ChangeConfiguration(expected int64, name, description *string, 
 		next.ConnectionRevision = c.ConnectionRevision
 		next.UpdatedAt = now
 		next.Config.ReceiveMode = *mode
+		next.Config.EndpointProfile = profile
 	}
 	return next, next != a, nil
 }

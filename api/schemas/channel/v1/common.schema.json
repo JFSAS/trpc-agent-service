@@ -271,6 +271,13 @@
                     "long_polling",
                     "webhook"
                   ]
+                },
+                "endpoint_profile": {
+                  "type": "string",
+                  "enum": [
+                    "official",
+                    "test"
+                  ]
                 }
               },
               "required": [
@@ -351,6 +358,13 @@
                     "enum": [
                       "long_polling",
                       "webhook"
+                    ]
+                  },
+                  "endpoint_profile": {
+                    "type": "string",
+                    "enum": [
+                      "official",
+                      "test"
                     ]
                   }
                 },
