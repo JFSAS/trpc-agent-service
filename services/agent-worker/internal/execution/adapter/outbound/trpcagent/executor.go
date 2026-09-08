@@ -18,6 +18,9 @@ import (
 	replywire "github.com/liuzengh/trpc-agent-service/gen/events/execution/v1"
 	openaiapi "github.com/openai/openai-go"
 	openaioption "github.com/openai/openai-go/option"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
@@ -59,7 +62,10 @@ type Result struct {
 type Executor struct {
 	// BeforeModel inspects the actual outbound SDK request once before network I/O.
 	// Nil retains legacy execution; this seam alone does not enable managed budgets.
-	BeforeModel   ModelCallGate
+	BeforeModel ModelCallGate
+
+	Tracer trace.Tracer
+
 	CapacityBytes int
 	DrainTimeout  time.Duration
 	beforeAppend  func(*event.Event) error
@@ -93,11 +99,34 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
+	if e.Tracer != nil {
+		var span trace.Span
+		ctx, span = e.Tracer.Start(ctx, "worker.runner.run", trace.WithAttributes(
+			attribute.String("app.run.id", req.RunID), attribute.String("app.attempt.id", req.AttemptID), attribute.String("app.session.id", req.SessionID)))
+		defer func() {
+			if err != nil {
+				kind := "failed"
+				if errors.Is(err, context.Canceled) {
+					kind = "cancelled"
+				} else if errors.Is(err, context.DeadlineExceeded) {
+					kind = "deadline"
+				}
+				span.SetStatus(codes.Error, "")
+				span.SetAttributes(attribute.String("error.type", kind))
+			}
+			span.End()
+		}()
+	}
 	local, err := newOverlay(req.TenantID, req.SessionID, req.AcceptedSnapshot, e.CapacityBytes)
 	if err != nil {
 		return result, err
 	}
 	local.beforeAppend = e.beforeAppend
+	local.tracer = e.Tracer
+	defer func() {
+		appends, bytes := local.stats()
+		trace.SpanFromContext(ctx).SetAttributes(attribute.Int64("app.session.overlay.appends", appends), attribute.Int64("app.session.overlay.bytes", bytes))
+	}()
 	// Owned transport closes in every return path; no model client carries credentials
 	// beyond this attempt. Retries are explicitly zero; Execution owns retry policy.
 	transport := http.DefaultTransport.(*http.Transport).Clone()

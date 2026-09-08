@@ -75,6 +75,22 @@ class ProofSwitch:
         with self._lock:
             self._backends.pop(worker_id, None)
 
+    def disconnect(self):
+        """Drop owned TCP streams, retaining listener and backend configuration.
+
+        Used when a stopped process leaves pooled proof connections open. This
+        preserves EOF/transport failure; it does not synthesize a proof response.
+        """
+        with self._lock:
+            connections = list(self._sockets)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
+        return len(connections)
+
     def _relay(self, client):
         upstream = None
         with self._lock:

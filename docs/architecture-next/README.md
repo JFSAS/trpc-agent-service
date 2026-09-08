@@ -82,6 +82,8 @@
   Helm 部署资产的统一目录和所有权。
 - [可观测性与 Telemetry](operations/observability.md)：OpenTelemetry、Metrics、
   Trace、日志、Dashboard、告警和基础设施观测的生产基线。
+- [IM 运行链路 Tracing V1 计划](operations/im-runtime-tracing-v1-plan.md)：当前 Worker task 独立实施；
+  Gateway → 持久 Carrier/NATS → Runner/正式 Session → IM 回复；M1 本地验证通过，M2 持久入站、M3 Session 与 M4 Reply/Delivery 已实现并进行专项验证，M5 实施中：观测部署及真实进程 fixture gate 已通过，真实 IM/故障窗口待完成。
 
 ## 当前实现与后续路线
 

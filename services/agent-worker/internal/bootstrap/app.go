@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/inbound/httpadapter"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/manifestadapter"
 	ledgerpg "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/postgresadapter"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/runtimeadapter"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
 	execution "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/infra/natsadapter"
@@ -34,12 +36,13 @@ type processor interface {
 	Advance(context.Context, domain.Run) error
 }
 type readyLedger interface {
-	Ready(context.Context, int) ([]domain.Run, error)
+	Scheduled(context.Context, int) ([]execution.ScheduledRun, error)
 }
 type App struct {
 	quota                                                                            quotaReconciler
 	consumption                                                                      quotaReconciler
 	authorization                                                                    *authorizationRuntime
+	tracing                                                                          *telemetrytrace.Runtime
 	config                                                                           Config
 	pool                                                                             *pgxpool.Pool
 	nc                                                                               *nats.Conn
@@ -80,7 +83,11 @@ func New(ctx context.Context, c Config) (*App, error) {
 		}
 	}()
 	var err error
-	a.observation, err = telemetry.New(ctx, c.WorkerID, os.Stdout, c.Telemetry.Export())
+	a.tracing, err = telemetrytrace.New(ctx, c.Tracing, telemetrytrace.Identity{Service: "agent-worker", Instance: c.WorkerID, Environment: os.Getenv("DEPLOYMENT_ENVIRONMENT")})
+	if err != nil {
+		return nil, err
+	}
+	a.observation, err = telemetry.New(ctx, c.WorkerID, os.Stdout, c.Telemetry.Export(), a.tracing.Resource())
 	if err != nil {
 		return nil, err
 	}
@@ -105,9 +112,10 @@ func New(ctx context.Context, c Config) (*App, error) {
 	if err = a.configureQuotaReconciliation(); err != nil {
 		return nil, err
 	}
+	a.ledger.Tracer = a.tracing.Tracer("agent-worker/execution-v1")
 	a.projection = observedProjection{Projection: projectionpg.New(a.pool), observer: a.observation}
-	reader := manifestadapter.Reader{Projection: a.projection, ContractDigest: c.PlatformContractDigest}
-	factory, err := runtimeadapter.New(runtimeadapter.Options{BaseURL: c.ControlURL, Client: client, RequestTimeout: c.Timing.RequestTimeout.Value(), MaxResponseBytes: c.Limits.MaxCredentialResponseBytes, SnapshotCapacityBytes: c.Limits.MaxSnapshotBytes, DrainTimeout: c.Timing.SDKDrainTimeout.Value(), MaxTrackedAttempts: c.Limits.MaxTrackedAttempts, Observer: a.observation})
+	reader := manifestadapter.Reader{Tracer: a.tracing.Tracer("agent-worker/execution-v1"), Projection: a.projection, ContractDigest: c.PlatformContractDigest}
+	factory, err := runtimeadapter.New(runtimeadapter.Options{Tracer: a.tracing.Tracer("agent-worker/execution-v1"), BaseURL: c.ControlURL, Client: client, RequestTimeout: c.Timing.RequestTimeout.Value(), MaxResponseBytes: c.Limits.MaxCredentialResponseBytes, SnapshotCapacityBytes: c.Limits.MaxSnapshotBytes, DrainTimeout: c.Timing.SDKDrainTimeout.Value(), MaxTrackedAttempts: c.Limits.MaxTrackedAttempts, Observer: a.observation})
 	if err != nil {
 		return nil, errors.New("configure Worker runtime adapter")
 	}
@@ -115,6 +123,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	a.executor = tracedProcessor{delegate: a.executor, tracer: a.tracing.Tracer("agent-worker/execution-v1")}
 	acceptor, err := execution.NewAcceptor(ledgerpg.NewIntake(a.pool), c.Policy.Domain(), domain.IntakeLimits{MaxQueuedRuns: c.Limits.MaxQueuedRuns, MaxRetainedRuns: c.Limits.MaxRetainedRuns}, a.observation)
 	if err != nil {
 		return nil, err
@@ -151,10 +160,12 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	a.manifestCreated = mi.Created
 	a.manifestConsumerCreated = mci.Created
-	a.runs, err = natsadapter.BindRun(ctx, js, acceptor, observedRejector{a.ledger, a.observation})
+	runs, err := natsadapter.BindRun(ctx, js, acceptor, observedRejector{a.ledger, a.observation})
 	if err != nil {
 		return nil, err
 	}
+	runs.Tracer = a.tracing.Tracer("agent-worker")
+	a.runs = runs
 	a.runStream, err = js.Stream(ctx, natsadapter.RunStream)
 	if err != nil {
 		return nil, natsadapter.ErrUnavailable
@@ -185,7 +196,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 		return nil, natsadapter.ErrTopology
 	}
 	a.replyCreated = replyInfo.Created
-	a.reply, err = natsadapter.NewReplyRelay(a.ledger, js, c.Limits.ReplyBatch)
+	reply, err := natsadapter.NewReplyRelay(a.ledger, js, c.Limits.ReplyBatch)
 	if err != nil {
 		return nil, err
 	}
@@ -193,13 +204,19 @@ func New(ctx context.Context, c Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	reply.Tracer = a.tracing.Tracer("agent-worker")
+	a.reply = reply
 	queries := proofQueries{ledger: a.ledger, manifests: reader}
-	handler, err := httpadapter.New(queries, queries, httpadapter.Options{ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
+	handler, err := httpadapter.New(queries, queries, httpadapter.Options{Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
 	if err != nil {
 		return nil, err
 	}
 	a.healthServer = &http.Server{Addr: c.HealthAddress, Handler: a.healthHandler(), ReadHeaderTimeout: c.Timing.OperationTimeout.Value()}
 	a.proofServer = &http.Server{Addr: c.InternalAddress, Handler: handler, ReadHeaderTimeout: c.Timing.OperationTimeout.Value(), ReadTimeout: c.Timing.ProofTimeout.Value(), WriteTimeout: c.Timing.ProofTimeout.Value() + c.Timing.OperationTimeout.Value(), MaxHeaderBytes: 64 * 1024}
+	if c.Tracing != nil {
+		trpcagent.BindLogging(a.observation.SDKLog)
+		trpcagent.BindTracing(a.tracing.Provider())
+	}
 	success = true
 	return a, nil
 }
@@ -225,6 +242,11 @@ func (a *App) closeOwned() {
 			a.authorization.Close()
 		}
 		defer func() {
+			if a.tracing != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), a.config.Timing.HTTPShutdownTimeout.Value())
+				_ = a.tracing.Shutdown(ctx)
+				cancel()
+			}
 			if a.observation != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), a.config.Timing.HTTPShutdownTimeout.Value())
 				defer cancel()
@@ -448,7 +470,7 @@ func (a *App) schedule(ctx, activeCtx context.Context, ledger readyLedger) {
 				continue
 			}
 			op, cancel := context.WithTimeout(ctx, a.config.Timing.OperationTimeout.Value())
-			rows, err := ledger.Ready(op, a.config.Limits.ScanBatch)
+			rows, err := ledger.Scheduled(op, a.config.Limits.ScanBatch)
 			cancel()
 			if err != nil {
 				a.storageHealthy.Store(false)
@@ -465,10 +487,10 @@ func (a *App) schedule(ctx, activeCtx context.Context, ledger readyLedger) {
 				running[key] = true
 				a.attempts.Add(1)
 				a.active.Add(1)
-				go func(r domain.Run, key string) {
+				go func(r execution.ScheduledRun, key string) {
 					defer a.attempts.Done()
 					defer a.active.Add(-1)
-					_ = a.executor.Advance(activeCtx, r)
+					_ = a.executor.Advance(r.Carrier.Restore(activeCtx), r.Run)
 					select {
 					case completed <- key:
 					case <-ctx.Done():

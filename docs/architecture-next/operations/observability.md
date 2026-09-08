@@ -1,7 +1,8 @@
 # 可观测性与 Telemetry 设计
 
 - **设计状态**：已接受
-- **实现状态**：尚未实现；当前只有 Control API 的 `infra/telemetry` 包占位
+- **实现状态**：部分实现。Worker 已有结构化日志与可选 OTLP Metrics；M1 进程 Traces/SDK 接线通过本地技术验证；IM 端到端 Trace、Collector/Tempo/Grafana 查询链及完整运维栈尚待实施。
+- **增量交付**：[IM 运行链路 Tracing V1](im-runtime-tracing-v1-plan.md)（2026-09-08）；M0–M5 本工作树开发及首版验收完成，原手测实例已接入。真实 Telegram/DeepSeek、正式 Session、恢复/退化/旧构建回退证据见[完成审计](im-runtime-tracing-v1-acceptance.md)。Memory 与完整运维平台继续后置。
 - **确认日期**：2026-08-31
 - **适用范围**：所有生产 Workload、异步协议、Compose/Kubernetes 部署和运维验收
 
@@ -13,7 +14,7 @@ Metrics 的职责。Telemetry 是部署基础设施，不是业务事实存储�
 
 平台必须做到：
 
-1. 使用同一条 Trace 串联 Control 发布链路和 IM 运行链路中的跨进程调用。
+1. 分别串联 Control 发布链路和每条 IM 输入的跨进程调用；发布与运行通过不可变发布标识关联，不将所有 Run 挂在同一个发布 Trace 下。
 2. 使用低基数 Metrics 观察容量、延迟、错误率、积压和依赖健康。
 3. 集中检索结构化日志，并通过 `trace_id`、`run_id` 等内部标识关联诊断。
 4. 为 Gateway、Worker、PostgreSQL、NATS JetStream 和 Telemetry 自身提供 Dashboard
@@ -27,7 +28,8 @@ Metrics 的职责。Telemetry 是部署基础设施，不是业务事实存储�
 
 ## 2. 必须保留的组件
 
-自托管完整部署包含以下组件：
+自托管完整部署的终态包含以下组件；IM Tracing V1 先交付 Collector、Tempo、Grafana，
+完整日志、指标、告警栈不作为该纵向切片的前置条件：
 
 | 层次 | 组件 | 必须承担的职责 |
 | --- | --- | --- |
@@ -78,7 +80,9 @@ NATS Surveyor、postgres_exporter 以及必要的基础设施端点。
 
 ## 4. 代码所有权与初始化
 
-每个 Go Workload 在自己的 `internal/infra/telemetry/` 中提供进程级技术能力：
+每个 Go Workload 的 bootstrap 拥有独立进程级遥测生命周期；服务本地
+`internal/infra/telemetry/` 提供日志/Metrics，Gateway/Worker 复用
+`platform/telemetrytrace` 的无业务依赖 Trace 实现，避免维护两份过滤器/exporter：
 
 - 创建 Logger、TracerProvider、MeterProvider 和 OTLP Exporter。
 - 设置统一 Resource Attributes。
@@ -86,6 +90,9 @@ NATS Surveyor、postgres_exporter 以及必要的基础设施端点。
 - 管理 Batch、Queue、Flush 和 Shutdown。
 - 应用统一的敏感字段过滤规则。
 - 向 bootstrap 返回显式 Provider 和关闭函数，不使用全局 Service Locator。
+
+SDK 兼容接线是显式例外：bootstrap 在业务启动前将 trpc-agent-go 的独立 Tracer
+绑定到进程 Provider；全局桥接不进入业务模块，不为 SDK 再启动一套 exporter。
 
 业务模块定义本领域 Span、Metric 和日志事件的业务含义。`infra/telemetry` 禁止定义
 Deployment 发布规则、Run 状态迁移、Tool 决策或 Channel Binding 语义。
@@ -138,9 +145,13 @@ channel_binding_id
 
 ## 6. Trace 传播
 
-HTTP 使用 W3C `traceparent` 和 `tracestate`。NATS Event、Inbox、Outbox 和
-`ReplyIntent` Envelope 必须携带同样的 W3C Carrier 字符串，禁止序列化 SDK Span
-对象或依赖进程内 `context.Context` 跨队列自动传播。
+内部 HTTP 使用 W3C `traceparent` 和 `tracestate`；外部 IM 入口建立平台本地根。
+NATS 通过 Header 传播 Carrier，持久化交接在各自数据库记录中保存可空 Carrier 列。
+当前封闭的 RunRequested/ReplyIntent JSON payload 不增加 Trace 字段，业务摘要和去重
+身份不变。禁止序列化 SDK Span 对象或依赖进程内 `context.Context` 自动跨队列传播。
+
+四处持久化、不可变消息创建 context、重复消息及进程重启规则见
+[IM Tracing V1 §4–5](im-runtime-tracing-v1-plan.md#4-carrier-传输协议)。
 
 ### 6.1 Control 发布链路
 
@@ -167,11 +178,12 @@ IM Receive
   -> Gateway Reply Delivery
 ```
 
-跨异步边界的 Consumer 创建新的 Consumer Span，并从 Envelope 提取上游 Trace
-Context。消息重投必须产生新的处理 Span，并使用稳定 Event ID、Run ID 与原始 Trace
-关联，不能伪装成第一次处理。
+跨异步边界的 Consumer 从 Header 提取上游消息创建 context，并创建新的 Consumer Span。
+IM Tracing V1 的单消息处理明确采用 creation context 为 parent，并保留 Link；Relay 每次
+实际发送形成独立 Span，消息创建 Carrier 不因重试改写。Worker 调度和 Gateway Delivery
+从各自持久化记录恢复 context。消息重投产生新的处理 Span，业务 ID 与首次 Carrier 保持稳定。
 
-平台至少定义以下 Span：
+平台至少覆盖以下语义阶段；名称以各切片已确认的埋点表为准：
 
 ```text
 control.deployment.publish
@@ -181,9 +193,11 @@ gateway.run.admit
 gateway.reply.deliver
 worker.run.claim
 worker.run.execute
-worker.model.call
-worker.tool.call
-worker.storage.access
+chat <model>                 # SDK LLM Span，避免重复包同义 Span
+execute_tool <tool>          # SDK Tool Span，仅实际执行时
+worker.session.load
+worker.session.stage
+worker.session.commit
 ```
 
 优先复用 OpenTelemetry Semantic Conventions。自定义 Attribute 必须使用稳定命名，
@@ -371,14 +385,18 @@ Dashboard 和告警规则配置全部进入 `deploy/observability/`，并由
 
 ## 15. 实现顺序
 
-1. 在各 Workload bootstrap 中建立统一 Resource、Logger、TracerProvider 和
-   MeterProvider。
-2. 建立 Collector、Prometheus、Tempo、Loki、Alloy、Grafana 与 Alertmanager 的
-   Compose 配置。
-3. 先验证 Control API 的 HTTP、PostgreSQL、Migration、Identity 和 Deployment
-   Telemetry。
-4. 在 Gateway、NATS Event、Worker 和 Reply 链路实现 W3C Trace 传播。
-5. 接入 NATS Surveyor、postgres_exporter、Dashboard、Alert Rule 和验收测试。
+当前实施优先级以 [IM Tracing V1](im-runtime-tracing-v1-plan.md) 为准：
+
+1. M1：Gateway/Worker 统一 Provider、Resource、SDK 桥接、字段过滤与日志关联。
+2. M2：IM 入站、Run Outbox Header、Worker 持久接纳与调度恢复。
+3. M3：Runner/LLM、Session 分层、Completion 及失败恢复。
+4. M4：Reply Outbox、Gateway 持久 Delivery、分片发送与重试。
+5. M5：Collector/Tempo/Grafana 最小部署，真实 Telegram、重启/重放、导出故障与回滚验收。
+6. 后续：Control 发布链、完整日志/指标/告警栈与基础设施 exporter；Tool/Memory 随对应
+   运行能力实现埋点，不因观测需求提前扩大 Worker V1。
+
+上述阶段的 Gateway、Worker、传输和部署修改由当前 Worker task 在自己的工作树完成；
+其他工作树只可咨询，不承接本轮修改或同步实施。
 
 文档已接受不代表组件已经部署或代码已经接入。实现状态必须以 Compose/Kubernetes
 现场验证、查询结果、告警路由和跨 Workload Trace 证据为准。

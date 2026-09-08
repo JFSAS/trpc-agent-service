@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 )
 
 type outboxStub struct {
@@ -24,7 +26,7 @@ func (o *outboxStub) Published(context.Context, OutboxMessage) error {
 
 type publishFunc func(context.Context, string, string, []byte) error
 
-func (f publishFunc) Publish(ctx context.Context, subject, id string, payload []byte) error {
+func (f publishFunc) PublishMessage(ctx context.Context, subject, id string, payload []byte, _ tracecontext.Carrier) error {
 	return f(ctx, subject, id, payload)
 }
 func TestRelayPublishesBeforeLedgerCompletion(t *testing.T) {

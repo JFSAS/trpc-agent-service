@@ -272,9 +272,9 @@ type capacityPublisher struct {
 	err   error
 }
 
-func (p *capacityPublisher) Publish(ctx context.Context, subject string, payload []byte, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+func (p *capacityPublisher) PublishMsg(ctx context.Context, msg *nats.Msg, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
 	p.calls++
-	p.ack, p.err = p.next.Publish(ctx, subject, payload, opts...)
+	p.ack, p.err = p.next.PublishMsg(ctx, msg, opts...)
 	return p.ack, p.err
 }
 

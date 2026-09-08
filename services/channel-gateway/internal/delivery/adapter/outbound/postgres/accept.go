@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type rowReader interface {
@@ -15,13 +17,15 @@ type rowReader interface {
 func find(ctx context.Context, q rowReader, id string) (domain.Receipt, string, bool, error) {
 	var r domain.Receipt
 	var digest string
-	err := q.QueryRow(ctx, `SELECT intent_id,run_id,part_count,digest FROM gateway_delivery_intents WHERE intent_id=$1`, id).Scan(&r.IntentID, &r.RunID, &r.PartCount, &digest)
+	var carrier tracecontext.Carrier
+	err := q.QueryRow(ctx, `SELECT intent_id,run_id,part_count,digest,COALESCE(traceparent,''),COALESCE(tracestate,'') FROM gateway_delivery_intents WHERE intent_id=$1`, id).Scan(&r.IntentID, &r.RunID, &r.PartCount, &digest, &carrier.Traceparent, &carrier.Tracestate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, "", false, nil
 	}
 	if err != nil {
 		return r, "", false, databaseError(ctx, err)
 	}
+	linkCarrier(ctx, carrier)
 	return r, digest, true, nil
 }
 func (s *Store) Find(ctx context.Context, id string) (domain.Receipt, string, bool, error) {
@@ -77,7 +81,8 @@ func (s *Store) Accept(ctx context.Context, p domain.Prepared) (domain.Receipt, 
 	}
 	ir, _ := json.Marshal(p.Intent)
 	tr, _ := json.Marshal(p.Target)
-	_, err = tx.Exec(ctx, `INSERT INTO gateway_delivery_intents(intent_id,run_id,digest,intent,target,provider,account_id,deadline,part_count) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, p.Intent.ID, p.Intent.RunID, p.Digest, ir, tr, p.Target.Provider, p.Target.AccountID, p.Intent.Deadline, len(p.Parts))
+	carrier := tracecontext.Capture(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO gateway_delivery_intents(intent_id,run_id,digest,intent,target,provider,account_id,deadline,part_count,traceparent,tracestate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''))`, p.Intent.ID, p.Intent.RunID, p.Digest, ir, tr, p.Target.Provider, p.Target.AccountID, p.Intent.Deadline, len(p.Parts), carrier.Traceparent, carrier.Tracestate)
 	if err != nil {
 		return old, databaseError(ctx, err)
 	}
@@ -120,4 +125,12 @@ func (s *Store) Get(ctx context.Context, id string) (domain.Snapshot, error) {
 		return out, domain.ErrUnavailable
 	}
 	return out, nil
+}
+
+func linkCarrier(ctx context.Context, carrier tracecontext.Carrier) {
+	sc := trace.SpanContextFromContext(carrier.Restore(context.Background()))
+	ambient := trace.SpanContextFromContext(ctx)
+	if sc.IsValid() && (sc.TraceID() != ambient.TraceID() || sc.SpanID() != ambient.SpanID()) {
+		trace.SpanFromContext(ctx).AddLink(trace.Link{SpanContext: sc})
+	}
 }

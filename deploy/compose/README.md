@@ -486,3 +486,8 @@ Webhook 账户若缺 origin，会报告 CONFIG_INVALID 并影响 readiness，不
 Runtime 双内部 listener 与 Reply proof 接线。当前步骤、配置目录和真实验收分层以
 [Worker V1 Compose 部署](WORKER_V1.md) 为准。历史真实 Telegram 入站证据仍不等于
 Worker 回复验收；真实回执请与本轮实现状态及审计记录交叉核对。
+
+
+## 可选 IM Tracing 栈
+
+独立 Collector/Tempo/Grafana profile、TLS overlay、查询与可重复验证见 [TRACING_V1.md](TRACING_V1.md)。它不启动或替换现有业务服务。

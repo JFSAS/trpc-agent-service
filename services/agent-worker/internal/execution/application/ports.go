@@ -6,8 +6,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 )
+
+// ScheduledRun carries observation metadata outside business Run/digest contracts.
+type ScheduledRun struct {
+	domain.Run
+	Carrier tracecontext.Carrier
+}
 
 // IntakeLedger owns receipt replay and new input admission. A durable pending
 // input returns ErrNotReady and must not be acknowledged as an accepted Run.

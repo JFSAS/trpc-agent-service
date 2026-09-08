@@ -61,6 +61,45 @@ class TelegramFixtureTest(unittest.TestCase):
             finally:
                 fixture.close()
 
+    def test_typed_rejection_is_one_shot_and_never_accepts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = TelegramFixture(directory)
+            try:
+                payload = {"chat_id": "123", "text": "rate fixture", "reply_parameters": '{"message_id":7}'}
+                fixture.reject_once('sendMessage', text=payload['text'], conversation_id='123')
+                request = Request(fixture.url + '/bot' + fixture.token + '/sendMessage', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+                with self.assertRaises(HTTPError) as rejected:
+                    urlopen(request, timeout=3)
+                self.assertEqual(rejected.exception.code, 429)
+                self.assertEqual(json.load(rejected.exception)['error_code'], 429)
+                rejected.exception.close()
+                self.assertEqual(fixture.snapshot(), [])
+                self.assertFalse(fixture.rejection_snapshot()[0]['accepted'])
+                with urlopen(request, timeout=3) as response:
+                    self.assertTrue(json.load(response)['ok'])
+                self.assertEqual(len(fixture.snapshot()), 1)
+                self.assertEqual(len(fixture.rejection_snapshot()), 1)
+            finally:
+                fixture.close()
+
+    def test_preparation_rejection_does_not_record_a_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = TelegramFixture(directory)
+            try:
+                fixture.reject_once('getMe')
+                with self.assertRaises(ValueError):
+                    fixture.reject_once('getMe')
+                request = Request(fixture.url + '/bot' + fixture.token + '/getMe', data=b'{}', headers={'Content-Type': 'application/json'})
+                with self.assertRaises(HTTPError) as rejected:
+                    urlopen(request, timeout=3)
+                self.assertEqual(rejected.exception.code, 429)
+                rejected.exception.close()
+                self.assertEqual(fixture.snapshot(), [])
+                with urlopen(request, timeout=3) as response:
+                    self.assertTrue(json.load(response)['ok'])
+            finally:
+                fixture.close()
+
     def test_sql_literal_is_quoted(self):
         self.assertEqual(_literal("a'b"), "'a''b'")
 

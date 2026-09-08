@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	telegram "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/inbound/telegramadapter"
 	admissionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/outbound/postgres"
 	admissionapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/application"
@@ -43,6 +45,7 @@ import (
 type App struct {
 	policy                    *policyProjectionRuntime
 	authorization             *policyProjectionRuntime
+	tracing                   *telemetrytrace.Runtime
 	workerProof               *workerhttp.Client
 	replyAcceptor             *deliveryapp.Acceptor
 	replyConsumer             *replyconsumer.Consumer
@@ -77,6 +80,18 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
+	traces, err := telemetrytrace.New(ctx, c.Tracing, telemetrytrace.Identity{Service: "channel-gateway", Instance: c.InstanceID, Environment: os.Getenv("DEPLOYMENT_ENVIRONMENT")})
+	if err != nil {
+		return nil, err
+	}
+	assembled := false
+	defer func() {
+		if !assembled {
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = traces.Shutdown(shutdown)
+		}
+	}()
 	pool, err := openDatabaseForTarget(ctx, c, expected)
 	if err != nil {
 		return nil, err
@@ -157,11 +172,11 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	ledger := admissionpg.NewStore(pool, routes).WithConnectionGuard(leases)
+	ledger := admissionpg.NewStore(pool, routes).WithConnectionGuard(leases).WithTracing(traces.Tracer("channel-gateway"))
 	if catalogStore != nil {
 		ledger = ledger.WithAccountUseGuard(accountGuardBridge{store: catalogStore, ingress: true}).WithTelegramGuard(telegramGuardBridge{receptionpg.New(pool, catalogStore)})
 	}
-	acceptor := admissionapp.New(ledger, routeBridge{routing})
+	acceptor := admissionapp.New(ledger, routeBridge{routing}, traces.Tracer("channel-gateway"))
 	stream, err := n.JS.Stream(ctx, transport.RouteStream)
 	if err != nil {
 		return fail(err)
@@ -178,7 +193,9 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	app := &App{authorization: authorization, policy: policy, catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+	app := &App{tracing: traces, authorization: authorization, policy: policy, catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+
+	app.relay.Tracer = traces.Tracer("channel-gateway")
 	if err := app.consumer.Initialize(ctx); err != nil {
 		return fail(err)
 	}
@@ -210,6 +227,7 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		if err != nil {
 			return fail(err)
 		}
+		workerProof.Tracer = traces.Tracer("channel-gateway")
 		app.workerProof = workerProof
 		app.replyAcceptor, err = deliveryapp.NewAcceptor(deliveryLedger, admissionDeliveryReader{ledger}, workerProof, deliveryapp.AcceptOptions{})
 		if err != nil {
@@ -231,11 +249,12 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		if e != nil {
 			return fail(e)
 		}
+		app.replyConsumer.Tracer = traces.Tracer("channel-gateway")
 		provider, e := wecomdelivery.NewProvider(connectionDeliverySource{app.connections})
 		if e != nil {
 			return fail(e)
 		}
-		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{})
+		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{Tracer: traces.Tracer("channel-gateway")})
 		if e != nil {
 			return fail(e)
 		}
@@ -272,8 +291,9 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	app.server = newServer(c.HTTPAddress, mux)
+	app.server = newServer(c.HTTPAddress, traces.IMHandler(mux))
 	app.admin = newServer(c.AdminAddress, admin)
+	assembled = true
 	return app, nil
 }
 func newServer(address string, h http.Handler) *http.Server {
@@ -289,6 +309,15 @@ func (a *App) Close() {
 		if a.policy != nil {
 			a.policy.Close()
 		}
+
+		defer func() {
+			if a.tracing != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = a.tracing.Shutdown(ctx)
+			}
+		}()
+
 		if a.workerProof != nil {
 			a.workerProof.Close()
 		}

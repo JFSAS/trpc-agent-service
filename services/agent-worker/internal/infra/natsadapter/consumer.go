@@ -10,12 +10,16 @@ import (
 
 	controlwire "github.com/liuzengh/trpc-agent-service/api/events/control/v1"
 	executionwire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	runwire "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/inbound/wire"
 	execution "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	manifestwire "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/adapter/inbound/wire"
 	manifest "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/domain"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -49,6 +53,7 @@ type StreamInspector interface {
 	Info(context.Context, ...jetstream.StreamInfoOpt) (*jetstream.StreamInfo, error)
 }
 type Consumer struct {
+	Tracer                       trace.Tracer
 	consumer                     MessageConsumer
 	stream                       StreamInspector
 	intake                       RunAcceptor
@@ -154,7 +159,7 @@ func (c *Consumer) Poll(ctx context.Context) (bool, error) {
 	}
 	return true, err
 }
-func (c *Consumer) Handle(ctx context.Context, msg jetstream.Msg) error {
+func (c *Consumer) Handle(ctx context.Context, msg jetstream.Msg) (err error) {
 	if ctx == nil || msg == nil {
 		return execution.ErrInvalid
 	}
@@ -171,6 +176,15 @@ func (c *Consumer) Handle(ctx context.Context, msg jetstream.Msg) error {
 	}
 	source := fmt.Sprintf("%s@%s#%d", c.streamName, info.Created.UTC().Format(time.RFC3339Nano), meta.Sequence.Stream)
 	if c.intake != nil {
+		carrier := tracecontext.FromHeaders(msg.Headers())
+		parent := carrier.Restore(context.Background())
+		opts := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", c.subject), attribute.String("messaging.operation.name", "process"))}
+		if sc := trace.SpanContextFromContext(parent); sc.IsValid() {
+			opts = append(opts, trace.WithLinks(trace.Link{SpanContext: sc}))
+		}
+		var span trace.Span
+		ctx, span = telemetrytrace.Resume(c.Tracer, ctx, carrier, "process execution.run-requested.v1", opts...)
+		defer func() { telemetrytrace.End(span, err) }()
 		r, err := runwire.Decode(msg.Data())
 		if err != nil {
 			if errors.Is(err, executionwire.ErrInvalidRunRequested) || errors.Is(err, execution.ErrInvalid) {
@@ -178,6 +192,7 @@ func (c *Consumer) Handle(ctx context.Context, msg jetstream.Msg) error {
 			}
 			return err
 		}
+		span.SetAttributes(attribute.String("app.run.id", r.RunID), attribute.String("messaging.message.id", r.EventID))
 		if _, err = c.intake.Accept(ctx, r); err != nil && !errors.Is(err, execution.ErrConflict) {
 			return err
 		}

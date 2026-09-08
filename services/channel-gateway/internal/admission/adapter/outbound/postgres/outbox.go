@@ -22,10 +22,11 @@ func (s *Store) Claim(ctx context.Context) (application.OutboxMessage, bool, err
  SELECT event_id FROM gateway_outbox WHERE published_at IS NULL AND next_attempt_at<=clock_timestamp()
  AND (claimed_until IS NULL OR claimed_until<=clock_timestamp()) ORDER BY created_at,event_id FOR UPDATE SKIP LOCKED LIMIT 1
  ) UPDATE gateway_outbox o SET claim_token=$1,claimed_until=clock_timestamp()+interval '30 seconds',attempts=attempts+1
- FROM due WHERE o.event_id=due.event_id RETURNING o.event_id,o.subject,o.payload,o.claim_token`, token).Scan(&msg.EventID, &msg.Subject, &msg.Payload, &msg.ClaimToken)
+ FROM due WHERE o.event_id=due.event_id RETURNING o.event_id,o.subject,o.payload,o.claim_token,COALESCE(o.traceparent,''),COALESCE(o.tracestate,'')`, token).Scan(&msg.EventID, &msg.Subject, &msg.Payload, &msg.ClaimToken, &msg.Carrier.Traceparent, &msg.Carrier.Tracestate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return msg, false, nil
 	}
+	msg.Carrier = msg.Carrier.Normalize()
 	return msg, err == nil, err
 }
 func (s *Store) Published(ctx context.Context, msg application.OutboxMessage) error {

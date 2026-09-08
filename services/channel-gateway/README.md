@@ -367,3 +367,46 @@ go test -count=1 -race -v ./services/channel-gateway/internal/infra/nats -run 'T
 ```
 
 该门禁实际验证可信 TLS 握手、错误 CA 与缺失 CA 拒绝，以及声明与生成 ACL 不漂移。
+
+## 可选 OTLP Tracing（M1）
+
+新源码增加 `GATEWAY_TRACING_CONFIG_FILE`。缺省关闭；设置时指向绝对路径的普通 JSON
+文件（最多 64 KiB），内容直接是六字段对象，不包在 `tracing` 内：
+
+```json
+{
+  "traces_endpoint": "https://collector.example.com/v1/traces",
+  "sampling_ratio": 1.0,
+  "export_timeout": "2s",
+  "batch_timeout": "1s",
+  "max_queue_size": 2048,
+  "max_export_batch_size": 512
+}
+```
+
+启用时要求 `GATEWAY_INSTANCE_ID`，Resource 环境来自 `DEPLOYMENT_ENVIRONMENT`（缺省
+unspecified），版本来自构建 vcs.revision（缺省 development）。共享模块严格校验字段、
+端点与容量；远端使用系统根校验的 HTTPS/TLS 1.3，本地 HTTP 只接受字面回环 IP。
+不从 `OTEL_*` 继承目标/认证头，不跟随重定向；导出失败不影响业务 readiness。
+
+> 当前状态：Tracing M1–M5 已实现，此前版本已部署到本机手测实例。以下 M1/M2/M4
+> 内容为阶段历史记录；本次合并不触发部署，提交状态以 Git 引用为准。当前状态与证据见
+> [Worker 实现状态](../../docs/architecture-next/agent-worker/implementation-status.md)。
+
+bootstrap 拥有一个独立 Provider，并在业务结束后用独立 5s context 关闭。M1 当时只为公开
+`/v1/telegram/` 回调建立本地 SERVER 根，不接收外部 Trace parent，不记录 URL/正文；
+health/admin 不生成回调 Span。此阶段尚未将 Carrier 写入 Admission/Outbox/NATS 或
+Delivery，不能据此宣称 IM 端到端 Trace；后续见
+[IM Tracing V1 计划](../../docs/architecture-next/operations/im-runtime-tracing-v1-plan.md)。
+
+### 历史阶段记录：M2 持久入站增量
+
+Admission 在原事务新增保存 creation Carrier，Migration 为 `0012_admission_trace.sql`；
+Outbox Claim 返回 Carrier，Relay 每次 publish 创建独立 Span，实际 NATS Header 保持
+原 creation context 与 `Nats-Msg-Id`。重复 Receipt 链接原 creation，不改第一次保存的值。
+新部署须先应用迁移；该阶段结束时手测部署尚未切换。Delivery/Reply 的持久关联仍待 M4。
+
+
+## 历史阶段记录：M4 持久 Delivery Tracing
+
+0013_delivery_trace.sql 保存首次 Reply process context；ClaimTraced 从原 Claim 查询恢复 Carrier，Dispatcher 按 part 继续 Trace。gateway.im.send 只记录真实发送，UNKNOWN 仍不自动重发。TransportReceipt replay 在原查询 Link 已持久上下文；业务摘要、两事务与 ACK 不变。专用 Worker proof mTLS 客户端显式传 W3C，不向第三方注入。上述源码已专项验证，该阶段结束时手测部署尚未切换。

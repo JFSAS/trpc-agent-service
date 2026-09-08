@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 )
 
@@ -96,7 +97,9 @@ func TestWorkerReadinessRequiresRecoveryAndOperationalState(t *testing.T) {
 
 type oneRun struct{ run domain.Run }
 
-func (r oneRun) Ready(context.Context, int) ([]domain.Run, error) { return []domain.Run{r.run}, nil }
+func (r oneRun) Scheduled(context.Context, int) ([]application.ScheduledRun, error) {
+	return []application.ScheduledRun{{Run: r.run}}, nil
+}
 
 type heldProcessor struct {
 	calls   atomic.Int64

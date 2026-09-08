@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -151,7 +152,15 @@ func legacyConnectionFacts(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 func assertConnectionFacts(t *testing.T, before, after map[string]string) {
 	t.Helper()
 	for table, snapshot := range before {
-		if after[table] != snapshot {
+		want, err := legacyFactsWithoutNullTrace(table, snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := legacyFactsWithoutNullTrace(table, after[table])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
 			t.Errorf("migration rewrote %s, before=%s after=%s", table, snapshot, after[table])
 		}
 	}
@@ -248,4 +257,25 @@ CREATE TRIGGER reject_connection_ledger BEFORE INSERT ON gateway_schema_migratio
 	}
 	assertConnectionFacts(t, before, legacyConnectionFacts(t, ctx, p1))
 	t.Log("CONNECTION_UPGRADE_ROLLBACK_VERIFIED: injected post-DDL failure leaves no 0005 table/ledger; 0004 facts preserved; later retry succeeds")
+}
+
+// Nullable observation columns do not rewrite historical business facts. Only
+// absent/NULL trace columns are equivalent: a non-NULL backfill must still fail.
+func legacyFactsWithoutNullTrace(table, snapshot string) (string, error) {
+	if table != "gateway_outbox" && table != "gateway_delivery_intents" {
+		return snapshot, nil
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(snapshot), &rows); err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		for _, key := range []string{"traceparent", "tracestate"} {
+			if string(row[key]) == "null" {
+				delete(row, key)
+			}
+		}
+	}
+	body, err := json.Marshal(rows)
+	return string(body), err
 }

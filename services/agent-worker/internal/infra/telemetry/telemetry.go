@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Export is optional. An absent endpoint makes no outbound telemetry request;
@@ -51,9 +52,11 @@ func (e Export) Validate() error {
 }
 
 type logRecord struct {
-	operation application.Observation
-	storage   application.StorageObservation
-	isStorage bool
+	sdkLevel        string
+	traceID, spanID string
+	operation       application.Observation
+	storage         application.StorageObservation
+	isStorage       bool
 }
 
 type Recorder struct {
@@ -72,7 +75,10 @@ type Recorder struct {
 	logger        *slog.Logger
 }
 
-func New(ctx context.Context, worker string, out io.Writer, export Export) (*Recorder, error) {
+func New(ctx context.Context, worker string, out io.Writer, export Export, resources ...*resource.Resource) (*Recorder, error) {
+	if len(resources) > 1 {
+		return nil, errors.New("one process telemetry resource required")
+	}
 	if out == nil || worker == "" {
 		return nil, errors.New("telemetry requires a worker identity and log writer")
 	}
@@ -87,10 +93,20 @@ func New(ctx context.Context, worker string, out io.Writer, export Export) (*Rec
 		}
 		readers = append(readers, sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(export.Interval), sdkmetric.WithTimeout(export.Timeout)))
 	}
-	return newRecorder(worker, out, readers...)
+	var res *resource.Resource
+	if len(resources) == 1 {
+		res = resources[0]
+	}
+	return newRecorderWithResource(worker, out, res, readers...)
 }
 func newRecorder(worker string, out io.Writer, readers ...sdkmetric.Reader) (*Recorder, error) {
-	options := []sdkmetric.Option{sdkmetric.WithResource(resource.NewSchemaless(attribute.String("service.name", "agent-worker"), attribute.String("service.version", "worker-v1"), attribute.String("service.instance.id", worker), attribute.String("service.namespace", "agent-platform"), attribute.String("deployment.environment.name", "unspecified")))}
+	return newRecorderWithResource(worker, out, nil, readers...)
+}
+func newRecorderWithResource(worker string, out io.Writer, res *resource.Resource, readers ...sdkmetric.Reader) (*Recorder, error) {
+	if res == nil {
+		res = resource.NewSchemaless(attribute.String("service.name", "agent-worker"), attribute.String("service.version", "worker-v1"), attribute.String("service.instance.id", worker), attribute.String("service.namespace", "agent-platform"), attribute.String("deployment.environment.name", "unspecified"))
+	}
+	options := []sdkmetric.Option{sdkmetric.WithResource(res)}
 	for _, reader := range readers {
 		options = append(options, sdkmetric.WithReader(reader))
 	}
@@ -185,7 +201,7 @@ func (r *Recorder) Observe(ctx context.Context, o application.Observation) {
 	}
 	o.TenantID, o.RunID, o.AttemptID = boundedID(o.TenantID), boundedID(o.RunID), boundedID(o.AttemptID)
 	select {
-	case r.queue <- logRecord{operation: o}:
+	case r.queue <- operationRecord(ctx, o):
 	default:
 		r.dropped.Add(ctx, 1)
 	}
@@ -193,13 +209,29 @@ func (r *Recorder) Observe(ctx context.Context, o application.Observation) {
 func (r *Recorder) writeLogs() {
 	defer close(r.done)
 	write := func(record logRecord) {
+		if record.sdkLevel != "" {
+			level := slog.LevelInfo
+			switch record.sdkLevel {
+			case "warn":
+				level = slog.LevelWarn
+			case "error", "fatal":
+				level = slog.LevelError
+			}
+			r.logger.Log(context.Background(), level, "worker.sdk", "event", "sdk_log", "sdk_level", record.sdkLevel)
+			return
+		}
+
 		if record.isStorage {
 			s := record.storage
 			r.logger.Info("worker.backlog", "queued", s.Queued, "running", s.Running, "retry_wait", s.RetryWait, "reply_pending", s.ReplyPending, "active_local", s.ActiveLocal, "oldest_run_seconds", s.OldestRunSeconds, "oldest_reply_seconds", s.OldestReplySeconds)
 			return
 		}
 		o := record.operation
-		r.logger.Info("worker.operation", "operation", o.Operation, "result", o.Result, "stage", o.Stage, "tenant_id", o.TenantID, "run_id", o.RunID, "attempt_id", o.AttemptID, "duration_seconds", o.Duration.Seconds(), "input_tokens", o.InputTokens, "output_tokens", o.OutputTokens, "total_tokens", o.TotalTokens)
+		logger := r.logger
+		if record.traceID != "" {
+			logger = logger.With("trace_id", record.traceID, "span_id", record.spanID)
+		}
+		logger.Info("worker.operation", "operation", o.Operation, "result", o.Result, "stage", o.Stage, "tenant_id", o.TenantID, "run_id", o.RunID, "attempt_id", o.AttemptID, "duration_seconds", o.Duration.Seconds(), "input_tokens", o.InputTokens, "output_tokens", o.OutputTokens, "total_tokens", o.TotalTokens)
 	}
 	for {
 		select {
@@ -263,5 +295,33 @@ func (r *Recorder) SampleStatus(ctx context.Context, ok bool) {
 	r.sampleSuccess.Record(ctx, value)
 	if !ok {
 		r.Observe(ctx, application.Observation{Operation: "storage_sample", Result: "dependency"})
+	}
+}
+
+// Capture before asynchronous logging; the writer goroutine has no run context.
+func operationRecord(ctx context.Context, o application.Observation) logRecord {
+	record := logRecord{operation: o}
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		record.traceID = sc.TraceID().String()
+		record.spanID = sc.SpanID().String()
+	}
+	return record
+}
+
+// SDKLog deliberately accepts no free text. SDK's default context helpers do
+// not preserve their ctx, so these process-level records do not invent a Run ID.
+func (r *Recorder) SDKLog(ctx context.Context, level string) {
+	if r == nil || r.closed.Load() {
+		return
+	}
+	switch level {
+	case "info", "warn", "error", "fatal":
+	default:
+		return
+	}
+	select {
+	case r.queue <- logRecord{sdkLevel: level}:
+	default:
+		r.dropped.Add(ctx, 1)
 	}
 }

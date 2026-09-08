@@ -11,11 +11,16 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	"go.opentelemetry.io/otel/trace"
 )
 
-type Ledger struct{ pool *pgxpool.Pool }
+type Ledger struct {
+	pool   *pgxpool.Pool
+	Tracer trace.Tracer
+}
 
 var _ application.Ledger = (*Ledger)(nil)
 
@@ -42,10 +47,10 @@ const runColumns = `request_json,session_id,session_sequence,status,wait_reason,
 func prefixColumns(prefix, columns string) string {
 	return prefix + "." + strings.ReplaceAll(columns, ",", ","+prefix+".")
 }
-func scanRun(row pgx.Row) (domain.Run, error) {
+func scanRun(row pgx.Row, extra ...any) (domain.Run, error) {
 	var r domain.Run
 	var raw, policy []byte
-	err := row.Scan(&raw, &r.SessionID, &r.Sequence, &r.Status, &r.WaitReason, &policy, &r.AcceptedAt, &r.RunDeadline, &r.ReplyDeadline, &r.ExecutionDeadline, &r.Attempts, &r.Generation, &r.LeaseEpoch, &r.CurrentAttemptID)
+	err := row.Scan(append([]any{&raw, &r.SessionID, &r.Sequence, &r.Status, &r.WaitReason, &policy, &r.AcceptedAt, &r.RunDeadline, &r.ReplyDeadline, &r.ExecutionDeadline, &r.Attempts, &r.Generation, &r.LeaseEpoch, &r.CurrentAttemptID}, extra...)...)
 	if err != nil {
 		return r, mapped(err)
 	}
@@ -61,7 +66,7 @@ func (l *Ledger) FindRun(ctx context.Context, tenant, id string) (domain.Run, er
 
 // lockRun uses the same Session -> Run order in Claim, Renew, Complete and
 // recovery. The first read only locates the immutable session identity.
-func lockRun(ctx context.Context, tx pgx.Tx, tenant, id string) (domain.Run, domain.Head, int64, error) {
+func lockRun(ctx context.Context, tx pgx.Tx, tenant, id string, extra ...any) (domain.Run, domain.Head, int64, error) {
 	var session string
 	if err := tx.QueryRow(ctx, `SELECT session_id FROM execution_runs WHERE tenant_id=$1 AND run_id=$2`, tenant, id).Scan(&session); err != nil {
 		return domain.Run{}, domain.Head{}, 0, mapped(err)
@@ -71,7 +76,11 @@ func lockRun(ctx context.Context, tx pgx.Tx, tenant, id string) (domain.Run, dom
 	if err := tx.QueryRow(ctx, `SELECT accepted_ref,accepted_digest,settled_sequence FROM execution_sessions WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, tenant, session).Scan(&head.Ref, &head.Digest, &settled); err != nil {
 		return domain.Run{}, head, 0, err
 	}
-	r, err := scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+` FROM execution_runs WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE`, tenant, id))
+	columns := runColumns
+	if len(extra) > 0 {
+		columns += `,COALESCE(traceparent,''),COALESCE(tracestate,'')`
+	}
+	r, err := scanRun(tx.QueryRow(ctx, `SELECT `+columns+` FROM execution_runs WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE`, tenant, id), extra...)
 	return r, head, settled, err
 }
 func rejected(ctx context.Context, tx pgx.Tx, source, digest, reason string) error {
@@ -95,7 +104,13 @@ func (l *Ledger) Reject(ctx context.Context, source, digest, reason string) erro
 func receipt(ctx context.Context, tx pgx.Tx, eventID string) (domain.Receipt, string, error) {
 	var r domain.Receipt
 	var digest string
-	err := tx.QueryRow(ctx, `SELECT e.event_id,e.event_digest,e.tenant_id,e.run_id,e.outcome,r.session_id,r.session_sequence FROM execution_receipts e JOIN execution_runs r ON r.tenant_id=e.tenant_id AND r.run_id=e.run_id WHERE e.event_id=$1`, eventID).Scan(&r.EventID, &digest, &r.TenantID, &r.RunID, &r.Outcome, &r.SessionID, &r.Sequence)
+	var carrier tracecontext.Carrier
+	err := tx.QueryRow(ctx, `SELECT e.event_id,e.event_digest,e.tenant_id,e.run_id,e.outcome,r.session_id,r.session_sequence,COALESCE(r.traceparent,''),COALESCE(r.tracestate,'') FROM execution_receipts e JOIN execution_runs r ON r.tenant_id=e.tenant_id AND r.run_id=e.run_id WHERE e.event_id=$1`, eventID).Scan(&r.EventID, &digest, &r.TenantID, &r.RunID, &r.Outcome, &r.SessionID, &r.Sequence, &carrier.Traceparent, &carrier.Tracestate)
+	if err == nil {
+		if sc := trace.SpanContextFromContext(carrier.Restore(context.Background())); sc.IsValid() {
+			trace.SpanFromContext(ctx).AddLink(trace.Link{SpanContext: sc})
+		}
+	}
 	return r, digest, mapped(err)
 }
 
@@ -237,7 +252,8 @@ func insertRun(ctx context.Context, tx pgx.Tx, req domain.Requested, policy doma
 	if err != nil {
 		return domain.Receipt{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO execution_runs(tenant_id,run_id,admission_id,request_digest,request_json,session_id,session_sequence,status,wait_reason,policy_json,accepted_at,run_deadline,reply_deadline) VALUES($1,$2,$3,$4,$5,$6,$7,'QUEUED',$8,$9,$10,$11,$12)`, req.Route.TenantID, req.RunID, req.AdmissionID, req.RunDigest, raw, session, seq, wait, p, now, req.Input.ReceivedAt.Add(policy.MaxRunAge), req.Input.ReceivedAt.Add(policy.MaxReplyAge))
+	carrier := tracecontext.Capture(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO execution_runs(tenant_id,run_id,admission_id,request_digest,request_json,session_id,session_sequence,status,wait_reason,policy_json,accepted_at,run_deadline,reply_deadline,traceparent,tracestate) VALUES($1,$2,$3,$4,$5,$6,$7,'QUEUED',$8,$9,$10,$11,$12,NULLIF($13,''),NULLIF($14,''))`, req.Route.TenantID, req.RunID, req.AdmissionID, req.RunDigest, raw, session, seq, wait, p, now, req.Input.ReceivedAt.Add(policy.MaxRunAge), req.Input.ReceivedAt.Add(policy.MaxReplyAge), carrier.Traceparent, carrier.Tracestate)
 	if err != nil {
 		return domain.Receipt{}, err
 	}
@@ -252,21 +268,34 @@ func insertRun(ctx context.Context, tx pgx.Tx, req domain.Requested, policy doma
 }
 
 func (l *Ledger) Ready(ctx context.Context, limit int) ([]domain.Run, error) {
+	rows, err := l.Scheduled(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Run, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Run)
+	}
+	return out, nil
+}
+
+func (l *Ledger) Scheduled(ctx context.Context, limit int) ([]application.ScheduledRun, error) {
 	if limit < 1 {
 		return nil, domain.ErrInvalid
 	}
-	rows, err := l.pool.Query(ctx, `SELECT `+prefixColumns("r", runColumns)+` FROM execution_runs r JOIN execution_sessions s ON s.tenant_id=r.tenant_id AND s.session_id=r.session_id WHERE r.status IN ('QUEUED','RUNNING','RETRY_WAIT') AND r.session_sequence=s.settled_sequence+1 AND NOT EXISTS (SELECT 1 FROM execution_attempts a WHERE a.tenant_id=r.tenant_id AND a.attempt_id=r.current_attempt_id AND a.status IN ('PREPARING','EXECUTING') AND a.lease_until>clock_timestamp()) AND (r.retry_at IS NULL OR r.retry_at<=clock_timestamp() OR r.run_deadline<=clock_timestamp() OR r.execution_deadline<=clock_timestamp()) ORDER BY r.accepted_at,r.tenant_id,r.session_id LIMIT $1`, limit)
+	rows, err := l.pool.Query(ctx, `SELECT `+prefixColumns("r", runColumns)+`,COALESCE(r.traceparent,''),COALESCE(r.tracestate,'') FROM execution_runs r JOIN execution_sessions s ON s.tenant_id=r.tenant_id AND s.session_id=r.session_id WHERE r.status IN ('QUEUED','RUNNING','RETRY_WAIT') AND r.session_sequence=s.settled_sequence+1 AND NOT EXISTS (SELECT 1 FROM execution_attempts a WHERE a.tenant_id=r.tenant_id AND a.attempt_id=r.current_attempt_id AND a.status IN ('PREPARING','EXECUTING') AND a.lease_until>clock_timestamp()) AND (r.retry_at IS NULL OR r.retry_at<=clock_timestamp() OR r.run_deadline<=clock_timestamp() OR r.execution_deadline<=clock_timestamp()) ORDER BY r.accepted_at,r.tenant_id,r.session_id LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.Run
+	var out []application.ScheduledRun
 	for rows.Next() {
-		r, err := scanRun(rows)
+		var carrier tracecontext.Carrier
+		r, err := scanRun(rows, &carrier.Traceparent, &carrier.Tracestate)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		out = append(out, application.ScheduledRun{Run: r, Carrier: carrier.Normalize()})
 	}
 	return out, rows.Err()
 }

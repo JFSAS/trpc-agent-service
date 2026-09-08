@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	app "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
+	"github.com/nats-io/nats.go"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -107,11 +109,20 @@ type backoffPublisher struct {
 	count atomic.Int32
 }
 
-func (p *backoffPublisher) Publish(context.Context, string, []byte, ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+func (p *backoffPublisher) PublishMsg(context.Context, *nats.Msg, ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
 	p.count.Add(1)
 	select {
 	case p.calls <- time.Now():
 	default:
 	}
 	return nil, errors.New("explicit unit fixture broker unavailable")
+}
+
+func (o *backoffOutbox) PendingTracedReplies(ctx context.Context, limit int) ([]app.TracedReply, error) {
+	rows, err := o.PendingReplies(ctx, limit)
+	out := make([]app.TracedReply, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, app.TracedReply{OutboxItem: row})
+	}
+	return out, err
 }

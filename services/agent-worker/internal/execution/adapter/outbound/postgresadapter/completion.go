@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	app "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	codec "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
 	wire "github.com/liuzengh/trpc-agent-service/gen/events/execution/v1"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const completionColumns = `tenant_id,run_id,completion_id,COALESCE(attempt_id,''),kind,status,candidate_ref,candidate_digest,final_intent_id,reply_disposition,reason,completed_at,result_digest`
@@ -20,10 +25,24 @@ func scanCompletion(row pgx.Row) (domain.Completion, error) {
 	err := row.Scan(&c.TenantID, &c.RunID, &c.CompletionID, &c.AttemptID, &c.Kind, &c.Status, &c.Candidate.Ref, &c.Candidate.Digest, &c.FinalIntentID, &c.ReplyDisposition, &c.Reason, &c.CompletedAt, &c.ResultDigest)
 	return c, mapped(err)
 }
-func (l *Ledger) FindCompletion(ctx context.Context, tenant, run string) (domain.Completion, error) {
+func (l *Ledger) FindCompletion(ctx context.Context, tenant, run string) (found domain.Completion, resultErr error) {
+	ctx, span := telemetrytrace.Start(l.Tracer, ctx, "worker.run.find_completion")
+	defer func() {
+		if resultErr == nil {
+			span.SetAttributes(attribute.String("app.outcome", "accepted"), attribute.String("app.run.status", string(found.Status)))
+		} else if errors.Is(resultErr, domain.ErrNotFound) {
+			span.SetAttributes(attribute.String("app.outcome", "not_found"))
+			span.End()
+			return
+		}
+		telemetrytrace.End(span, resultErr)
+	}()
 	return scanCompletion(l.pool.QueryRow(ctx, `SELECT `+completionColumns+` FROM execution_completions WHERE tenant_id=$1 AND run_id=$2`, tenant, run))
 }
-func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (domain.Completion, error) {
+func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domain.Completion, resultErr error) {
+	ctx, span := telemetrytrace.Start(l.Tracer, ctx, "worker.run.complete", trace.WithAttributes(attribute.String("app.run.id", f.Grant.Run.Request.RunID), attribute.String("app.attempt.id", f.Grant.AttemptID), attribute.String("app.run.status", string(f.Status))))
+	defer func() { telemetrytrace.End(span, resultErr) }()
+	commitAttempted := false
 	if f.Status != domain.Succeeded && f.Status != domain.Failed {
 		return domain.Completion{}, domain.ErrInvalid
 	}
@@ -95,18 +114,31 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (domain.Completi
 		return domain.Completion{}, err
 	}
 	if c.Status == domain.Succeeded {
-		if _, err = tx.Exec(ctx, `INSERT INTO execution_session_commits(tenant_id,run_id,session_id,candidate_ref,candidate_digest) VALUES($1,$2,$3,$4,$5)`, c.TenantID, c.RunID, r.SessionID, c.Candidate.Ref, c.Candidate.Digest); err != nil {
+		commitCtx, commitSpan := telemetrytrace.Start(l.Tracer, ctx, "worker.session.commit", trace.WithAttributes(attribute.String("app.session.id", r.SessionID)))
+		defer func() {
+			outcome := completionOutcome(resultErr, commitAttempted)
+			commitSpan.SetAttributes(attribute.String("app.outcome", outcome))
+			telemetrytrace.End(commitSpan, resultErr)
+		}()
+		if _, err = tx.Exec(commitCtx, `INSERT INTO execution_session_commits(tenant_id,run_id,session_id,candidate_ref,candidate_digest) VALUES($1,$2,$3,$4,$5)`, c.TenantID, c.RunID, r.SessionID, c.Candidate.Ref, c.Candidate.Digest); err != nil {
 			return domain.Completion{}, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE execution_sessions SET accepted_ref=$3,accepted_digest=$4 WHERE tenant_id=$1 AND session_id=$2`, c.TenantID, r.SessionID, c.Candidate.Ref, c.Candidate.Digest); err != nil {
+		if _, err = tx.Exec(commitCtx, `UPDATE execution_sessions SET accepted_ref=$3,accepted_digest=$4 WHERE tenant_id=$1 AND session_id=$2`, c.TenantID, r.SessionID, c.Candidate.Ref, c.Candidate.Digest); err != nil {
 			return domain.Completion{}, err
 		}
 	}
 	if c.FinalIntentID != "" {
-		if _, err = tx.Exec(ctx, `INSERT INTO execution_reply_outbox(intent_id,tenant_id,run_id,digest,payload,created_at) VALUES($1,$2,$3,$4,$5,$6)`, c.FinalIntentID, c.TenantID, c.RunID, digest, payload, now); err != nil {
+		createCtx, createSpan := telemetrytrace.Start(l.Tracer, ctx, "create execution.reply-intent.v1", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("app.intent.id", c.FinalIntentID)))
+		defer func() {
+			createSpan.SetAttributes(attribute.String("app.outcome", completionOutcome(resultErr, commitAttempted)))
+			telemetrytrace.End(createSpan, resultErr)
+		}()
+		carrier := tracecontext.Capture(createCtx)
+		if _, err = tx.Exec(createCtx, `INSERT INTO execution_reply_outbox(intent_id,tenant_id,run_id,digest,payload,created_at,traceparent,tracestate) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''))`, c.FinalIntentID, c.TenantID, c.RunID, digest, payload, now, carrier.Traceparent, carrier.Tracestate); err != nil {
 			return domain.Completion{}, err
 		}
 	}
+	commitAttempted = true
 	if err = tx.Commit(ctx); err != nil {
 		return domain.Completion{}, err
 	}
@@ -154,13 +186,14 @@ func (l *Ledger) FailAttempt(ctx context.Context, g domain.Grant, reason string,
 	}
 	return tx.Commit(ctx)
 }
-func (l *Ledger) Terminalize(ctx context.Context, tenant, run, reason string) (bool, error) {
+func (l *Ledger) Terminalize(ctx context.Context, tenant, run, reason string) (changed bool, resultErr error) {
 	tx, err := l.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer rollback(tx)
-	r, _, settled, err := lockRun(ctx, tx, tenant, run)
+	var carrier tracecontext.Carrier
+	r, _, settled, err := lockRun(ctx, tx, tenant, run, &carrier.Traceparent, &carrier.Tracestate)
 	if err != nil {
 		return false, err
 	}
@@ -185,6 +218,17 @@ func (l *Ledger) Terminalize(ctx context.Context, tenant, run, reason string) (b
 	if !expired && !permanent && r.Attempts < r.Policy.MaxAttempts {
 		return false, nil
 	}
+	stored := trace.SpanContextFromContext(carrier.Restore(context.Background()))
+	ambient := trace.SpanContextFromContext(ctx)
+	options := []trace.SpanStartOption{trace.WithAttributes(attribute.String("app.run.id", run), attribute.String("app.session.id", r.SessionID), attribute.String("app.run.status", "FAILED"))}
+	if stored.IsValid() && (!ambient.IsValid() || ambient.TraceID() != stored.TraceID()) {
+		if ambient.IsValid() {
+			options = append(options, trace.WithLinks(trace.Link{SpanContext: ambient}))
+		}
+		ctx = carrier.Restore(ctx)
+	}
+	ctx, terminalSpan := telemetrytrace.Start(l.Tracer, ctx, "worker.run.terminalize", options...)
+	defer func() { telemetrytrace.End(terminalSpan, resultErr) }()
 	if expired {
 		reason = "DEADLINE_EXPIRED"
 	} else if r.WaitReason == "INVALID_CLOCK" {
@@ -203,19 +247,30 @@ func (l *Ledger) Terminalize(ctx context.Context, tenant, run, reason string) (b
 	}
 	return true, tx.Commit(ctx)
 }
+
+// PendingReplies is the business-only inspection view. Relay uses the same query
+// through PendingTracedReplies, with observation metadata outside the domain.
 func (l *Ledger) PendingReplies(ctx context.Context, limit int) ([]domain.OutboxItem, error) {
+	rows, err := l.PendingTracedReplies(ctx, limit)
+	out := make([]domain.OutboxItem, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.OutboxItem)
+	}
+	return out, err
+}
+func (l *Ledger) PendingTracedReplies(ctx context.Context, limit int) ([]app.TracedReply, error) {
 	if limit < 1 {
 		return nil, domain.ErrInvalid
 	}
-	rows, err := l.pool.Query(ctx, `SELECT intent_id,digest,payload FROM execution_reply_outbox WHERE published_at IS NULL ORDER BY created_at,intent_id LIMIT $1`, limit)
+	rows, err := l.pool.Query(ctx, `SELECT intent_id,digest,payload,COALESCE(traceparent,''),COALESCE(tracestate,'') FROM execution_reply_outbox WHERE published_at IS NULL ORDER BY created_at,intent_id LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var result []domain.OutboxItem
+	var result []app.TracedReply
 	for rows.Next() {
-		var r domain.OutboxItem
-		if err = rows.Scan(&r.IntentID, &r.Digest, &r.Payload); err != nil {
+		var r app.TracedReply
+		if err = rows.Scan(&r.IntentID, &r.Digest, &r.Payload, &r.Carrier.Traceparent, &r.Carrier.Tracestate); err != nil {
 			return nil, err
 		}
 		result = append(result, r)

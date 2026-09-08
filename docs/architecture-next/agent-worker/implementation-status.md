@@ -23,6 +23,20 @@
 也没有 Session projector 或下一 Run 补投协议。Session username `session_runtime` 由新发布 gate
 和运行 Adapter 一致校验；这项规则进入 Worker 平台摘要，不改历史 `platform-v1` 或 Draft schema。
 
+### Tracing V1 当前状态（M1–M5 已实现，审查修复未部署）
+
+[IM 运行链路 Tracing V1 计划](../operations/im-runtime-tracing-v1-plan.md) 的 M1–M5 已在
+当前 `worker` 工作树实现；此前版本已部署到本机手测实例，验收记录见
+[Tracing V1 联合验收](../operations/im-runtime-tracing-v1-acceptance.md)。历史阶段记录保留在 §6–§9，
+其中“待实施”“部署未切换”均描述当时状态，不代表当前进度。
+
+本次审查修复涉及 Consumer ambient 上下文隔离、callback HTTP 失败观测、父链验收和文档。
+修复只更新源码与测试，尚未切换运行实例；提交状态以 Git 引用为准。此前 T15 的父链 PASS 不单独作为
+完整图结构证明。加强后的验收器已重新校验此前保存的 29 Span 真实 Telegram Trace，
+正常单根、关键 ancestry 与 creation Link 通过；这不是新一次实机请求或部署验证。
+Git 提交、部署与验证状态分别记录。
+Memory、生产 Tool/组合执行及预算继续后置。所有修改在当前工作树完成，不派发其他工作树。
+
 ## 2. 已取得的证据层次
 
 ### W0：SDK 与正式 Session 接缝
@@ -374,3 +388,60 @@ Worker、Control/Gateway 接缝、同库隔离、测试与文档整理为 `worke
 
 Memory 整体、SDK 原生组合、Tools/Knowledge、累计 Token 预算、Session GC/历史迁移、
 进阶调度、企微专项、Channel 页面与 Helm 继续按设计 §15.2 独立后置，不悄悄恢复为首版条件。
+
+## 6. 历史阶段记录：IM Tracing 增量（M1，本地技术验证）
+
+基于 `worker/fd1f790`，当前 task 独立实施 M1：共享 Carrier/Trace Runtime、两个服务配置与
+生命周期、SDK Agent/LLM/Tool 接线和正文过滤、完整 Runner 流生命周期、Worker 日志关联。
+实际 OTLP protobuf 和真实 SDK + 本地确定性模型/Tool 的测试通过；这不是外部模型/Telegram
+Trace 联合验收。SDK Tool 测试没有改变 Manifest 能力；Memory 继续后置。
+
+M1 没有 migrations 或 NATS/数据库 Carrier 接线，没有正式 Session 分层/Reply send Span，
+没有切换当前手测服务或部署 Collector。M2–M5 仍按
+[实施计划](../operations/im-runtime-tracing-v1-plan.md) 继续；旧 Worker V1 的历史验收不作
+新 Tracing 的端到端证据。所有修改都在当前 Worker 工作树，不派发其他工作树修改。
+
+## 7. 历史阶段记录：IM Tracing 持久入站（M2，2026-09-08）
+
+M2 已实现 Gateway Outbox creation Carrier → NATS Header → Worker process context
+同事务接纳 → ScheduledRun/activeCtx 恢复。两个服务只追加可空观测列，不改变事件 JSON、
+摘要、幂等、ACK 或 Session/Run 决策。专项真实 PG/NATS 与新的恢复测试进程证明元数据
+可以持久读取；完整部署重启/真实 IM 仍由 M5 验收，不复用旧 W12 的成功结果。
+
+本轮没有切换手测服务。M3 正式 Session、M4 Reply/Delivery、M5 部署仍待继续，
+参见 [计划 §17](../operations/im-runtime-tracing-v1-plan.md#17-m2-实施记录2026-09-08)。
+
+## 8. 历史阶段记录：IM Tracing Session 分层（M3，2026-09-08）
+
+M3 已增加实际 Manifest/Claim/prepare/credential/open/load/stage/verify/complete/commit/
+terminalize 边界。正式 Session commit 以事务返回区分 accepted/failed/UNKNOWN，重放不
+制造第二次 commit；SDK overlay 只记录真实操作，partial append 汇总到 Runner 数值属性。
+
+专项实际 PG 与 SDK/OTLP 测试验证上述区别，未改执行次数、候选核验、租约或预算。完整
+部署的网络不确定性/重启及真实 IM 仍留在 M5；下一阶段为 M4 Reply/Delivery。
+
+
+## 9. 历史阶段记录：IM Tracing Reply / Delivery（M4，2026-09-08）
+
+M4 已在当前 Worker 工作树实施：Reply Outbox 不可变 creation Carrier、真实 NATS Header、Gateway 两事务接纳、TracedClaim 恢复、真实 send certainty、内部 mTLS proof 传播。实际 PG/NATS/mTLS 和发送分支专项测试通过；Memory 继续后置。下一阶段 M5 为部署、真实进程/Telegram 与故障回滚联合验收。该阶段结束时运行部署未切换，Tracing 增量尚未提交。
+
+
+## 10. 当前交付与审查修复
+
+M5 完成状态、此前真实 Telegram / 外部模型 / 正式 Session 及故障恢复证据，以专项计划
+§11、§28 和联合验收记录为准，不将旧阶段日志当成当前状态。本次仅修复审查发现，
+不重启或替换运行中的 Worker/Gateway，不改数据库、接收模式或模型/预算契约。
+加强后的父链门禁同时检查正常单根、无环、关键 ancestry 与消息 creation Link；
+崩溃模式只容忍具体缺失 parent，不能把错父级或多根当成恢复缺段。
+
+
+## 11. 合入 main 的兼容边界
+
+Tracing 与 main 的授权、Pending Intake、配额和模型消费门禁并存：生产接纳仍使用
+`NewIntake`，保留 main 的 current authorization / quota reconciler / BeforeModel，
+Gateway 保留 policy projection、授权刷新和 Telegram receive-mode runtime。
+本次合并不启用这些可选能力，不修改其业务契约，也不替换当前手测进程。
+
+Tracing 的四个迁移文件已在独立 Worker 版本执行过；迁移账本以完整文件名和摘要为身份，
+不是数字前缀。本次保留原文件名及字节，与 main 的同前缀授权/策略迁移共存，
+新增不可变摘要回归测试，不重命名或改写已执行迁移。

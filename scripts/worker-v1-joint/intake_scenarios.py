@@ -233,7 +233,7 @@ def ack_rejection(h, sequence):
     return None
 
 
-def after_commit_ack_failure(h, events):
+def after_commit_ack_failure(h, events, before_crash=None):
     h.stop_fault_workers()
     h.start_worker('worker-one')
     marker = 'intake-ack-' + uuid.uuid4().hex[:12]
@@ -256,6 +256,8 @@ def after_commit_ack_failure(h, events):
         info = consumer_info(h)
         assert info['num_ack_pending'] >= 1
         published = gateway_publication(h, run_id)
+        if before_crash is not None:
+            before_crash(run_id)
         victim = h.workers['worker-one']
         h.stop_worker(kill=True)
         assert victim.returncode == -9

@@ -26,6 +26,8 @@ class ModelFixture:
         self.key = secrets.token_urlsafe(24)
         self._generation = 1
         self._authentication = {}
+        self._fail_once = {}
+        self._failures = []
         self._partial = {}
         self._partial_events = {}
         self._partial_receipts = {}
@@ -60,6 +62,9 @@ class ModelFixture:
                         entered = fixture.entered.setdefault(text, threading.Event())
                         block = fixture.blocks.get(text)
                         hold_timeout = fixture._hold_timeout_seconds
+                        failure = fixture._fail_once.pop(text, None)
+                        if failure is not None:
+                            fixture._failures.append({"text": text, "status": failure, "response": "no SSE/candidate"})
                         partial = fixture._partial.pop(text, None)
                         if partial is None:
                             entered.set()
@@ -67,6 +72,14 @@ class ModelFixture:
                     self.send_error(403)
                     return
                 try:
+                    if failure is not None:
+                        raw = json.dumps({'error': {'message': 'TRACE_BODY_CANARY model temporarily unavailable', 'type': 'server_error'}}).encode()
+                        self.send_response(failure)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Content-Length', str(len(raw)))
+                        self.end_headers()
+                        self.wfile.write(raw)
+                        return
                     if partial is not None:
                         self.send_response(200)
                         self.send_header('Content-Type', 'text/event-stream')
@@ -128,6 +141,18 @@ class ModelFixture:
     @classmethod
     def final(cls, text, *, model='joint-fixture'):
         return cls.delta('joint answer: ' + text, model=model) + cls.delta('', 'stop', model=model) + 'data: [DONE]\n\n'
+
+    def fail_once(self, text, status=503):
+        if not isinstance(text, str) or not text or type(status) is not int or status not in (500, 503):
+            raise ValueError('model fault requires exact text and transient HTTP status')
+        with self.lock:
+            if text in self._fail_once or text in self.blocks or text in self._partial:
+                raise ValueError('model input already armed')
+            self._fail_once[text] = status
+
+    def failure_snapshot(self):
+        with self.lock:
+            return copy.deepcopy(self._failures)
 
     @property
     def hold_timeout_seconds(self):

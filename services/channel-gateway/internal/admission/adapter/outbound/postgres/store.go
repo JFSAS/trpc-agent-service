@@ -11,7 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
+
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RouteGuard is an Adapter-only seam; routing owns its SQL and row lock.
@@ -42,6 +47,7 @@ type AuthorizationGuard interface {
 }
 
 type Store struct {
+	tracer             trace.Tracer
 	authorizationGuard AuthorizationGuard
 	telegramGuard      TelegramGuard
 	accountGuard       AccountUseGuard
@@ -59,7 +65,10 @@ func (s *Store) WithAuthorizationGuard(g AuthorizationGuard) *Store {
 	cp := *s
 	cp.authorizationGuard = g
 	return &cp
+
 }
+
+func (s *Store) WithTracing(t trace.Tracer) *Store { cp := *s; cp.tracer = t; return &cp }
 
 func NewStore(pool *pgxpool.Pool, guard RouteGuard) *Store {
 	return &Store{pool: pool, guard: guard, budget: DefaultBudget()}
@@ -96,7 +105,8 @@ type rowReader interface {
 func find(ctx context.Context, q rowReader, k domain.EventKey) (domain.Receipt, string, bool, error) {
 	var raw []byte
 	var digest string
-	err := q.QueryRow(ctx, `SELECT receipt,source_digest FROM gateway_inbox WHERE provider=$1 AND account_id=$2 AND event_id=$3`, k.Provider, k.AccountID, k.EventID).Scan(&raw, &digest)
+	var carrier tracecontext.Carrier
+	err := q.QueryRow(ctx, `SELECT i.receipt,i.source_digest,COALESCE(o.traceparent,''),COALESCE(o.tracestate,'') FROM gateway_inbox i LEFT JOIN gateway_outbox o ON o.event_id=i.receipt->>'admission_id' WHERE i.provider=$1 AND i.account_id=$2 AND i.event_id=$3`, k.Provider, k.AccountID, k.EventID).Scan(&raw, &digest, &carrier.Traceparent, &carrier.Tracestate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Receipt{}, "", false, nil
 	}
@@ -112,12 +122,15 @@ func find(ctx context.Context, q rowReader, k domain.EventKey) (domain.Receipt, 
 	if err = receipt.Validate(); err != nil {
 		return domain.Receipt{}, "", false, fmt.Errorf("%w: corrupt acceptance receipt", domain.ErrUnavailable)
 	}
+	if sc := trace.SpanContextFromContext(carrier.Restore(context.Background())); sc.IsValid() {
+		trace.SpanFromContext(ctx).AddLink(trace.Link{SpanContext: sc})
+	}
 	return receipt, digest, true, nil
 }
 func (s *Store) Find(ctx context.Context, k domain.EventKey) (domain.Receipt, string, bool, error) {
 	return find(ctx, s.pool, k)
 }
-func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (domain.Receipt, error) {
+func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain.Receipt, resultErr error) {
 	if err := c.Validate(); err != nil {
 		return domain.Receipt{}, err
 	}
@@ -245,7 +258,10 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (domain.Receipt
 		if err != nil {
 			return domain.Receipt{}, fmt.Errorf("%w: normalized execution event", domain.ErrInvalidInput)
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO gateway_outbox(event_id,subject,payload) VALUES($1,$2,$3)`, c.Receipt.AdmissionID, wire.RunRequestedSubject, payload)
+		creationCtx, creation := telemetrytrace.Start(s.tracer, ctx, "create execution.run-requested.v1", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", wire.RunRequestedSubject), attribute.String("messaging.operation.name", "create"), attribute.String("messaging.message.id", c.Receipt.AdmissionID), attribute.String("app.run.id", c.Receipt.RunID)))
+		defer func() { telemetrytrace.End(creation, resultErr) }()
+		carrier := tracecontext.Capture(creationCtx)
+		_, err = tx.Exec(ctx, `INSERT INTO gateway_outbox(event_id,subject,payload,traceparent,tracestate) VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5,''))`, c.Receipt.AdmissionID, wire.RunRequestedSubject, payload, carrier.Traceparent, carrier.Tracestate)
 		if err != nil {
 			return domain.Receipt{}, err
 		}
