@@ -25,8 +25,8 @@ change this digest; target or isolation changes do. `Matches` rejects invalid
 snapshots even when both happen to be zero values. Do not mutate caller-owned
 snapshots or substitute current catalog values for frozen execution targets.
 
-PostgreSQL/Redis isolate Tenant plus Session; PostgreSQL Memory uses the same
-restricted storage implementation with an additional data-role namespace.
+PostgreSQL/Redis Session descriptors require Tenant plus Session isolation.
+Memory descriptors require Tenant plus subject plus stable Agent isolation.
 Qdrant isolates Tenant/Profile/resource; S3 isolates Tenant/Artifact. These are
 adapter obligations, not isolation automatically provided by this protocol.
 Database and object-service ACL enforcement still requires actual runtime tests.
@@ -38,13 +38,14 @@ Versioned buckets require explicit version cleanup support and are not silently
 accepted. PostgreSQL/Redis TLS flags and HTTP endpoints are static configuration;
 production transport policy is a separate deployment validation gate.
 
-Current stage: protocol and private RuntimeCatalog resolver implemented/tested.
-Deployment checks resolved snapshots against the minimal requested resource
-closure and can compile them into internal RuntimeManifest branches under an
-explicit implementation contract. Persisted reads revalidate them; public views
-remain target-free. Physical catalog bootstrap now loads separately pinned private targets and wires
-Deployment resolution with current tenant membership checks. Worker execution
-remains pending; protocol support does not prove an executing Adapter.
+Current stage (P0b1): protocol, private RuntimeCatalog resolver, and Profile
+backend-selection eligibility checks are implemented and tested. Profile checks
+require an injected BackendAccess dependency; absent injection rejects managed
+selections. This commit does not wire the catalog into application bootstrap.
+Deployment resource-closure resolution, internal RuntimeManifest compilation,
+persisted-read revalidation, target-free public projection, and bootstrap wiring
+remain subsequent P0b2/integration work. Worker execution also remains pending;
+protocol support does not prove an executing Adapter or an available online API.
 
 ## Role-bound isolation (P0b1)
 
