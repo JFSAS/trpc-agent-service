@@ -62,3 +62,7 @@ Knowledge 的 SDK `knowledge.Knowledge` 是 Search 接口。导入需要独立�
 5. 同固定 Manifest 的 Worker 运行与 Gateway 回归；真实 IM 与 fixture 分开验收。
 
 每项必须具备真实后端读写/隔离/恢复证据才登记可运行。未接通时失败关闭，不能发布后静默忽略能力。保留旧工作树未提交代码，按能力择取，不整目录覆盖 Tracing。
+
+## 测试生命周期修复
+
+重复 race 回归观察到取消测试在 SDK flow 尚读全局 logger 时恢复 logger 的竞争。取消场景改用同一个带 race 检测的测试二进制子进程，保持原断言、固定该进程的 SDK globals 至退出；仍关闭测试 runtime/HTTP fixture，不改生产 logger，不用 sleep 掩盖竞争。
