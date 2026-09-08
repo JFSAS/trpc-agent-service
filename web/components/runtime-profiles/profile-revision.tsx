@@ -255,7 +255,7 @@ export function ProfileRevisionDetail({ tenantId, profileId, revisionNumber }: {
 
     <section className={styles.snapshot} aria-labelledby="profile-snapshot-heading">
       <header className={styles.sectionHeader}><div><h2 id="profile-snapshot-heading"><LockKeyhole size={16} />配置快照</h2><p>Models、Tools、Knowledge、Storage 只读浏览；连接目标变更请返回 Draft 编辑并发布新版本。</p></div></header>
-      <ProfileResourceEditor config={revision.config} credentials={{}} credentialStates={revision.credential_states ?? {}} onChange={() => {}} isOwner={isOwner} readOnly />
+      <ProfileResourceEditor tenantId={tenantId} config={revision.config} credentials={{}} credentialStates={revision.credential_states ?? {}} onChange={() => {}} isOwner={isOwner} readOnly />
       <details className={styles.json}><summary>查看脱敏配置 JSON</summary><pre>{JSON.stringify(revision.config, null, 2)}</pre></details>
     </section>
 
