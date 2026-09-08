@@ -35,7 +35,7 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 		}
 		var credential *CredentialUse
 		if r.Credential != (CredentialUse{}) {
-			if r.Kind != profiledomain.StorageKindManagedMemory || r.Backend.Kind != datav1.PostgreSQL {
+			if r.Kind != profiledomain.StorageKindManagedMemory || (r.Backend.Kind != datav1.PostgreSQL && r.Backend.Kind != datav1.Redis) {
 				return nil, ErrInvalidManifestContent
 			}
 			c := r.Credential
@@ -77,7 +77,7 @@ func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 func (r ManifestStorageResourceView) MarshalJSON() ([]byte, error) {
 	if r.Backend != nil {
 		var present *bool
-		if r.Kind == profiledomain.StorageKindManagedMemory && r.Backend.Kind == datav1.PostgreSQL {
+		if r.Kind == profiledomain.StorageKindManagedMemory && (r.Backend.Kind == datav1.PostgreSQL || r.Backend.Kind == datav1.Redis) {
 			v := r.CredentialPresent
 			present = &v
 		}
@@ -186,7 +186,7 @@ func validateManagedWire(raw []byte) error {
 			}
 			if category == "storage" && kind == string(profiledomain.StorageKindManagedMemory) {
 				credentialRaw, present := fields["credential"]
-				if snapshot.Kind == datav1.PostgreSQL {
+				if snapshot.Kind == datav1.PostgreSQL || snapshot.Kind == datav1.Redis {
 					var use CredentialUse
 					if !present || strictDecodeJSON(credentialRaw, &use) != nil || !validCredentialUse(use, CredentialPurposeDSNPassword) {
 						return ErrInvalidManifestContent

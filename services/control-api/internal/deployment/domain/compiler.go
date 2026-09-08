@@ -25,8 +25,8 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	diagnostics = append(diagnostics, ValidateManagedSnapshots(input)...)
 	if input.Platform.Version == deploymentv1.WorkerV1PlatformVersion && agentUsesStorageRole(input.Agent.Spec, "memory") {
 		backend, ok := input.ManagedBackends["storage/memory"]
-		if !ok || backend.Kind != datav1.PostgreSQL || backend.PostgreSQL == nil || backend.PostgreSQL.Username != "memory_runtime" || input.Profile.Spec.Storage["memory"].Kind != profiledomain.StorageKindManagedMemory {
-			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/memory", "Worker V1 Memory requires managed PostgreSQL with memory_runtime principal"))
+		if !ok || !memoryRuntimePrincipal(backend) || input.Profile.Spec.Storage["memory"].Kind != profiledomain.StorageKindManagedMemory {
+			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/memory", "Worker V1 Memory requires managed PostgreSQL or Redis with memory_runtime principal"))
 		}
 	}
 	diagnostics = append(diagnostics, dataContractDiagnostics(input.Agent.Spec, input.Platform)...)
@@ -583,10 +583,10 @@ func compileResources(
 			host, _ := snapshot.EndpointHost()
 			hosts[host] = true
 			compiledResource := ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
-			if resource.Kind == profiledomain.StorageKindManagedMemory && snapshot.Kind == datav1.PostgreSQL {
+			if resource.Kind == profiledomain.StorageKindManagedMemory && (snapshot.Kind == datav1.PostgreSQL || snapshot.Kind == datav1.Redis) {
 				digest, err := snapshot.Digest()
 				if err != nil || resource.CredentialAudienceDigest != digest || resource.DSNCredentialID == "" {
-					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name)+"/dsn_credential_id", "storage", name, "PostgreSQL Memory credential is missing or bound to a different target"))
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name)+"/dsn_credential_id", "storage", name, "Memory credential is missing or bound to a different target"))
 				} else {
 					compiledResource.Credential = credentialUse(resource.DSNCredentialID, CredentialPurposeDSNPassword, digest)
 					uses = append(uses, compiledResource.Credential)
@@ -793,4 +793,10 @@ func errorDiagnostics(diagnostics []Diagnostic) []Diagnostic {
 
 func escapeJSONPointer(value string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(value, "~", "~0"), "/", "~1")
+}
+
+// Only role-scoped runtime principals may receive Memory credentials.
+func memoryRuntimePrincipal(s datav1.Snapshot) bool {
+	return (s.Kind == datav1.PostgreSQL && s.PostgreSQL != nil && s.PostgreSQL.Username == "memory_runtime") ||
+		(s.Kind == datav1.Redis && s.Redis != nil && s.Redis.Username == "memory_runtime")
 }

@@ -65,8 +65,8 @@ func (a profileBackendAccess) CheckBackend(ctx context.Context, tenant, id strin
 	return err
 }
 
-// Only the trusted PostgreSQL Memory execution identity may receive this purpose.
-// Catalog availability alone never makes Redis/S3 a password credential target.
+// Only the trusted PostgreSQL or Redis Memory execution identity may receive this purpose.
+// Catalog availability alone never grants a runtime principal access.
 func (a deploymentBackendAccess) ResolveMemoryCredentialAudience(ctx context.Context, tenant, id string, revision uint64) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -78,7 +78,8 @@ func (a deploymentBackendAccess) ResolveMemoryCredentialAudience(ctx context.Con
 	if err != nil {
 		return "", err
 	}
-	if snapshot.Kind != datav1.PostgreSQL || snapshot.PostgreSQL == nil || snapshot.PostgreSQL.Username != "memory_runtime" || snapshot.ValidateForRole("memory") != nil {
+	principalOK := (snapshot.Kind == datav1.PostgreSQL && snapshot.PostgreSQL != nil && snapshot.PostgreSQL.Username == "memory_runtime") || (snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "memory_runtime")
+	if !principalOK || snapshot.ValidateForRole("memory") != nil {
 		return "", backend.ErrCapability
 	}
 	return snapshot.Digest()

@@ -119,3 +119,118 @@ func TestRedisMemoryCredentialNullIsNotAbsence(t *testing.T) {
 		t.Fatal("shared codec accepted Redis credential")
 	}
 }
+
+func redisMemoryCredentialInput() CompileInput {
+	in := pgMemoryCredentialInput()
+	b := in.ManagedBackends["storage/memory"]
+	b.Kind = datav1.Redis
+	b.Adapter = "managed-redis-v1"
+	b.PostgreSQL = nil
+	b.Redis = &datav1.RedisTarget{Host: "redis.internal", Port: 6379, Database: 3, Username: "memory_runtime", TLS: true}
+	in.ManagedBackends["storage/memory"] = b
+	r := in.Profile.Spec.Storage["memory"]
+	r.CredentialAudienceDigest, _ = b.Digest()
+	in.Profile.Spec.Storage["memory"] = r
+	return in
+}
+func TestRedisMemoryCompileRequiresBoundPasswordUse(t *testing.T) {
+	in := redisMemoryCredentialInput()
+	m, r := Compile(in)
+	if !r.Valid {
+		t.Fatal(r.Diagnostics)
+	}
+	storage := m.Content.Resources.Storage["memory"]
+	digest, _ := storage.Backend.Digest()
+	want := CredentialUse{CredentialID: credentialMemory, Purpose: CredentialPurposeDSNPassword, AudienceDigest: digest}
+	if storage.Credential != want {
+		t.Fatal("wrong compiled credential")
+	}
+	found := false
+	for _, use := range m.CredentialUses {
+		if use == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("required use absent")
+	}
+	if _, err := deploymentv1.DecodeManifestContent(m.CanonicalContent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateManifestContent(m.CanonicalContent, m.ContentDigest); err != nil {
+		t.Fatal(err)
+	}
+	view := NewPublicManifestView(m.Content)
+	if !view.Resources.Storage["memory"].CredentialPresent {
+		t.Fatal("public credential status absent")
+	}
+	for _, change := range []func(*ManifestContent){
+		func(c *ManifestContent) {
+			r := c.Resources.Storage["memory"]
+			r.Credential = CredentialUse{}
+			c.Resources.Storage["memory"] = r
+		},
+		func(c *ManifestContent) {
+			r := c.Resources.Storage["memory"]
+			r.Credential.Purpose = "dsn"
+			c.Resources.Storage["memory"] = r
+		},
+		func(c *ManifestContent) {
+			r := c.Resources.Storage["memory"]
+			r.Credential.AudienceDigest = "sha256:" + strings.Repeat("a", 64)
+			c.Resources.Storage["memory"] = r
+		},
+		func(c *ManifestContent) { c.Resources.Storage["memory"].Backend.Redis.Database = 4 },
+		func(c *ManifestContent) { c.Resources.Storage["memory"].Backend.Redis.Host = "other.internal" },
+		func(c *ManifestContent) { c.Resources.Storage["memory"].Backend.Redis.Port = 6380 },
+		func(c *ManifestContent) { c.Resources.Storage["memory"].Backend.Redis.Username = "other" },
+		func(c *ManifestContent) { c.Resources.Storage["memory"].Backend.Redis.TLS = false },
+	} {
+		c := normalizeManifestContent(m.Content)
+		change(&c)
+		_, raw, digest, err := CanonicalizeManifest(c)
+		if err != nil {
+			continue
+		}
+		if _, err = ValidateManifestContent(raw, digest); err == nil {
+			t.Fatal("rehashed credential tampering accepted")
+		}
+		if _, err = deploymentv1.DecodeManifestContent(raw); err == nil {
+			t.Fatal("shared codec accepted tampering")
+		}
+	}
+}
+
+func TestMemoryRuntimePrincipalBothBackends(t *testing.T) {
+	for _, factory := range []func() CompileInput{pgMemoryCredentialInput, redisMemoryCredentialInput} {
+		for _, user := range []string{"memory_runtime", "session_runtime", "runtime"} {
+			in := factory()
+			b := in.ManagedBackends["storage/memory"]
+			if b.PostgreSQL != nil {
+				b.PostgreSQL.Username = user
+			} else {
+				b.Redis.Username = user
+			}
+			if memoryRuntimePrincipal(b) != (user == "memory_runtime") {
+				t.Fatal("incorrect principal", b.Kind, user)
+			}
+		}
+	}
+}
+
+func TestRedisMemoryMissingOrStaleProfileBindingFails(t *testing.T) {
+	for _, mode := range []string{"missing", "stale"} {
+		in := redisMemoryCredentialInput()
+		r := in.Profile.Spec.Storage["memory"]
+		if mode == "missing" {
+			r.DSNCredentialID = ""
+		} else {
+			r.CredentialAudienceDigest = "sha256:" + strings.Repeat("f", 64)
+		}
+		in.Profile.Spec.Storage["memory"] = r
+		m, report := Compile(in)
+		if report.Valid || len(m.CanonicalContent) > 0 {
+			t.Fatal("bad Redis binding compiled")
+		}
+	}
+}

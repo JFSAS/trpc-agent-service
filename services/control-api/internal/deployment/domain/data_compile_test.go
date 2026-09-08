@@ -28,6 +28,11 @@ func fullDataInput() CompileInput {
 	in.Profile.Spec.Storage["memory"] = profiledomain.StorageResource{Kind: profiledomain.StorageKindManagedMemory, BackendID: "redis", BackendRevision: 1}
 	memory, _ := in.ManagedBackends["storage/session"].ForRole("memory")
 	in.ManagedBackends["storage/memory"] = memory
+	digest, _ := memory.Digest()
+	mr := in.Profile.Spec.Storage["memory"]
+	mr.DSNCredentialID = credentialMemory
+	mr.CredentialAudienceDigest = digest
+	in.Profile.Spec.Storage["memory"] = mr
 	in.ManagedBackends["storage/artifact"] = datav1.Snapshot{SchemaVersion: "v1", TenantID: in.TenantID, BackendID: "s3", BackendRevision: 1, Kind: datav1.S3, Adapter: "managed-s3-v1", Isolation: "tenant-artifact-v1", Limits: datav1.Limits{TimeoutMS: 1000, MaxConcurrency: 1, MaxBytes: 1024}, S3: &datav1.S3Target{Endpoint: "https://s3.internal", Bucket: "artifacts", Region: "local", Versioning: "disabled"}}
 	in.Platform.Execution.AllowedEndpointHosts = append(in.Platform.Execution.AllowedEndpointHosts, "s3.internal")
 	in.Platform.Digest, _ = in.Platform.CalculateDigest()

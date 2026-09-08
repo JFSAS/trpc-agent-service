@@ -31,6 +31,11 @@ func TestExportWorkerSDKMemoryFixture(t *testing.T) {
 	in.Platform.Execution.AllowedEndpointHosts = append(in.Platform.Execution.AllowedEndpointHosts, "redis.internal")
 	in.Platform.Digest, _ = in.Platform.CalculateDigest()
 	in.ManagedBackends = map[string]datav1.Snapshot{"storage/memory": {SchemaVersion: "v1", TenantID: in.TenantID, BackendID: "redis-memory", BackendRevision: 1, Kind: datav1.Redis, Adapter: "managed-redis-v1", Isolation: datav1.MemoryIsolation, Limits: datav1.Limits{TimeoutMS: 1000, MaxConcurrency: 1, MaxBytes: 1024}, Redis: &datav1.RedisTarget{Host: "redis.internal", Port: 6379, Username: "runtime", TLS: true}}}
+	memoryDigest, _ := in.ManagedBackends["storage/memory"].Digest()
+	memoryResource := in.Profile.Spec.Storage["memory"]
+	memoryResource.DSNCredentialID = credentialMemory
+	memoryResource.CredentialAudienceDigest = memoryDigest
+	in.Profile.Spec.Storage["memory"] = memoryResource
 	// Fix real owner-canonical source digests rather than retaining fixture placeholders.
 	agentRaw, _ := json.Marshal(in.Agent.Spec)
 	agentCanonical, agentReport := agentdomain.ValidateForPublication(agentRaw, 1)

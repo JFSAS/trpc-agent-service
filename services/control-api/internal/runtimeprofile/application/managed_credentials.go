@@ -6,7 +6,7 @@ import (
 )
 
 // ManagedCredentialTargetResolver returns only the digest of a tenant-authorized,
-// immutable PostgreSQL Memory target. Profile never receives connection secrets.
+// immutable PostgreSQL or Redis Memory target. Profile never receives connection secrets.
 type ManagedCredentialTargetResolver interface {
 	ResolveMemoryCredentialAudience(context.Context, string, string, uint64) (string, error)
 }
