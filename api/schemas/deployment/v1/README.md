@@ -56,8 +56,13 @@ strictly decoded resolved components shared with the Control domain:
 - Summary: `enabled: true`, `model_resource`, positive `event_threshold`.
 - Artifact metadata contract: `worker-artifact-metadata-v1`.
 
-These components are not yet fields of `ManifestContent` or `ManifestNode`.
-The existing publication guard remains active. This first slice does not change
+The aggregate DTO/schema now exposes optional `content.runtime.summary` and LLM
+node `memory`, `artifact`, and `add_session_summary`. Missing fields stay absent;
+explicit null, false, and empty enabled components are rejected by the aggregate
+schema. `add_session_summary` is represented by `*bool` and only accepts true.
+The existing publication guard and Control semantic acceptance guard remain
+active until compiler resource closure is complete. Worker must integrate its
+explicit new-field rejection gate together with these aggregate fields. This first slice does not change
 canonical bytes, authorize resources, resolve model references, enable Worker
 execution, or register backend implementations. Compiler closure, reference and
 callable collision checks, aggregate DTO/schema integration, and consumer gates

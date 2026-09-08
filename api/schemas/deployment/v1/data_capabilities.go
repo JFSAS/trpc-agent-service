@@ -10,8 +10,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// These resolved components are not publication inputs. They remain separate
-// from ManifestContent until compiler closure and consumer gates are integrated.
+// These resolved components are not publication inputs. Their aggregate wire
+// representation does not enable execution before compiler and consumer gates.
 type ManifestMemory struct {
 	Resource     string   `json:"resource"`
 	Tools        []string `json:"tools"`

@@ -37,6 +37,9 @@ func DecodeManifestContent(raw json.RawMessage) (ManifestContent, error) {
 	if len(raw) == 0 {
 		return ManifestContent{}, ErrInvalidManifestContent
 	}
+	if err := validateDataCapabilityPresence(raw); err != nil {
+		return ManifestContent{}, ErrInvalidManifestContent
+	}
 	var content ManifestContent
 	if err := strictDecodeJSON(raw, &content); err != nil {
 		return ManifestContent{}, fmt.Errorf("%w: %v", ErrInvalidManifestContent, err)
@@ -81,6 +84,14 @@ func VerifyManifestContent(raw json.RawMessage, digest string) (ManifestContent,
 }
 
 func validateManifestCredentialShape(content ManifestContent) error {
+	if content.Runtime != nil {
+		return ErrInvalidManifestContent
+	}
+	for _, node := range content.AgentPlan.Nodes {
+		if node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
+			return ErrInvalidManifestContent
+		}
+	}
 	if content.SchemaVersion != SchemaVersionV1 || content.CompilerVersion != CompilerVersionV1 ||
 		content.RuntimeContractVersion != RuntimeContractVersionV1 || content.TenantID == "" ||
 		content.PlatformContract.Version == "" || !validDigest(content.PlatformContract.Digest) ||
@@ -237,11 +248,36 @@ func rejectDuplicateJSONKeys(data []byte) error {
 
 func normalizeManifestContent(content ManifestContent) ManifestContent {
 	normalized := content
+	if content.Runtime != nil {
+		runtime := *content.Runtime
+		if runtime.Summary != nil {
+			summary := *runtime.Summary
+			runtime.Summary = &summary
+		}
+		normalized.Runtime = &runtime
+	}
 	normalized.AgentPlan = AgentPlan{
 		Root:  content.AgentPlan.Root,
 		Nodes: make(map[string]ManifestNode, len(content.AgentPlan.Nodes)),
 	}
 	for id, node := range content.AgentPlan.Nodes {
+		if node.Memory != nil {
+			memory := *node.Memory
+			memory.Tools = sortedUnique(memory.Tools)
+			if memory.PreloadLimit != nil {
+				limit := *memory.PreloadLimit
+				memory.PreloadLimit = &limit
+			}
+			node.Memory = &memory
+		}
+		if node.Artifact != nil {
+			artifact := *node.Artifact
+			node.Artifact = &artifact
+		}
+		if node.AddSessionSummary != nil {
+			enabled := *node.AddSessionSummary
+			node.AddSessionSummary = &enabled
+		}
 		node.ToolResources = sortedUnique(node.ToolResources)
 		node.KnowledgeResources = sortedUnique(node.KnowledgeResources)
 		node.CallableEntries = sortedUnique(node.CallableEntries)

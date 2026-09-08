@@ -29,7 +29,12 @@ type PlatformContractReference struct {
 	Digest  string `json:"digest"`
 }
 
+type ManifestRuntime struct {
+	Summary *ManifestSummary `json:"summary"`
+}
+
 type ManifestContent struct {
+	Runtime                *ManifestRuntime          `json:"runtime,omitempty"`
 	SchemaVersion          string                    `json:"schema_version"`
 	CompilerVersion        string                    `json:"compiler_version"`
 	RuntimeContractVersion string                    `json:"runtime_contract_version"`
@@ -72,7 +77,10 @@ type AgentPlan struct {
 // ManifestNode is a closed union. MarshalJSON omits every inactive branch so
 // zero values cannot silently become executable options.
 type ManifestNode struct {
-	Kind agentdomain.NodeKind
+	Memory            *ManifestMemory
+	Artifact          *ManifestArtifact
+	AddSessionSummary *bool
+	Kind              agentdomain.NodeKind
 
 	Name               string
 	Instruction        string
@@ -99,9 +107,12 @@ func (n ManifestNode) MarshalJSON() ([]byte, error) {
 			KnowledgeResources []string                `json:"knowledge_resources"`
 			CallableEntries    []string                `json:"callable_entries"`
 			Generation         *agentdomain.Generation `json:"generation,omitempty"`
+			Memory             *ManifestMemory         `json:"memory,omitempty"`
+			Artifact           *ManifestArtifact       `json:"artifact,omitempty"`
+			AddSessionSummary  *bool                   `json:"add_session_summary,omitempty"`
 		}{
 			n.Kind, n.Name, n.Instruction, n.ModelResource,
-			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation,
+			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary,
 		})
 	case agentdomain.NodeKindSequence, agentdomain.NodeKindParallel:
 		return json.Marshal(struct {
@@ -141,6 +152,9 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			KnowledgeResources []string                `json:"knowledge_resources"`
 			CallableEntries    []string                `json:"callable_entries"`
 			Generation         *agentdomain.Generation `json:"generation,omitempty"`
+			Memory             *ManifestMemory         `json:"memory,omitempty"`
+			Artifact           *ManifestArtifact       `json:"artifact,omitempty"`
+			AddSessionSummary  *bool                   `json:"add_session_summary,omitempty"`
 		}
 		if err := strictDecodeJSON(data, &wire); err != nil {
 			return err
@@ -150,6 +164,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			ModelResource: wire.ModelResource, ToolResources: wire.ToolResources,
 			KnowledgeResources: wire.KnowledgeResources,
 			CallableEntries:    wire.CallableEntries, Generation: wire.Generation,
+			Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary,
 		}
 		return nil
 	case agentdomain.NodeKindSequence, agentdomain.NodeKindParallel:
