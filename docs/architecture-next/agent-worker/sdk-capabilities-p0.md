@@ -66,3 +66,19 @@ Knowledge 的 SDK `knowledge.Knowledge` 是 Search 接口。导入需要独立�
 ## 测试生命周期修复
 
 重复 race 回归观察到取消测试在 SDK flow 尚读全局 logger 时恢复 logger 的竞争。取消场景改用同一个带 race 检测的测试二进制子进程，保持原断言、固定该进程的 SDK globals 至退出；仍关闭测试 runtime/HTTP fixture，不改生产 logger，不用 sleep 掩盖竞争。
+
+## P0b1 / Memory Attempt 实现进展（2026-09-09）
+
+Profile managed 后端角色契约已集成，目录先验证 Tenant / role / 固定 revision，再派生角色隔离的 Backend Snapshot；Memory 与 Session 可以共享物理实例，但授权 digest 与隔离角色不混用。目录 revision 与 Web 同为安全正整数。Bootstrap 和按 Agent 声明生成 Manifest 的闭包仍待后续接线，不能把目录资格检查当作运行验收。
+
+Worker 新增 `MemoryAttempt`：复用 root SDK `memory/inmemory` 和六种 SDK 工具，构造参数只有可信 SDK key、固定后端 scope、已加载快照与 base revision，没有持久 Store，也没有自动提取器。所有调用验证输入 scope、映射固定 scope；输入、读取与候选全部深拷贝。同 Attempt 读己之写；`Seal` 返回按 ID 排序的完整候选并禁止后续写入；`Close` 丢弃私有视图。候选仅保留基线 revision，正式接受记录、跨后端 CAS、冲突处理与下一 Run 可见水位仍未实现，不能对未接受 Attempt 的候选直接执行持久覆盖。
+
+SDK兼容事实：
+- SDK `memory_search` 工具固定带 `HybridSearch=true`，但 inmemory 后端只执行关键词检索。本适配明确采用关键词语义，接受该 SDK hint，不宣称语义向量检索；显式 RRF 参数仍拒绝。
+- SDK `ReadMemories` 返回内部 Entry 指针，因此恢复快照时间戳的依赖封装在本模块中，并用别名/时间戳测试约束；对外不泄漏这些指针。
+- SDK 默认 Memory 数量和搜索数量限制不成为新 Worker Policy：私有视图使用机器整数上限和不截断搜索结果；预加载仍遵循 Agent 显式配置。
+- 引入 inmemory 增加 SDK 自身关键词分词依赖 `gse` / `cedar`，root SDK 保持 v1.11.2。
+
+`TraceMemoryService` 为最终 Attempt 服务增加 `memory.read/search/write/delete` span。SDK工具从 invocation 使用外层服务，span沿调用上下文串联，不记录Memory正文、query、身份键或原始依赖错误；写span当前仅证明暂存操作，不代表正式数据库提交。
+
+当前生产 executor 仍拒绝工具调用事件，runtime factory 仍未创建上述 MemoryAttempt。下一步必须连同工具事件验证、多轮usage、Manifest映射、candidate持久协议一起接通，而非先放开门禁造成静默丢失Memory候选。真实六工具/SDK Runner/候选测试是适配层验收，不是正式PG/Redis或IM验收。
