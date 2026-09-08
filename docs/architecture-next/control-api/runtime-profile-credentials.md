@@ -562,3 +562,8 @@ Worker 复用现有受认证 `ResolveForAttempt` 取得密码，再用固定后�
 公开状态键为 `credential_states.storage.memory.dsn_password`。
 
 现有凭据表对 purpose 只有非空约束，本改动不需要数据库迁移，也不修改历史迁移。
+
+Redis Memory 的历史无凭据 Manifest descriptor 保持 Canonical／详情读取与原公开投影；
+这不授予执行能力，新编译／发布仍要求固定凭据关联，Worker gate 也拒绝无凭据执行。
+本批使用协调同批发布；新 Redis Memory Manifest 不投递给旧 PG-only Worker，
+不滚动混用这两种实现。当前不新增协议字段或扩大运行契约版本。

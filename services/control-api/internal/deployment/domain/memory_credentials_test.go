@@ -192,12 +192,25 @@ func TestRedisMemoryCompileRequiresBoundPasswordUse(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if _, err = ValidateManifestContent(raw, digest); err == nil {
+		_, readErr := ValidateManifestContent(raw, digest)
+		if c.Resources.Storage["memory"].Credential == (CredentialUse{}) {
+			if readErr != nil {
+				t.Fatal("historical descriptor unreadable", readErr)
+			}
+		} else if readErr == nil {
 			t.Fatal("rehashed credential tampering accepted")
 		}
-		if _, err = deploymentv1.DecodeManifestContent(raw); err == nil {
+
+		decoded, decodeErr := deploymentv1.DecodeManifestContent(raw)
+		if c.Resources.Storage["memory"].Credential == (CredentialUse{}) {
+			// The shared reader retains historical descriptors, but they are not executable.
+			if decodeErr == nil && deploymentv1.ValidateWorkerV1(decoded, "") == nil {
+				t.Fatal("missing credential executable")
+			}
+		} else if decodeErr == nil {
 			t.Fatal("shared codec accepted tampering")
 		}
+
 	}
 }
 
@@ -232,5 +245,41 @@ func TestRedisMemoryMissingOrStaleProfileBindingFails(t *testing.T) {
 		if report.Valid || len(m.CanonicalContent) > 0 {
 			t.Fatal("bad Redis binding compiled")
 		}
+	}
+}
+
+func TestHistoricalRedisMemoryReadDoesNotEnableNewCompile(t *testing.T) {
+	in := redisMemoryCredentialInput()
+	m, report := Compile(in)
+	if !report.Valid {
+		t.Fatal(report.Diagnostics)
+	}
+	r := m.Content.Resources.Storage["memory"]
+	r.Credential = CredentialUse{}
+	m.Content.Resources.Storage["memory"] = r
+	_, raw, digest, err := CanonicalizeManifest(m.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := ValidateManifestContent(raw, digest)
+	if err != nil {
+		t.Fatal("historical read", err)
+	}
+	view, err := json.Marshal(NewPublicManifestView(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tree map[string]any
+	_ = json.Unmarshal(view, &tree)
+	memory := tree["resources"].(map[string]any)["storage"].(map[string]any)["memory"].(map[string]any)
+	if _, exists := memory["credential_present"]; exists {
+		t.Fatal("historical public projection changed")
+	}
+	p := in.Profile.Spec.Storage["memory"]
+	p.DSNCredentialID = ""
+	p.CredentialAudienceDigest = ""
+	in.Profile.Spec.Storage["memory"] = p
+	if _, r := Compile(in); r.Valid {
+		t.Fatal("new compile omitted password")
 	}
 }

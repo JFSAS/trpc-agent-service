@@ -150,6 +150,12 @@ func TestPublishFullDataCapabilitiesUsesResolvedBackendClosure(t *testing.T) {
 	p.Digest, _ = p.CalculateDigest()
 	session := datav1.Snapshot{SchemaVersion: "v1", TenantID: "tenant-1", BackendID: "redis", BackendRevision: 1, Kind: datav1.Redis, Adapter: "managed-redis-v1", Isolation: datav1.SessionIsolation, Limits: datav1.Limits{TimeoutMS: 1000, MaxConcurrency: 1, MaxBytes: 1024}, Redis: &datav1.RedisTarget{Host: "redis.private", Port: 6379, Username: "runtime", TLS: true}}
 	memory, _ := session.ForRole("memory")
+	memoryDigest, _ := memory.Digest()
+	mr := h.profile.revisionSpec.Storage["memory"]
+	mr.DSNCredentialID = "crd_00000000000000000000000000000009"
+	mr.CredentialAudienceDigest = memoryDigest
+	h.profile.revisionSpec.Storage["memory"] = mr
+	h.profile.refresh(t)
 	artifact := datav1.Snapshot{SchemaVersion: "v1", TenantID: "tenant-1", BackendID: "s3", BackendRevision: 1, Kind: datav1.S3, Adapter: "managed-s3-v1", Isolation: "tenant-artifact-v1", Limits: session.Limits, S3: &datav1.S3Target{Endpoint: "https://s3.private", Bucket: "artifacts", Region: "local", Versioning: "disabled"}}
 	h.service.deps.ManagedBackends = backendMapResolver{"storage/session": session, "storage/memory": memory, "storage/artifact": artifact}
 	result, err := h.service.PublishDeploymentRevision(context.Background(), PublishDeploymentCommand{TenantID: "tenant-1", DeploymentID: created.ID, ActorUserID: "owner", IdempotencyKey: "full-data", Input: deploymentInput()})
