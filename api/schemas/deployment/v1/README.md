@@ -43,3 +43,23 @@ logical EntryID, exactly 63 ASCII characters. Compiler and manifest validation
 use the same pure resolver intended for the future Worker. Invalid or duplicate
 entries and name collisions reject the whole node set; enumeration-order
 suffixes and remote-name guessing are not part of V1.
+
+### P0b2 resolved data components (contract-only first slice)
+
+`data_capabilities.go` and `data-capabilities.schema.json` define reusable,
+strictly decoded resolved components shared with the Control domain:
+
+- Memory: `resource`, SDK `tools`, optional `preload_limit` (-1 all, 0 off,
+  positive adaptive entry count). With no tools and no active preload, omit the
+  component rather than creating a runtime resource closure.
+- Artifact: `enabled: true`, `resource`. This enables a service, not implicit tools.
+- Summary: `enabled: true`, `model_resource`, positive `event_threshold`.
+- Artifact metadata contract: `worker-artifact-metadata-v1`.
+
+These components are not yet fields of `ManifestContent` or `ManifestNode`.
+The existing publication guard remains active. This first slice does not change
+canonical bytes, authorize resources, resolve model references, enable Worker
+execution, or register backend implementations. Compiler closure, reference and
+callable collision checks, aggregate DTO/schema integration, and consumer gates
+must land before publication can use these components. Source disabled values
+are normalized by the future compiler, not represented as active components.
