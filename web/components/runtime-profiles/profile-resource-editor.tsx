@@ -212,7 +212,7 @@ export function ProfileResourceEditor({ config, credentials, credentialStates, o
   return <div className={styles.editor}>
     <aside className={styles.navigation} aria-label="资源导航">
       <header><strong>资源配置</strong><span>四类运行依赖</span></header>
-      {categories.map(({ key, label, detail, icon: Icon }) => <div key={key} className={styles.category}>
+      {categories.map(({ key, label, detail, icon: Icon }) => <div key={key} className={styles.category} data-resource-category={key}>
         <button className={`${styles.categoryButton} ${category === key ? styles.activeCategory : ""}`} type="button" aria-label={`${label} · ${Object.keys(config[key] ?? {}).length}`} aria-expanded={category === key} onClick={() => navigate(key)}><Icon size={16} aria-hidden="true" /><span><strong>{label}</strong><small>{detail}</small></span><span className={styles.count}>{Object.keys(config[key] ?? {}).length}</span></button>
         {category === key && <div className={styles.resourceList}>{Object.keys(config[key] ?? {}).length ? Object.keys(config[key] ?? {}).map((resourceName) => <button type="button" key={resourceName} aria-pressed={name === resourceName} className={`${styles.resource} ${name === resourceName ? styles.activeResource : ""}`} onClick={() => navigate(key, resourceName)} title={resourceName}><span className={styles.dot} />{resourceName}</button>) : <p>暂无资源</p>}</div>}
       </div>)}
@@ -226,7 +226,7 @@ export function ProfileResourceEditor({ config, credentials, credentialStates, o
         }}><Plus size={14} aria-hidden="true" />添加资源</Button>
       </section>}
     </aside>
-    <div className={styles.content}>
+    <div className={styles.content} data-resource-category={category}>
       {name ? <>
         <header className={styles.resourceHeading}><div><span className={styles.eyebrow}>{meta.label} / {readOnly ? "不可变配置" : "Draft 配置"}</span><h2 id={fieldID("heading")} tabIndex={-1}>{name}</h2><div className={styles.kindRow}><code id={fieldID("kind")} tabIndex={-1}>{own(config[category] as Record<string, ResourceConfig> | undefined, name)?.kind || "类型未设置"}</code>{!readOnly && own(config[category] as Record<string, ResourceConfig> | undefined, name)?.kind !== meta.kind && <Button type="button" variant="secondary" disabled={disabled || protectDelete} onClick={() => updateResource({ ...own(config[category] as Record<string, ResourceConfig> | undefined, name), kind: meta.kind })}>使用 {meta.kind}</Button>}</div></div>{!readOnly && <Button type="button" variant="ghost" disabled={disabled || protectDelete} aria-label={`删除资源 ${name}`} title={protectDelete ? "已有凭证关联，需要 OWNER 删除" : "删除此 Draft 资源"} onClick={() => setDeleteTarget({ category, name })}><Trash2 size={16} aria-hidden="true" />删除</Button>}</header>
         {protectDelete && !readOnly && <p className={styles.ownerNotice}>资源持有凭证关联；删除或修改关联目标需要 OWNER。其余非密钥字段仍可编辑。</p>}

@@ -137,9 +137,9 @@ export function AgentSpecEditor({
   if (isEmptyAgentSpec(value) && !state) {
     return (
       <section aria-label="初始化 AgentSpec 画布" style={emptyStyle}>
-        <Boxes color="#0f6fec" size={30} />
+        <Boxes color="var(--primary)" size={30} />
         <h2 style={{ fontSize: 18, margin: 0 }}>Draft 尚未初始化</h2>
-        <p style={{ color: "#667085", fontSize: 12, lineHeight: 1.65, margin: 0, maxWidth: 560 }}>
+        <p style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.65, margin: 0, maxWidth: 560 }}>
           当前是后端创建的 revision 1、spec={"{}"}。模板只生成浏览器工作副本；点击页面上方“保存 Draft”后才写入 Control API。
         </p>
         <Button disabled={disabled} onClick={initializeCanvas}><Plus size={14} />使用 Single LLM 模板初始化画布</Button>
@@ -152,7 +152,7 @@ export function AgentSpecEditor({
   return (
     <section className={styles.shell} style={shellStyle}>
       <header style={headerStyle}>
-        <div><strong style={{ display: "block", fontSize: 14 }}>AgentSpec V1 编辑器</strong><small style={{ color: "#778292" }}>画布生成 Spec；后端负责最终校验、规范化和发布。</small></div>
+        <div><strong style={{ display: "block", fontSize: 14 }}>AgentSpec V1 编辑器</strong><small style={{ color: "var(--muted)" }}>画布生成 Spec；后端负责最终校验、规范化和发布。</small></div>
         <div style={{ display: "flex", gap: 6 }}>
           <Button disabled={!state} onClick={() => setMode("canvas")} variant={mode === "canvas" ? "primary" : "secondary"}><Boxes size={13} />画布</Button>
           <Button onClick={() => { setJSONSource(JSON.stringify(value, null, 2)); setMode("json"); }} variant={mode === "json" ? "primary" : "secondary"}><Braces size={13} />JSON</Button>
@@ -190,9 +190,9 @@ function JSONEditor({ source, onChange, onApply, error, disabled }: {
   return (
     <div style={{ display: "grid", gap: 9, width: "100%" }}>
       <textarea aria-label="AgentSpec JSON" disabled={disabled} onChange={(event) => onChange(event.target.value)} spellCheck={false} style={jsonStyle} value={source} />
-      {error && <div role="alert" style={{ color: "#b42338", fontSize: 11 }}>{error}</div>}
+      {error && <div role="alert" style={{ color: "var(--danger)", fontSize: 11 }}>{error}</div>}
       <div style={{ alignItems: "center", display: "flex", gap: 10, justifyContent: "space-between" }}>
-        <small style={{ color: "#778292" }}>不完整但可解析的 Object 仍可保存为 Draft。</small>
+        <small style={{ color: "var(--muted)" }}>不完整但可解析的 Object 仍可保存为 Draft。</small>
         <Button disabled={disabled} onClick={onApply}>应用 JSON 到工作副本</Button>
       </div>
     </div>
@@ -211,7 +211,7 @@ function NodeInspector({ state, dispatch, disabled }: {
   return (
     <section aria-label="节点属性" style={panelStyle}>
       <header style={panelHeaderStyle}>
-        <div><strong>{nodeID}</strong><small style={{ color: "#778292", display: "block", marginTop: 3 }}>{node.kind}</small></div>
+        <div><strong>{nodeID}</strong><small style={{ color: "var(--muted)", display: "block", marginTop: 3 }}>{node.kind}</small></div>
         <Button aria-label={`删除节点 ${nodeID}`} disabled={disabled || Object.keys(state.spec.nodes).length <= 1} onClick={() => dispatch({ type: "node.delete", nodeID })} variant="danger"><Trash2 size={13} /></Button>
       </header>
       <label className="field"><span>显示名称</span><input disabled={disabled} onChange={(event) => replace({ ...node, name: event.target.value || undefined } as AgentNodeV1)} value={node.name ?? ""} /></label>
@@ -268,9 +268,9 @@ function findSensitiveAgentSpecField(value: unknown, pointer = ""): string | nul
   return null;
 }
 
-const shellStyle: CSSProperties = { background: "#fff", border: "1px solid #e5eaf1", borderRadius: 11, overflow: "hidden" };
-const headerStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid #e5eaf1", display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between", padding: "13px 14px" };
-const emptyStyle: CSSProperties = { alignItems: "center", background: "#fff", border: "1px solid #e5eaf1", borderRadius: 11, display: "flex", flexDirection: "column", gap: 13, justifyContent: "center", minHeight: 430, padding: 30, textAlign: "center" };
-const panelStyle: CSSProperties = { background: "#fff", border: "1px solid #e5eaf1", borderRadius: 10, display: "grid", gap: 12, minWidth: 0, padding: 13 };
-const panelHeaderStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid #edf0f4", display: "flex", justifyContent: "space-between", paddingBottom: 10 };
-const jsonStyle: CSSProperties = { background: "#0f1724", border: "1px solid #26364a", borderRadius: 9, color: "#dbeafe", font: "11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace", minHeight: 420, padding: 15, resize: "vertical", width: "100%" };
+const shellStyle: CSSProperties = { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 11, overflow: "hidden" };
+const headerStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid var(--line)", display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between", padding: "13px 14px" };
+const emptyStyle: CSSProperties = { alignItems: "center", background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 11, display: "flex", flexDirection: "column", gap: 13, justifyContent: "center", minHeight: 430, padding: 30, textAlign: "center" };
+const panelStyle: CSSProperties = { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 10, display: "grid", gap: 12, minWidth: 0, padding: 13 };
+const panelHeaderStyle: CSSProperties = { alignItems: "center", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", paddingBottom: 10 };
+const jsonStyle: CSSProperties = { background: "var(--code-bg)", border: "1px solid var(--code-border)", borderRadius: 9, color: "var(--code-ink)", font: "11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace", minHeight: 420, padding: 15, resize: "vertical", width: "100%" };

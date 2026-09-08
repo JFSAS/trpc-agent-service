@@ -176,7 +176,7 @@ main{min-width:0;max-width:914px}.breadcrumb{display:flex;align-items:center;gap
 <p>在正式 Channel 接入流程中，<strong>机器人凭据填写在渠道账户里，不填写到 Runtime Profile</strong>。这套 Web 流程也不要求在 Profile 或 Worker <code>.env</code> 中额外填写一组 <code>TELEGRAM_*</code> 变量。</p>
 <h3>2.2 登录页与首次改密页</h3>
 <ol>
-<li>打开管理员给你的控制台地址，例如本机演示地址 <code>http://127.0.0.1:13001</code>，在项目主页点击 <strong>进入控制台</strong>；也可直接访问 <code>/console</code>。</li>
+<li>打开管理员给你的控制台地址，例如本机演示地址 <code>http://127.0.0.1:13001</code>。未登录时会直接进入登录页；已有有效会话时直接进入工作区。</li>
 <li>在 <strong>登录控制台</strong> 中输入平台用户名和密码，点击 <strong>登录</strong>。</li>
 <li>若进入 <strong>设置新密码</strong>，当前密码填写刚才的临时密码，再填写并确认新密码，点击 <strong>保存并继续</strong>。页面提示新密码至少 12 位。</li>
 <li>平台管理员可能先进入管理总览；普通租户用户进入 <strong>选择租户</strong>。</li>
@@ -251,6 +251,7 @@ main{min-width:0;max-width:914px}.breadcrumb{display:flex;align-items:center;gap
 </tbody></table></div>
 <p>同一个人可以同时具备 Operator 和某个租户的 OWNER 身份。看见平台管理菜单，不代表自动拥有所有租户的业务操作权限。</p>
 <h2 id="chapter-3">3. 认识每一个 Web 页面</h2>
+<p>项目官网和文档站独立部署，不属于你的管理 Web 服务。公开站的 <code>/</code> 是项目介绍，<code>/docs/</code> 是文档中心；自己部署的 Web 根地址则进入登录流程。控制台右上角及登录页都有 <strong>帮助文档</strong> 入口，由管理员配置 <code>DOCS_SITE_URL</code> 指向公开文档中心。</p>
 <p>表中的 <code>T</code> 表示当前租户的路径 <code>/tenants/你的租户ID</code>。通常通过左侧导航和列表进入，不必手工拼地址。以下覆盖当前全部 <strong>26 个页面路由</strong>；Models、Tools、Knowledge、Storage 是同一个运行配置工作台内的分类，不是四套独立页面。</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="可横向滚动的数据表"><table>
 <thead>
@@ -261,14 +262,14 @@ main{min-width:0;max-width:914px}.breadcrumb{display:flex;align-items:center;gap
 </tr>
 </thead>
 <tbody><tr>
-<td>项目主页 <code>/</code></td>
-<td>公开介绍、教程与文档入口</td>
-<td>阅读教程、查阅文档，或点击进入控制台</td>
+<td>Web 入口 <code>/</code></td>
+<td>进入自己部署的管理服务</td>
+<td>未登录直接进入登录页；已有会话时进入工作区</td>
 </tr>
 <tr>
-<td>文档中心 <code>/docs</code></td>
-<td>按任务查找教程与参考文档</td>
-<td>选择主题，阅读站内文档</td>
+<td>帮助文档 <code>/help</code></td>
+<td>打开独立的公开文档站</td>
+<td>点击右上角“帮助文档”，新标签页阅读，当前操作保留</td>
 </tr>
 <tr>
 <td>控制台入口 <code>/console</code></td>
@@ -1124,6 +1125,7 @@ Deployment 名称 / 固定版本：
       context: /srv/trpc-agent-v1/release/web
     environment:
       CONTROL_API_BASE: http://control-api:8080
+      DOCS_SITE_URL: ${DOCS_SITE_URL:-}
     ports:
       - &quot;127.0.0.1:13001:3000&quot;
     depends_on:
@@ -1132,6 +1134,7 @@ Deployment 名称 / 固定版本：
     restart: unless-stopped
 </code></pre>
 <p><code>CONTROL_API_BASE</code> 是 Web 服务访问管理后端的地址。不要填 Gateway 的入站地址，也不要把容器里的 <code>127.0.0.1</code> 当成另一个容器。浏览器只访问控制台，不直接访问内部接口。</p>
+<p>填写 <code>platform.env</code> 中的 <code>DOCS_SITE_URL</code>，值是已经部署的文档中心完整 HTTP(S) 地址，例如 <code>https://你的文档域名/项目路径/docs/</code>。帮助文档在新标签页打开，当前工作区保留。该值是运行时配置，修改后重建 Web 容器以应用新的环境变量，不需要重建镜像。未配置时会显示具体配置说明，不会假设某个公开文档地址已经存在。</p>
 <h3>A.4 使用同一组配置完成启动</h3>
 <p>以下命令在安装主机的终端执行；假设发布包与配置已经按 A.1 放好，所有必需变量已经填写：</p>
 <pre><code class="language-bash">RELEASE=/srv/trpc-agent-v1/release
@@ -1188,7 +1191,7 @@ compose_v1 exec agent-worker /agent-worker probe http://127.0.0.1:8083/readyz
 <h2 id="chapter-14">附录 B. 版本、页面覆盖与插图说明</h2>
 <p>本文按 2026-09-07 V1 的 Web 页面、Profile / Deployment 实际实现及 Worker V1 执行门禁编写，而不是按早期设计方案推测操作。控制台容器若尚未更新到配套版本，菜单或诊断能力可能不同；请部署负责人同步整套版本。</p>
 <ul>
-<li>共覆盖 <strong>26 个页面入口</strong>，包括主页、文档中心、控制台入口、登录、改密、平台管理、租户、Agent、运行配置、部署、渠道及三个历史版本页。</li>
+<li>共覆盖 <strong>26 个页面入口</strong>，包括 Web 入口、帮助文档跳转、控制台入口、登录、改密、平台管理、租户、Agent、运行配置、部署、渠道及三个历史版本页；公开官网与文档中心独立部署。</li>
 <li>三张流程 / 状态图是专门绘制的操作示意，不表示某次真实运行结果。</li>
 <li>Telegram 的两张截图来自 2026-09-07 本地联调记录；企业微信两张图来自同日真实组件的隔离界面演示，图内已明确标注模拟响应。</li>
 <li>截图示例中的租户、Bot 名称和版本号仅用来对照位置，不作为你的配置值。</li>

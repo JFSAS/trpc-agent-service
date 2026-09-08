@@ -28,6 +28,15 @@ describe("dashboard-01 application shell", () => {
     });
   });
 
+  it.each(["/admin/users", "/tenants", "/tenants/tenant-1/channels"])("keeps help available without replacing the active page at %s", (pathname) => {
+    navigation.pathname = pathname;
+    render(<AppShell user={{ id: "user-1", username: "member", display_name: "Member" }}>content</AppShell>);
+    const help = screen.getByRole("link", { name: "帮助文档（新标签页打开）" });
+    expect(help).toHaveAttribute("href", "/help");
+    expect(help).toHaveAttribute("target", "_blank");
+    expect(help).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("shows only navigation backed by the currently implemented APIs", () => {
     render(
       <AppShell

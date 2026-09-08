@@ -13,6 +13,21 @@ function submitLogin() {
   fireEvent.click(screen.getByRole("button", { name: "登录" }));
 }
 describe("post-authentication destinations", () => {
+  it("keeps accessible credentials and a separate documentation entry in the redesigned login", () => {
+    render(<LoginPage />);
+    expect(screen.getByRole("heading", { level: 1, name: "登录控制台" })).toBeVisible();
+    expect(screen.getByLabelText("用户名")).toHaveAttribute("autocomplete", "username");
+    expect(screen.getByLabelText("密码")).toHaveAttribute("type", "password");
+    expect(screen.getByRole("link", { name: /帮助文档/ })).toHaveAttribute("target", "_blank");
+    expect(screen.getByText("Tools")).toHaveAttribute("data-resource-category", "tools");
+  });
+  it("shows authentication failures without losing the entered username", async () => {
+    state.login.mockRejectedValueOnce(new Error("登录失败，请重试"));
+    render(<LoginPage />); submitLogin();
+    expect(await screen.findByRole("alert")).toHaveTextContent("登录失败，请重试");
+    expect(screen.getByLabelText("用户名")).toHaveValue("example");
+    expect(screen.getByRole("button", { name: "登录" })).toBeEnabled();
+  });
   it.each([null, "https://example.org", "//example.org"])("uses the console entry for next=%s", async (next) => {
     state.next = next; render(<LoginPage />); submitLogin();
     await waitFor(() => expect(state.replace).toHaveBeenCalledWith("/console"));

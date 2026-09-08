@@ -79,7 +79,7 @@ export function AgentCanvas({
           <svg aria-hidden="true" width={dimensions.width} height={dimensions.height} style={{ inset: 0, position: "absolute", pointerEvents: "none" }}>
             <defs>
               <marker id="agent-edge-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#91a4bd" />
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--canvas-dot)" />
               </marker>
             </defs>
             {edges.map(({ sourceID, targetID, index }) => {
@@ -97,7 +97,7 @@ export function AgentCanvas({
                   d={`M ${startX} ${startY} C ${startX} ${startY + bend}, ${endX} ${endY - bend}, ${endX} ${endY}`}
                   fill="none"
                   markerEnd="url(#agent-edge-arrow)"
-                  stroke="#91a4bd"
+                  stroke="var(--canvas-dot)"
                   strokeWidth="1.6"
                 />
               );
@@ -131,8 +131,8 @@ export function AgentCanvas({
                 tabIndex={disabled ? -1 : 0}
                 style={{
                   ...nodeStyle,
-                  borderColor: hasDiagnostic ? "#e87984" : selected ? "#0f6fec" : "#d8e0ea",
-                  boxShadow: selected ? "0 0 0 3px #eaf3ff, 0 10px 28px rgba(15,70,130,.12)" : "0 6px 18px rgba(15,35,70,.08)",
+                  borderColor: hasDiagnostic ? "var(--danger-border)" : selected ? "var(--primary)" : "var(--line-strong)",
+                  boxShadow: selected ? "0 0 0 3px var(--primary-soft), 0 10px 28px var(--shadow-color)" : "0 6px 18px var(--shadow-color)",
                   left: position.x,
                   top: position.y,
                 }}
@@ -144,13 +144,13 @@ export function AgentCanvas({
                 <strong style={{ display: "block", fontSize: 13, marginTop: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {node.name || nodeID}
                 </strong>
-                <small style={{ color: "#778292", display: "block", fontSize: 10, marginTop: 4 }}>{nodeID}</small>
+                <small style={{ color: "var(--muted)", display: "block", fontSize: 10, marginTop: 4 }}>{nodeID}</small>
               </article>
             );
           })}
         </div>
       </div>
-      <footer style={{ borderTop: "1px solid #edf0f4", color: "#778292", fontSize: 10, padding: "9px 12px" }}>
+      <footer style={{ borderTop: "1px solid var(--line)", color: "var(--muted)", fontSize: 10, padding: "9px 12px" }}>
         拖动节点只改变浏览器画布坐标，不会写入 AgentSpec。
       </footer>
     </section>
@@ -158,23 +158,23 @@ export function AgentCanvas({
 }
 
 const canvasShellStyle: CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e5eaf1",
+  background: "var(--surface)",
+  border: "1px solid var(--line)",
   borderRadius: 11,
   minWidth: 0,
   overflow: "hidden",
 };
 
 const canvasStyle: CSSProperties = {
-  backgroundColor: "#f8fafc",
-  backgroundImage: "radial-gradient(#d9e1ec 1px, transparent 1px)",
+  backgroundColor: "var(--surface-subtle)",
+  backgroundImage: "radial-gradient(var(--canvas-dot) 1px, transparent 1px)",
   backgroundSize: "18px 18px",
   position: "relative",
 };
 
 const nodeStyle: CSSProperties = {
-  background: "#fff",
-  border: "1px solid #d8e0ea",
+  background: "var(--surface)",
+  border: "1px solid var(--line-strong)",
   borderRadius: 11,
   cursor: "grab",
   height: NODE_HEIGHT,
@@ -186,16 +186,16 @@ const nodeStyle: CSSProperties = {
 };
 
 const kindStyle: CSSProperties = {
-  color: "#0f6fec",
+  color: "var(--primary)",
   fontSize: 9,
   fontWeight: 800,
   letterSpacing: ".08em",
 };
 
 const rootStyle: CSSProperties = {
-  background: "#e9f8f0",
+  background: "var(--success-soft)",
   borderRadius: 999,
-  color: "#159455",
+  color: "var(--success)",
   fontSize: 8,
   fontWeight: 800,
   padding: "3px 6px",

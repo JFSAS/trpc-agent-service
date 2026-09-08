@@ -31,7 +31,7 @@ Agent 说“我要一个名为 `primary` 的模型”；Profile 提供实际的 
 ## 从哪个页面开始
 
 - 没有账号：联系平台管理员。当前登录页没有自助注册。
-- 已有账号：打开[控制台](/console)，选择租户，再进入 Agent 工作台。
+- 已有账号：打开自己部署的控制台地址，选择租户，再进入 Agent 工作台。
 - 负责安装：先看[安装检查与启动](/docs/guide.html#chapter-13)。
 - 已有 Agent：继续配置[运行资源](runtime-profile.html)，然后[发布部署](deployment.html)。
 
