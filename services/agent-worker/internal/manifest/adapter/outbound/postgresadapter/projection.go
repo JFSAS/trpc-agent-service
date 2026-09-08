@@ -116,21 +116,13 @@ func (p *Projection) Apply(ctx context.Context, m domain.Publication, capacity i
 	return tx.Commit(ctx)
 }
 func (p *Projection) Read(ctx context.Context, tenant, id string) (domain.Publication, error) {
-	return readPublication(ctx, p.pool, tenant, id)
-}
-
-type publicationQuery interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func readPublication(ctx context.Context, q publicationQuery, tenant, id string) (domain.Publication, error) {
 	var m domain.Publication
 	var conflict bool
-	err := q.QueryRow(ctx, `SELECT tenant_id,manifest_id,deployment_revision_id,content_digest,envelope_digest,envelope,conflicted FROM runtime_manifests WHERE tenant_id=$1 AND manifest_id=$2`, tenant, id).Scan(&m.TenantID, &m.ManifestID, &m.DeploymentRevisionID, &m.ContentDigest, &m.EnvelopeDigest, &m.Envelope, &conflict)
+	err := p.pool.QueryRow(ctx, `SELECT tenant_id,manifest_id,deployment_revision_id,content_digest,envelope_digest,envelope,conflicted FROM runtime_manifests WHERE tenant_id=$1 AND manifest_id=$2`, tenant, id).Scan(&m.TenantID, &m.ManifestID, &m.DeploymentRevisionID, &m.ContentDigest, &m.EnvelopeDigest, &m.Envelope, &conflict)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A conflict involving an absent manifest must not become an indefinite
 		// "waiting for publication", nor become executable on later replay.
-		if err = q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM manifest_conflict_identities WHERE identity_kind='MANIFEST' AND tenant_id='' AND identity_value=$1)`, id).Scan(&conflict); err != nil {
+		if err = p.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM manifest_conflict_identities WHERE identity_kind='MANIFEST' AND tenant_id='' AND identity_value=$1)`, id).Scan(&conflict); err != nil {
 			return m, err
 		}
 		if conflict {

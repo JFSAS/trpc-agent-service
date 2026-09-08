@@ -1,8 +1,0 @@
-{
-  "schema": "principal-register.schema.json",
-  "valid": true,
-  "document": {
-    "account_id": "cha_test",
-    "external_user_id": "123"
-  }
-}

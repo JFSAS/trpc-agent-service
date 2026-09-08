@@ -94,7 +94,6 @@ func normalize(data []byte, accountID string, now time.Time) (domain.Inbound, er
 			message.SenderChat == nil && message.SenderBusinessBot == nil &&
 			message.ViaBot == nil && message.EditDate == 0 && strings.TrimSpace(message.Text) != "" &&
 			onlyTextMessage(rawMessage) && actualHuman(rawMessage["from"]) {
-			in.ConversationKind = "private"
 			in.Kind = "text"
 			in.Text = message.Text
 		}

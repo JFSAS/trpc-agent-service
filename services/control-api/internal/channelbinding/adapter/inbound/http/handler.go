@@ -61,7 +61,7 @@ func actor(c *gin.Context) (application.Actor, bool) {
 		writeError(c, 403, "CHANNEL_PERMISSION_DENIED", "")
 		return application.Actor{}, false
 	}
-	for _, name := range []string{"tenant_id", "account_id", "binding_id", "principal_id"} {
+	for _, name := range []string{"tenant_id", "account_id", "binding_id"} {
 		v := c.Param(name)
 		if (name == "tenant_id" || v != "") && !domain.ValidID(v) {
 			writeError(c, 400, "CHANNEL_INPUT_INVALID", "/"+name)
@@ -337,10 +337,6 @@ func handleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, application.ErrPermissionDenied):
 		status, code = 403, "CHANNEL_PERMISSION_DENIED"
-	case errors.Is(err, application.ErrPrincipalNotFound):
-		status, code = 404, "CHANNEL_PRINCIPAL_NOT_FOUND"
-	case errors.Is(err, application.ErrPrincipalIdentityConflict):
-		status, code = 409, "CHANNEL_PRINCIPAL_IDENTITY_CONFLICT"
 	case errors.Is(err, application.ErrAccountNotFound):
 		status, code = 404, "CHANNEL_ACCOUNT_NOT_FOUND"
 	case errors.Is(err, application.ErrBindingNotFound):

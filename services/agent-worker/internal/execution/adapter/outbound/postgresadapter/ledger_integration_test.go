@@ -2,13 +2,8 @@ package postgresadapter
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gowebpki/jcs"
-	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"os"
 	"strings"
 	"sync"
@@ -16,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	sharedauth "github.com/liuzengh/trpc-agent-service/platform/channel/authorization"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/migrations"
 )
@@ -75,136 +69,6 @@ func TestWorkerLedgerV1Postgres(t *testing.T) {
 		return domain.Finish{Grant: g, Status: domain.Succeeded, Candidate: domain.Candidate{Ref: "candidate_" + g.AttemptID, Digest: domain.Digest([]byte("snapshot" + g.AttemptID)), Parent: g.Parent}, FinalText: "已完成"}
 	}
 
-	t.Run("authorization_is_retained_without_attempt_grant", func(t *testing.T) {
-		reset(t)
-		req := request("authorization")
-		now := time.Now().UTC()
-		req.Authorization = &domain.AdmissionAuthorization{SchemaVersion: 1, ScopeID: "pool", SourceEpoch: "11111111-1111-4111-8111-111111111111", Generation: 1, TenantID: req.Route.TenantID, Provider: req.Route.Provider, AccountID: req.Route.AccountID, BindingID: req.Route.BindingID, RouteGeneration: req.Route.Generation, ExternalUserID: req.Input.SenderID, ConversationID: req.Input.ConversationID, ConversationKind: "private", PrincipalID: "principal", PrincipalRevision: 1, PolicyID: "policy", PolicyRevision: 1, PolicyDigest: domain.Digest([]byte("policy")), Operation: "message.send", Decision: "ALLOW", ReadStartedAt: now, EvaluatedAt: now, FreshUntil: now.Add(30 * time.Second)}
-		current := workerAuthorizationFixture(t, req, 1, "ACTIVE")
-		req.Authorization.PolicyDigest = current.read.Policy.Digest
-		first := accept(t, req, policy)
-		for i := 0; i < 2; i++ {
-			if _, err := l.Claim(ctx, domain.ClaimRequest{TenantID: req.Route.TenantID, RunID: req.RunID, WorkerID: "worker", MaxRunSeconds: 120, MaxActive: 3}); !errors.Is(err, domain.ErrNotReady) {
-				t.Fatal("unchecked authorization granted", err)
-			}
-		}
-		// An old binary/direct DML path must also fail before allocating work.
-		_, directErr := runtime.Exec(ctx, `INSERT INTO execution_attempts(tenant_id,attempt_id,run_id,worker_id,generation,lease_epoch,token_hash,lease_until,status,parent_ref,parent_digest,created_at) VALUES($1,'old-worker-attempt',$2,'old-worker',1,1,'synthetic-hash',clock_timestamp()+interval '10 seconds','PREPARING','','',clock_timestamp())`, req.Route.TenantID, req.RunID)
-		if directErr == nil || !strings.Contains(directErr.Error(), "AUTHORIZATION_NOT_READY") {
-			t.Fatal("old worker bypassed DB authorization gate", directErr)
-		}
-		run, err := l.FindRun(ctx, req.Route.TenantID, req.RunID)
-		if err != nil || run.Request.Authorization == nil || run.Request.Authorization.PrincipalID != "principal" || run.WaitReason != "AUTHORIZATION_NOT_READY" || run.Attempts != 0 {
-			t.Fatal(run, err)
-		}
-		projection, e := NewAuthorizationProjection(runtime, req.Authorization.ScopeID, req.Authorization.SourceEpoch)
-		if e != nil {
-			t.Fatal(e)
-		}
-		target := sharedauth.AuthorizationTarget{TenantID: req.Route.TenantID, AccountID: req.Route.AccountID, Provider: req.Route.Provider}
-		incomplete := current
-		incomplete.read.Dependencies = nil
-		if e = projection.Refresh(ctx, target, incomplete); e != nil {
-			t.Fatal(e)
-		}
-		incompleteTx, e := runtime.Begin(ctx)
-		if e != nil {
-			t.Fatal(e)
-		}
-		missingErr := l.currentAuthorization(ctx, incompleteTx, req)
-		incompleteTx.Rollback(ctx)
-		if !errors.Is(missingErr, domain.ErrNotReady) {
-			t.Fatal("missing dependency passed Worker check", missingErr)
-		}
-		if e = projection.Refresh(ctx, target, current); e != nil {
-			t.Fatal("Worker independent install", e)
-		}
-		check := func(request domain.Requested) error {
-			tx, e := runtime.Begin(ctx)
-			if e != nil {
-				t.Fatal(e)
-			}
-			defer tx.Rollback(ctx)
-			return l.currentAuthorization(ctx, tx, request)
-		}
-		if e = check(req); e != nil {
-			t.Fatal("fresh Worker state did not pass local subject check", e)
-		}
-		for _, mode := range []string{"tenant", "epoch", "ahead", "group"} {
-			changed := req
-			copy := *req.Authorization
-			changed.Authorization = &copy
-			switch mode {
-			case "tenant":
-				changed.Route.TenantID = "other"
-				copy.TenantID = "other"
-			case "epoch":
-				copy.SourceEpoch = "22222222-2222-4222-8222-222222222222"
-			case "ahead":
-				copy.Generation = 99
-			case "group":
-				copy.ConversationKind = "group"
-			}
-			if e = check(changed); e == nil {
-				t.Fatal("mismatched current authority accepted", mode)
-			}
-		}
-		if _, e = l.Claim(ctx, domain.ClaimRequest{TenantID: req.Route.TenantID, RunID: req.RunID, WorkerID: "worker", MaxRunSeconds: 120, MaxActive: 3}); !errors.Is(e, domain.ErrNotReady) {
-			t.Fatal(e)
-		}
-		run, e = l.FindRun(ctx, req.Route.TenantID, req.RunID)
-		if e != nil || run.WaitReason != "AUTHORIZATION_DEPENDENCIES_NOT_READY" || run.Attempts != 0 {
-			t.Fatal("partial check granted full execution", run, e)
-		}
-		disabled := workerAuthorizationFixture(t, req, 2, "ACTIVE")
-		disabled.read.Dependencies.Session.Definition.Enabled = false
-		signAuthorizationDefinition(t, &disabled.read.Dependencies.Session)
-		disabled.read.Policy.Body.SessionPolicy.Digest = disabled.read.Dependencies.Session.Digest
-		disabled.read.Policy.Revision = 2
-		disabled.read.Policy.Digest = ""
-		signed, _ := json.Marshal(disabled.read.Policy)
-		signed, e = jcs.Transform(signed)
-		if e != nil {
-			t.Fatal(e)
-		}
-		sum := sha256.Sum256(signed)
-		disabled.read.Policy.Digest = "sha256:" + hex.EncodeToString(sum[:])
-		disabled.read.Manifest.Policy = wire.PolicyReference{ID: disabled.read.Policy.PolicyID, Revision: 2, Digest: disabled.read.Policy.Digest}
-		if e = projection.Refresh(ctx, target, disabled); e != nil {
-			t.Fatal(e)
-		}
-		if e = check(req); !errors.Is(e, domain.ErrFenced) {
-			t.Fatal("disabled dependency passed Worker check", e)
-		}
-		revoked := workerAuthorizationFixture(t, req, 3, "REVOKED")
-		revoked.read.Policy = disabled.read.Policy
-		revoked.read.Dependencies = disabled.read.Dependencies
-		revoked.read.Manifest.Policy = disabled.read.Manifest.Policy
-		if e = projection.Refresh(ctx, target, revoked); e != nil {
-			t.Fatal(e)
-		}
-		if e = check(req); !errors.Is(e, domain.ErrFenced) {
-			t.Fatal("Worker used historical admission after revoke", e)
-		}
-		if _, e = l.Claim(ctx, domain.ClaimRequest{TenantID: req.Route.TenantID, RunID: req.RunID, WorkerID: "worker", MaxRunSeconds: 120, MaxActive: 3}); !errors.Is(e, domain.ErrNotReady) {
-			t.Fatal(e)
-		}
-		run, e = l.FindRun(ctx, req.Route.TenantID, req.RunID)
-		if e != nil || run.WaitReason != "AUTHORIZATION_DENIED" || run.Attempts != 0 {
-			t.Fatal(run, e)
-		}
-		var staged int
-		if e = runtime.QueryRow(ctx, `SELECT count(*) FROM worker_authorization_staging`).Scan(&staged); e != nil || staged != 0 {
-			t.Fatal("committed Worker staging", staged, e)
-		}
-		if second := accept(t, req, policy); second != first {
-			t.Fatal("receipt replay changed", second, first)
-		}
-		var n int
-		if err = runtime.QueryRow(ctx, `SELECT count(*) FROM execution_attempts`).Scan(&n); err != nil || n != 0 {
-			t.Fatal("attempt allocated", n, err)
-		}
-	})
 	t.Run("backlog_observation_tracks_durable_work", func(t *testing.T) {
 		reset(t)
 		one, two := request("observe1"), request("observe2")

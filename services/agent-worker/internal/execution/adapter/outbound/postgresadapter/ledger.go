@@ -115,11 +115,7 @@ func receipt(ctx context.Context, tx pgx.Tx, eventID string) (domain.Receipt, st
 }
 
 func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain.Policy, limits domain.IntakeLimits) (domain.Receipt, error) {
-	return l.accept(ctx, req, policy, limits, false)
-}
-
-func (l *Ledger) accept(ctx context.Context, req domain.Requested, policy domain.Policy, limits domain.IntakeLimits, stageAuthorized bool) (domain.Receipt, error) {
-	if ctx == nil || req.Validate() != nil || policy.Validate() != nil || limits.Validate() != nil {
+	if req.Validate() != nil || policy.Validate() != nil || limits.Validate() != nil {
 		return domain.Receipt{}, domain.ErrInvalid
 	}
 	tx, err := l.pool.Begin(ctx)
@@ -150,16 +146,6 @@ func (l *Ledger) accept(ctx context.Context, req domain.Requested, policy domain
 	} else if !errors.Is(e, domain.ErrNotFound) {
 		return domain.Receipt{}, e
 	}
-	// A pending identity can only be promoted by the future registry/Run
-	// transaction. Keep all collisions retryable here: ErrConflict is terminal
-	// to the broker and must not ACK an input still awaiting authorization.
-	var pending bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM execution_pending_intakes WHERE event_id=$1 OR run_id=$2 OR admission_id=$3)`, req.EventID, req.RunID, req.AdmissionID).Scan(&pending); err != nil {
-		return domain.Receipt{}, err
-	}
-	if pending {
-		return domain.Receipt{}, domain.ErrNotReady
-	}
 	var tenant, id, digest, admission string
 	err = tx.QueryRow(ctx, `SELECT tenant_id,run_id,request_digest,admission_id FROM execution_runs WHERE run_id=$1 OR admission_id=$2 ORDER BY run_id LIMIT 1`, req.RunID, req.AdmissionID).Scan(&tenant, &id, &digest, &admission)
 	if err == nil {
@@ -184,15 +170,6 @@ func (l *Ledger) accept(ctx context.Context, req domain.Requested, policy domain
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.Receipt{}, err
 	}
-	if stageAuthorized && req.Authorization != nil {
-		if err = stageAuthorization(ctx, tx, req, policy, limits); err != nil {
-			return domain.Receipt{}, err
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return domain.Receipt{}, err
-		}
-		return domain.Receipt{}, domain.ErrNotReady
-	}
 	// Capacity admission is globally serialized, but only for new identities.
 	// Retries replay their receipt even while the queue is full.
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(731004285)`); err != nil {
@@ -202,7 +179,7 @@ func (l *Ledger) accept(ctx context.Context, req domain.Requested, policy domain
 	// lock. Completed history still occupies storage, but this gate never blocks
 	// receipt replay, an alias for an existing Run, or that Run's recovery writes.
 	var queued, retained int64
-	if err = tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM execution_runs WHERE status IN ('QUEUED','RUNNING','RETRY_WAIT'))+(SELECT count(*) FROM execution_pending_intakes WHERE expires_at>clock_timestamp()),(SELECT count(*) FROM execution_runs)+(SELECT count(*) FROM execution_pending_intakes)`).Scan(&queued, &retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status IN ('QUEUED','RUNNING','RETRY_WAIT')),count(*) FROM execution_runs`).Scan(&queued, &retained); err != nil {
 		return domain.Receipt{}, err
 	}
 	if queued >= int64(limits.MaxQueuedRuns) || retained >= int64(limits.MaxRetainedRuns) {
@@ -213,19 +190,24 @@ func (l *Ledger) accept(ctx context.Context, req domain.Requested, policy domain
 	if err != nil {
 		return domain.Receipt{}, err
 	}
-	r, err := insertRun(ctx, tx, req, policy, session, scope)
-	if err != nil {
-		return domain.Receipt{}, err
-	}
-	return r, tx.Commit(ctx)
-}
-
-// insertRun only writes into its owner's transaction. Its session identity and
-// canonical scope are supplied by the selected intake contract, not recomputed.
-func insertRun(ctx context.Context, tx pgx.Tx, req domain.Requested, policy domain.Policy, session string, scope []byte) (domain.Receipt, error) {
-	var err error
 	if _, err = tx.Exec(ctx, `INSERT INTO execution_sessions(tenant_id,session_id,scope_json) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, req.Route.TenantID, session, scope); err != nil {
 		return domain.Receipt{}, err
+	}
+	// Identity, session association, Run and Receipt are one intake transaction.
+	// Replay and capacity checks above produce no new identity or last-seen writes.
+	identity := req.SocialIdentityID()
+	if _, err = tx.Exec(ctx, `INSERT INTO execution_social_identities(tenant_id,identity_id,provider,account_id,external_user_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,identity_id) DO UPDATE SET last_seen_at=clock_timestamp()`, req.Route.TenantID, identity, req.Route.Provider, req.Route.AccountID, req.Input.SenderID); err != nil {
+		return domain.Receipt{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO execution_session_identities(tenant_id,session_id,identity_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, req.Route.TenantID, session, identity); err != nil {
+		return domain.Receipt{}, err
+	}
+	var linked bool
+	if err = tx.QueryRow(ctx, `SELECT identity_id=$3 FROM execution_session_identities WHERE tenant_id=$1 AND session_id=$2`, req.Route.TenantID, session, identity).Scan(&linked); err != nil || !linked {
+		if err != nil {
+			return domain.Receipt{}, err
+		}
+		return domain.Receipt{}, domain.ErrConflict
 	}
 	var seq int64
 	var same bool
@@ -264,7 +246,7 @@ func insertRun(ctx context.Context, tx pgx.Tx, req domain.Requested, policy doma
 		return domain.Receipt{}, err
 	}
 	r := domain.Receipt{EventID: req.EventID, RunID: req.RunID, TenantID: req.Route.TenantID, SessionID: session, Sequence: seq, Outcome: "ACCEPTED"}
-	return r, nil
+	return r, tx.Commit(ctx)
 }
 
 func (l *Ledger) Ready(ctx context.Context, limit int) ([]domain.Run, error) {

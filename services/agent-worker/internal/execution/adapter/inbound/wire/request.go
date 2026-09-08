@@ -1,8 +1,6 @@
 package wire
 
 import (
-	"bytes"
-	"encoding/json"
 	protocol "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	"time"
@@ -34,16 +32,5 @@ func Decode(raw []byte) (domain.Requested, error) {
 		return domain.Requested{}, err
 	}
 	r := domain.Requested{EventID: original.EventID, EventDigest: eventDigest, RunDigest: domain.Digest(canonical), RunID: e.RunID, AdmissionID: e.AdmissionID, Route: domain.Route{TenantID: e.Route.TenantID, Provider: e.Route.Provider, AccountID: e.Route.AccountID, BindingID: e.Route.BindingID, DeploymentRevisionID: e.Route.DeploymentRevisionID, ManifestRef: e.Route.ManifestRef, ManifestDigest: e.Route.ManifestDigest, Generation: e.Route.Generation}, Input: domain.Input{ConversationID: e.Input.ConversationID, ThreadID: e.Input.ThreadID, SenderID: e.Input.SenderID, Text: e.Input.Text, SourceDigest: e.Input.SourceDigest, ReceivedAt: stamp}}
-	if e.Authorization != nil {
-		raw, err := json.Marshal(e.Authorization)
-		if err != nil {
-			return domain.Requested{}, err
-		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.DisallowUnknownFields()
-		if err = decoder.Decode(&r.Authorization); err != nil {
-			return domain.Requested{}, err
-		}
-	}
 	return r, r.Validate()
 }

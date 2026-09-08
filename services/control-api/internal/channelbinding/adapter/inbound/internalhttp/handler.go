@@ -20,10 +20,6 @@ import (
 )
 
 type Runtime interface {
-	ResolvePolicyDependencies(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyDependenciesResponse, error)
-	ReadAuthorizationManifest(context.Context, application.WorkloadPrincipal, application.AuthorizationManifestRequest) (channelv1.AuthorizationSnapshotManifest, error)
-	ReadAuthorizationPage(context.Context, application.WorkloadPrincipal, application.AuthorizationPageRequest) (channelv1.AuthorizationSnapshotPage, error)
-	ResolveAccessPolicy(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyResolveResponse, error)
 	ReadSnapshot(context.Context, application.WorkloadPrincipal) (domain.Snapshot, error)
 	ResolveCredentials(context.Context, application.WorkloadPrincipal, string, string, application.ResolveRequest) (application.ResolveResponse, error)
 	ReportObservations(context.Context, application.WorkloadPrincipal, application.ObservationsRequest) error
@@ -50,12 +46,9 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		if err != nil || u.Scheme != "spiffe" || u.Host == "" || u.Path == "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || p.Audience != application.WorkloadAudience || !domain.ValidID(p.InstanceID) || !domain.ValidID(p.ScopeID) || h.principals[p.PrincipalID].PrincipalID != "" || instances[p.InstanceID] {
 			return nil, application.ErrWorkloadDenied
 		}
-		if application.WorkerAuthorizationOnly(p) && len(p.Consumers) != 1 {
-			return nil, application.ErrWorkloadDenied
-		}
 		kinds := map[string]bool{}
 		for _, kind := range p.Consumers {
-			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight", application.PolicyProjectionConsumer, application.WorkerAuthorizationConsumer}, kind) {
+			if kinds[kind] || !slices.Contains([]string{"wecom_connection", "telegram_webhook", "telegram_delivery", "telegram_registration", "telegram_receiver", "telegram_preflight", "wecom_preflight"}, kind) {
 				return nil, application.ErrWorkloadDenied
 			}
 			kinds[kind] = true
@@ -65,10 +58,6 @@ func NewHandler(service Runtime, principals []application.WorkloadPrincipal, pre
 		instances[p.InstanceID] = true
 	}
 	h.mux.HandleFunc("GET /internal/v1/channel-accounts/snapshot", h.snapshot)
-	h.mux.HandleFunc("POST /internal/v1/channel-authorizations:snapshot", h.authorizationManifest)
-	h.mux.HandleFunc("POST /internal/v1/channel-authorizations:page", h.authorizationPage)
-	h.mux.HandleFunc("POST /internal/v1/channel-access-policies:resolve", h.resolvePolicy)
-	h.mux.HandleFunc("POST /internal/v1/channel-policy-dependencies:resolve", h.resolveDependencies)
 	h.mux.HandleFunc("POST /internal/v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials:resolve", h.resolve)
 	h.mux.HandleFunc("POST /internal/v1/channel-account-observations", h.observations)
 	if h.preflight != nil {
@@ -92,10 +81,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok := h.principals[cert.URIs[0].String()]
 	if !ok {
-		failure(w, 403, "CHANNEL_WORKLOAD_DENIED")
-		return
-	}
-	if application.WorkerAuthorizationOnly(p) && (r.Method != "POST" || !slices.Contains([]string{"/internal/v1/channel-authorizations:snapshot", "/internal/v1/channel-authorizations:page", "/internal/v1/channel-access-policies:resolve", "/internal/v1/channel-policy-dependencies:resolve"}, r.URL.Path)) {
 		failure(w, 403, "CHANNEL_WORKLOAD_DENIED")
 		return
 	}
@@ -203,14 +188,8 @@ func handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, application.ErrWorkloadDenied):
 		status, code = 403, "CHANNEL_WORKLOAD_DENIED"
-	case errors.Is(err, application.ErrPolicyReferenceDenied):
-		status, code = 403, "CHANNEL_POLICY_REFERENCE_DENIED"
-	case errors.Is(err, application.ErrPolicyNotFound):
-		status, code = 404, "CHANNEL_POLICY_NOT_FOUND"
 	case errors.Is(err, application.ErrAccountNotFound):
 		status, code = 404, "CHANNEL_ACCOUNT_NOT_FOUND"
-	case errors.Is(err, application.ErrAuthorizationSnapshotChanged):
-		status, code = 409, "CHANNEL_AUTHORIZATION_SNAPSHOT_CHANGED"
 	case errors.Is(err, application.ErrEpochMismatch):
 		status, code = 409, "CHANNEL_SOURCE_EPOCH_MISMATCH"
 	}
@@ -229,40 +208,4 @@ func handleError(w http.ResponseWriter, err error) {
 		}
 	}
 	failure(w, status, code)
-}
-
-func (h *Handler) resolvePolicy(w http.ResponseWriter, r *http.Request) {
-	p := principal(r)
-	if !application.CanReadAuthorization(p) {
-		handleError(w, application.ErrWorkloadDenied)
-		return
-	}
-	in, ok := decode[application.PolicyResolveRequest](w, r, "access-policy-resolve-request.schema.json", 16*1024)
-	if !ok {
-		return
-	}
-	out, err := h.service.ResolveAccessPolicy(r.Context(), p, in)
-	if err != nil {
-		handleError(w, err)
-		return
-	}
-	writeJSON(w, 200, out, domain.MaxAccessPolicyDocumentBytes+4096)
-}
-
-func (h *Handler) resolveDependencies(w http.ResponseWriter, r *http.Request) {
-	p := r.Context().Value(principalKey{}).(application.WorkloadPrincipal)
-	if !application.CanReadAuthorization(p) {
-		handleError(w, application.ErrWorkloadDenied)
-		return
-	}
-	in, ok := decode[application.PolicyResolveRequest](w, r, "access-policy-resolve-request.schema.json", 16*1024)
-	if !ok {
-		return
-	}
-	out, e := h.service.ResolvePolicyDependencies(r.Context(), p, in)
-	if e != nil {
-		handleError(w, e)
-		return
-	}
-	writeJSON(w, 200, out, channelv1.MaxPolicyDependenciesBytes)
 }

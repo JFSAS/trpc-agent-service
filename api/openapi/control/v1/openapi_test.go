@@ -599,7 +599,6 @@ func TestControlOpenAPIContainsImplementedChannelRoutes(t *testing.T) {
 		"GET /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}",
 		"GET /v1/tenants/{tenant_id}/channel-bindings",
 		"GET /v1/tenants/{tenant_id}/channel-bindings/{binding_id}",
-		"GET /v1/tenants/{tenant_id}/channel-policy-definitions/{kind}/{policy_id}/revisions/{revision}",
 		"PATCH /v1/tenants/{tenant_id}/channel-accounts/{account_id}",
 		"POST /v1/tenants/{tenant_id}/channel-accounts",
 		"POST /v1/tenants/{tenant_id}/channel-accounts/{account_id}/credentials/{purpose}/update",
@@ -608,9 +607,6 @@ func TestControlOpenAPIContainsImplementedChannelRoutes(t *testing.T) {
 		"POST /v1/tenants/{tenant_id}/channel-bindings",
 		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled",
 		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target",
-		"POST /v1/tenants/{tenant_id}/channel-policy-definitions/{kind}/{policy_id}/revisions",
-		"POST /v1/tenants/{tenant_id}/channel-principals",
-		"POST /v1/tenants/{tenant_id}/channel-principals/{principal_id}/state",
 	})
 	for path := range document.Paths.Map() {
 		if strings.HasPrefix(path, "/internal/") {

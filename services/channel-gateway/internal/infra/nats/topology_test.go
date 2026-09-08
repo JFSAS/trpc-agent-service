@@ -2,7 +2,6 @@ package natsadapter
 
 import (
 	"bytes"
-	channelv1 "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +12,6 @@ func TestDeclarations(t *testing.T) {
 	topology, err := LoadTopology("../../../../../deploy/nats/streams.yaml")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !topology.HasStream(channelv1.AccessPolicyStream) {
-		t.Fatal("missing policy notification stream")
 	}
 	for _, s := range topology.configs() {
 		if !s.DenyPurge || !s.DenyDelete || s.AllowMsgTTL || s.MaxAge != 0 {

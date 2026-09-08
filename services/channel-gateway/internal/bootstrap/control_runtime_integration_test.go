@@ -9,8 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
-	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/inbound/policynats"
 	"io"
 	"math/big"
 	"net"
@@ -118,8 +116,6 @@ func (f *remoteRuntimeFixture) Poll(context.Context, int64, int) ([]json.RawMess
 	return []json.RawMessage{}, nil
 }
 func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
-	policyEnabled := os.Getenv("GATEWAY_TEST_POLICY_BOOTSTRAP") == "1"
-	authorizationEnabled := os.Getenv("GATEWAY_TEST_AUTHORIZATION_BOOTSTRAP") == "1"
 	natsURL := os.Getenv("GATEWAY_TEST_NATS_URL")
 	if natsURL == "" {
 		t.Skip("dedicated NATS required")
@@ -134,15 +130,12 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if policyEnabled {
-		topology.PolicyScopes = []string{"pool"}
-	}
 	broker, e := transport.Connect(natsURL, topology, transport.Auth{})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer broker.Close()
-	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream, wire.AccessPolicyStream} {
+	for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 		if e = broker.JS.DeleteStream(ctx, name); e != nil && e != jetstream.ErrStreamNotFound {
 			t.Fatal(e)
 		}
@@ -151,15 +144,13 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() {
-		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream, wire.AccessPolicyStream} {
+		for _, name := range []string{transport.RouteStream, transport.RunStream, transport.ManifestStream, transport.ReplyStream} {
 			_ = broker.JS.DeleteStream(context.Background(), name)
 		}
 	}()
-	policyDoc := bootstrapPolicyDocument(t)
 	var mu sync.Mutex
 	snapshot := controlSnapshot()
 	var unavailable bool
-	principal := wire.AuthorizationPrincipal{PrincipalID: "principal", ExternalUserID: "100", State: "ACTIVE", Revision: 1}
 	var reports atomic.Int32
 	var resolves atomic.Int32
 	controlConfig := controlTLSFiles(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,45 +196,6 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 			}
 			reports.Add(1)
 			w.WriteHeader(204)
-		case "/internal/v1/channel-authorizations:snapshot", "/internal/v1/channel-authorizations:page":
-			if !authorizationEnabled {
-				t.Error("authorization request while disabled")
-				w.WriteHeader(404)
-				return
-			}
-			if len(snapshot.Accounts) == 0 {
-				w.WriteHeader(404)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Cache-Control", "no-store")
-			account := snapshot.Accounts[0]
-			identity := wire.AuthorizationSnapshotIdentity{SchemaVersion: 1, ScopeID: "pool", SourceEpoch: controlEpoch, TenantID: "tenant", AccountID: "account", Provider: "telegram", Generation: account.Revision*100 + principal.Revision}
-			if strings.HasSuffix(r.URL.Path, ":snapshot") {
-				digest := wire.NewPrincipalSetDigest()
-				if err := digest.Add(principal); err != nil {
-					t.Error(err)
-					w.WriteHeader(500)
-					return
-				}
-				count, root := digest.Result()
-				json.NewEncoder(w).Encode(wire.AuthorizationSnapshotManifest{AuthorizationSnapshotIdentity: identity, AccountRevision: account.Revision, AccountEnabled: account.Enabled, Policy: wire.PolicyReference{ID: policyDoc.PolicyID, Revision: policyDoc.Revision, Digest: policyDoc.Digest}, CapturedAt: time.Now().UTC(), AuthorizationMaxAgeMS: policyDoc.Body.AuthorizationMaxAgeMS, PrincipalCount: count, PrincipalDigest: root})
-			} else {
-				var request struct {
-					Generation int64 `json:"generation"`
-				}
-				if json.NewDecoder(r.Body).Decode(&request) != nil || request.Generation != identity.Generation {
-					w.WriteHeader(409)
-					return
-				}
-				json.NewEncoder(w).Encode(wire.AuthorizationSnapshotPage{AuthorizationSnapshotIdentity: identity, Principals: []wire.AuthorizationPrincipal{principal}, Complete: true})
-			}
-		case "/internal/v1/channel-access-policies:resolve":
-			w.Header().Set("Content-Type", "application/json")
-			if !policyEnabled && !authorizationEnabled {
-				t.Error("policy HTTP request while disabled")
-			}
-			json.NewEncoder(w).Encode(wire.AccessPolicyResolveResponse{SchemaVersion: 1, ScopeID: "pool", SourceEpoch: controlEpoch, Policy: policyDoc})
 		default:
 			t.Error("unexpected internal path")
 			w.WriteHeader(404)
@@ -255,25 +207,7 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	query.Set("search_path", pool.Config().ConnConfig.RuntimeParams["search_path"])
 	dsn.RawQuery = query.Encode()
 	database := fixtureDatabaseConfig(t, dsn.String())
-	config := Config{AuthorizationRefreshEnabled: authorizationEnabled, PolicyProjectionEnabled: policyEnabled, AccountSource: "control", Worker: WorkerConfig{URL: controlConfig.URL, CAFile: controlConfig.CAFile, CertificateFile: controlConfig.CertificateFile, KeyFile: controlConfig.KeyFile}, Control: controlConfig, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, telegramFactory: remote}
-	if policyEnabled {
-		st, err := broker.JS.Stream(ctx, wire.AccessPolicyStream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := st.DeleteConsumer(ctx, policynats.DurableName(config.Control.ScopeID)); err != nil {
-			t.Fatal(err)
-		}
-		if r, err := newPolicyProjection(ctx, config, pool, broker.JS); err == nil || r != nil {
-			t.Fatal("startup created missing durable", r, err)
-		}
-		if _, err := st.Consumer(ctx, policynats.DurableName(config.Control.ScopeID)); !errors.Is(err, jetstream.ErrConsumerNotFound) {
-			t.Fatal("startup mutated topology", err)
-		}
-		if err = broker.Reconcile(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
+	config := Config{AccountSource: "control", Worker: WorkerConfig{URL: controlConfig.URL, CAFile: controlConfig.CAFile, CertificateFile: controlConfig.CertificateFile, KeyFile: controlConfig.KeyFile}, Control: controlConfig, InstanceID: "gw", HTTPAddress: "127.0.0.1:0", AdminAddress: "localhost:0", DatabaseURL: database.runtimeURL, MigrationDatabaseURL: database.migrationURL, NATSURL: natsURL, Topology: topology, telegramFactory: remote}
 	app, e := newWithDatabaseTarget(ctx, config, database.target)
 	if e != nil {
 		t.Fatal(e)
@@ -298,48 +232,6 @@ func TestControlRuntimeMTLSRealPGNATSRotationAndInbound(t *testing.T) {
 	eventually(t, func() bool { return app.catalog.Ready() && app.telegram.Ready() }, "Control snapshot and Telegram registration")
 	if app.deliveryRunner == nil {
 		t.Fatal("production delivery runner missing")
-	}
-	if policyEnabled {
-		if app.policy == nil {
-			t.Fatal("policy lifecycle not assembled")
-		}
-		event := wire.AccessPolicyEvent{SchemaVersion: 1, EventID: "policy-bootstrap", EventType: wire.AccessPolicyPublishedEvent, ScopeID: "pool", SourceEpoch: controlEpoch, TenantID: policyDoc.TenantID, AccountID: policyDoc.AccountID, Provider: policyDoc.Provider, PolicyID: policyDoc.PolicyID, PolicyRevision: policyDoc.Revision, PolicyDigest: policyDoc.Digest, OccurredAt: policyDoc.PublishedAt}
-		raw, _, err := event.CanonicalJSON()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = broker.JS.Publish(ctx, wire.AccessPolicySubject, raw); err != nil {
-			t.Fatal(err)
-		}
-		eventually(t, func() bool {
-			var seq int64
-			err := pool.QueryRow(ctx, `SELECT processed_sequence FROM gateway_policy_sources WHERE scope_id='pool'`).Scan(&seq)
-			return err == nil && seq == 1
-		}, "policy Bootstrap Run fetched and checkpointed")
-	}
-	if authorizationEnabled {
-		if app.authorization == nil {
-			t.Fatal("authorization lifecycle missing")
-		}
-		waitState := func(want string) {
-			t.Helper()
-			deadline := time.Now().Add(10 * time.Second)
-			for time.Now().Before(deadline) {
-				var state string
-				err := pool.QueryRow(ctx, `SELECT state FROM gateway_authorization_principals WHERE scope_id='pool' AND account_id='account' AND principal_id='principal'`).Scan(&state)
-				if err == nil && state == want {
-					return
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-			t.Fatalf("authorization state did not reach %s", want)
-		}
-		waitState("ACTIVE")
-		mu.Lock()
-		principal.State = "REVOKED"
-		principal.Revision++
-		mu.Unlock()
-		waitState("REVOKED") // No account/catalog event: periodic current-state read must observe revocation.
 	}
 	// Registration precedes any route, Binding event or inbound message.
 	if remote.calls.Load() != 1 {

@@ -1,5 +1,7 @@
 # Channel Gateway：技术栈、代码结构与部署设计
 
+> **当前替换切片**：[社交身份记录与用户连续对话](minimal-identity-session.md)。移除优化阶段的过度治理，保留正式 Worker／Session／Final 和独立 Web／Tracing。下方原设计及旧日期状态作为历史参考。
+
 - **设计状态**：纯 Go / 进程内公开企微库方向已明确；详细接口与持久事务仍为草案
 - **实现状态**：四 Module、Final/ReplyOrigin、Control mTLS 账户目录与凭据、动态 Telegram 注册、账户事务门禁、观测和 0001–0010 已实现。Control 模式启动有界 Delivery Runner，由 Runner 独占 Maintenance 生命周期；ReplyIntent Consumer、真实 Final verifier/Worker 与完整回复链仍待接入。真实 Telegram 入站至 RunRequested 已验收，见[实施状态 §13–14](implementation-status.md)。
 - **工作树 / 分支**：`trpc-agent-service-channel-gateway` / `codex/channel-gateway`

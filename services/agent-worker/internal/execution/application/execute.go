@@ -35,13 +35,12 @@ type AttemptRuntime interface {
 	Close()
 }
 type Processor struct {
-	modelAdmission ModelAdmission
-	ledger         Ledger
-	manifests      ManifestReader
-	runtime        RuntimeFactory
-	worker         string
-	maxActive      int
-	observer       Observer
+	ledger    Ledger
+	manifests ManifestReader
+	runtime   RuntimeFactory
+	worker    string
+	maxActive int
+	observer  Observer
 }
 
 func NewProcessor(ledger Ledger, manifests ManifestReader, runtime RuntimeFactory, worker string, maxActive int, observers ...Observer) (*Processor, error) {
@@ -173,18 +172,13 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	if err != nil {
 		return fail(err)
 	}
-	start = time.Now()
-	result, err := p.executeModel(attemptCtx, g, plan, runtime, history)
-	p.observe(attemptCtx, "execute", r, g.AttemptID, start, err)
-	if result.UsageKnown {
-		usageStart := time.Now()
-		usageErr := p.ledger.RecordModelUsage(attemptCtx, g, result)
-		p.observe(attemptCtx, "usage_record", r, g.AttemptID, usageStart, usageErr)
-		if usageErr != nil {
-			return fail(usageErr)
-		}
+	if err = p.ledger.MarkExecuting(attemptCtx, g); err != nil {
+		return fail(err)
 	}
-	if p.observer != nil && result.UsageKnown {
+	start = time.Now()
+	result, err := runtime.Execute(attemptCtx, history)
+	p.observe(attemptCtx, "execute", r, g.AttemptID, start, err)
+	if err == nil && p.observer != nil && (result.InputTokens > 0 || result.OutputTokens > 0 || result.TotalTokens > 0) {
 		p.observer.Observe(attemptCtx, Observation{Operation: "usage", Result: "ok", TenantID: r.Request.Route.TenantID, RunID: r.Request.RunID, AttemptID: g.AttemptID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, TotalTokens: result.TotalTokens})
 	}
 	if err != nil {

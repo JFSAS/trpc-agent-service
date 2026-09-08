@@ -210,12 +210,3 @@ func (s *Store) readAggregate(ctx context.Context, tenant, id string, binding bo
 	}
 	return a, nil
 }
-
-// lockedAccount composes principal and policy operations over one already-held
-// account lock. It does not change LoadAccount's single-load aggregate contract.
-func (t *writeTx) lockedAccount(ctx context.Context, id string) (application.Aggregate, error) {
-	if a, ok := t.loaded[id]; ok {
-		return cloneAggregate(a), nil
-	}
-	return t.LoadAccount(ctx, id)
-}

@@ -17,7 +17,6 @@ import (
 )
 
 type Dependencies struct {
-	PolicyDefinitions     application.PublishedDefinitionReader
 	DB                    postgresadapter.DB
 	Routes                gin.IRouter
 	Authenticate          gin.HandlerFunc
@@ -29,13 +28,12 @@ type Dependencies struct {
 	Workloads             []application.WorkloadPrincipal
 }
 type Module struct {
-	scopeID, sourceEpoch string
-	Service              *application.Service
-	Queries              *application.QueryService
-	Runtime              *application.RuntimeService
-	Preflights           *application.PreflightService
-	InternalHandler      http.Handler
-	store                *postgresadapter.Store
+	Service         *application.Service
+	Queries         *application.QueryService
+	Runtime         *application.RuntimeService
+	Preflights      *application.PreflightService
+	InternalHandler http.Handler
+	store           *postgresadapter.Store
 }
 
 func NewModule(deps Dependencies) (*Module, error) {
@@ -59,11 +57,7 @@ func NewModule(deps Dependencies) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	var definitions []application.PublishedDefinitionReader
-	if deps.PolicyDefinitions != nil {
-		definitions = append(definitions, deps.PolicyDefinitions)
-	}
-	runtime, err := application.NewRuntimeService(store, deps.Cipher, deps.Options.ScopeID, deps.Options.SourceEpoch, definitions...)
+	runtime, err := application.NewRuntimeService(store, deps.Cipher, deps.Options.ScopeID, deps.Options.SourceEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -81,16 +75,14 @@ func NewModule(deps Dependencies) (*Module, error) {
 	}
 	routes := deps.Routes.Group("", deps.Authenticate)
 	httpadapter.NewHandler(service, queries).Register(routes)
-	// Preflight and identity-management responses are non-cacheable even when
-	// Session authentication aborts before the handler.
-	nonCacheableRoutes := deps.Routes.Group("", func(c *gin.Context) {
+	// Preflight responses are non-cacheable even when Session authentication
+	// aborts before the handler. Keep this policy off the normal Channel group.
+	preflightRoutes := deps.Routes.Group("", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Next()
 	}, deps.Authenticate)
-	httpadapter.NewPreflightHandler(preflights, queries).Register(nonCacheableRoutes)
-	// Principal identity responses must not be cached, including auth failures.
-	httpadapter.NewPrincipalHandler(service).Register(nonCacheableRoutes)
-	return &Module{Service: service, Queries: queries, Runtime: runtime, Preflights: preflights, InternalHandler: internal, store: store, scopeID: deps.Options.ScopeID, sourceEpoch: deps.Options.SourceEpoch}, nil
+	httpadapter.NewPreflightHandler(preflights, queries).Register(preflightRoutes)
+	return &Module{Service: service, Queries: queries, Runtime: runtime, Preflights: preflights, InternalHandler: internal, store: store}, nil
 }
 
 // Initialize persists or verifies the configured immutable catalog source epoch.
@@ -106,10 +98,4 @@ func generateID(prefix string) (string, error) {
 // NewRouteRelay binds only the Channel-owned committed Outbox source.
 func (m *Module) NewRouteRelay(publisher application.RoutePublisher) (*application.RouteRelay, error) {
 	return application.NewRouteRelay(m.store, publisher)
-}
-
-// NewAccessPolicyRelay binds only committed Channel-owned policy notifications.
-// Catalog identity comes from the module configuration, not a relay caller.
-func (m *Module) NewAccessPolicyRelay(p application.AccessPolicyPublisher) (*application.AccessPolicyRelay, error) {
-	return application.NewAccessPolicyRelay(m.store, p, m.scopeID, m.sourceEpoch)
 }

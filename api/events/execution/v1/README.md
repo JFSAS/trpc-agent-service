@@ -169,26 +169,6 @@ consumer. These local acceptance records do not prove real Execution or external
 IM integration, and this documentation-only update does not rerun those tests. See the
 [Gateway service status](../../../../services/channel-gateway/README.md) and
 [implementation record](../../../../docs/architecture-next/channel-gateway/implementation-status.md).
-
-## Admission authorization observation
-
-The optional closed `authorization` object carries only an ALLOW observation.
-It binds actor/principal, scope/epoch, policy revision/digest, route generation,
-conversation and the original bounded observation interval. Null, unknown fields,
-DENIED and identity mismatches are invalid. Temporal validation checks the recorded
-interval, not wall-clock freshness on replay: this is historical admission evidence,
-not permission to execute now. It participates in both EventDigest and RunDigest.
-
-Absent authorization means legacy, never an inferred grant. Existing v1 fixtures
-remain valid; old strict consumers reject events carrying the new field. Therefore
-new emission is not production-enabled: upgrade and verify all consumers before
-enabling it, and complete the separate cohort/version-routing gates. Do not strip
-this field to accommodate old consumers. The current Worker retains the fact and
-waits without allocating an Attempt until independent current authorization is
-implemented. Worker migration 0005 additionally rejects old/direct SQL attempt
-allocation for a stored authorized request. This does not solve mixed-version
-broker-consumer rollout by itself.
-
 ## Tracing 传输元数据（M2 增量）
 
 `execution.run-requested.v1` 的 W3C `traceparent`/`tracestate` 位于 NATS Header，

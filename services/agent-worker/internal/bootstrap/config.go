@@ -39,7 +39,6 @@ func (d Duration) Value() time.Duration { return time.Duration(d) }
 
 type Config struct {
 	Tracing                *telemetrytrace.Config `json:"tracing,omitempty"`
-	Authorization          *AuthorizationConfig   `json:"authorization,omitempty"`
 	WorkerID               string                 `json:"worker_id"`
 	PlatformContractDigest string                 `json:"platform_contract_digest"`
 	HealthAddress          string                 `json:"health_address"`
@@ -120,12 +119,6 @@ func LoadConfig() (Config, error) {
 func (c Config) Validate() error {
 	if c.Tracing != nil {
 		if err := c.Tracing.Validate(); err != nil {
-			return err
-		}
-	}
-	if c.Authorization != nil {
-		if err := c.Authorization.validate(); err != nil {
-
 			return err
 		}
 	}

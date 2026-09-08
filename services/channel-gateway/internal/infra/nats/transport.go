@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	channelv1 "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"net/url"
 	"reflect"
 	"strings"
@@ -135,9 +134,6 @@ func (t *Transport) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := t.reconcilePolicyConsumers(ctx); err != nil {
-		return err
-	}
 	return t.Verify(ctx)
 }
 func consumerConfig() jetstream.ConsumerConfig {
@@ -183,35 +179,6 @@ func (t *Transport) Verify(ctx context.Context) error {
 		got := info.Config
 		if got.AckPolicy != want.AckPolicy || got.DeliverPolicy != want.DeliverPolicy || got.FilterSubject != want.FilterSubject || len(got.FilterSubjects) > 0 || got.Durable != want.Durable || got.MaxAckPending != want.MaxAckPending || got.AckWait != want.AckWait || got.DeliverSubject != "" || got.MaxDeliver != -1 || len(got.BackOff) > 0 || got.ReplayPolicy != want.ReplayPolicy || got.InactiveThreshold != 0 || got.HeadersOnly {
 			return errors.New("incompatible Gateway durable consumer")
-		}
-	}
-	return nil
-}
-
-func policyConsumerConfig(scope string) jetstream.ConsumerConfig {
-	return jetstream.ConsumerConfig{Durable: channelv1.PolicyConsumerName(scope), DeliverPolicy: jetstream.DeliverAllPolicy, AckPolicy: jetstream.AckExplicitPolicy, FilterSubject: channelv1.AccessPolicySubject, AckWait: 30 * time.Second, MaxAckPending: 1, MaxDeliver: -1, ReplayPolicy: jetstream.ReplayInstantPolicy}
-}
-func (t *Transport) reconcilePolicyConsumers(ctx context.Context) error {
-	for _, scope := range t.topology.PolicyScopes {
-		want := policyConsumerConfig(scope)
-		stream, err := t.JS.Stream(ctx, channelv1.AccessPolicyStream)
-		if err != nil {
-			return err
-		}
-		c, err := stream.Consumer(ctx, want.Durable)
-		if errors.Is(err, jetstream.ErrConsumerNotFound) {
-			c, err = stream.CreateConsumer(ctx, want)
-		}
-		if err != nil {
-			return err
-		}
-		info, err := c.Info(ctx)
-		if err != nil {
-			return err
-		}
-		got := info.Config
-		if got.Durable != want.Durable || got.FilterSubject != want.FilterSubject || len(got.FilterSubjects) > 0 || got.AckPolicy != want.AckPolicy || got.DeliverPolicy != want.DeliverPolicy || got.AckWait != want.AckWait || got.MaxAckPending != 1 || got.MaxDeliver != -1 || got.DeliverSubject != "" || got.HeadersOnly || got.InactiveThreshold != 0 || len(got.BackOff) > 0 || got.ReplayPolicy != want.ReplayPolicy {
-			return errors.New("incompatible policy durable; explicit migration required")
 		}
 	}
 	return nil

@@ -57,20 +57,14 @@ type Input struct {
 	ReceivedAt                                             time.Time
 }
 type Requested struct {
-	Authorization                                       *AdmissionAuthorization `json:",omitempty"`
 	EventID, EventDigest, RunDigest, RunID, AdmissionID string
 	Route                                               Route
 	Input                                               Input
 }
 
 func (r Requested) Validate() error {
-	if r.Authorization != nil {
-		if err := r.Authorization.ValidateFor(r); err != nil {
-			return err
-		}
-	}
 	for _, s := range []string{r.EventID, r.RunID, r.AdmissionID, r.Route.TenantID, r.Route.AccountID,
-		r.Route.BindingID, r.Route.DeploymentRevisionID, r.Route.ManifestRef, r.Input.ConversationID} {
+		r.Route.BindingID, r.Route.DeploymentRevisionID, r.Route.ManifestRef, r.Input.ConversationID, r.Input.SenderID} {
 		if strings.TrimSpace(s) == "" {
 			return ErrInvalid
 		}
@@ -83,11 +77,18 @@ func (r Requested) Validate() error {
 	return nil
 }
 
-// Scope deliberately omits sender and RouteGeneration. Revision switching is
-// isolated, and switching back reuses that revision's accepted history.
+// Scope partitions history by the observed social identity inside a conversation.
+// Route refreshes do not reset history; published revision changes remain isolated.
 func (r Requested) Scope() []string {
 	return []string{r.Route.TenantID, r.Route.Provider, r.Route.AccountID, r.Input.ConversationID,
-		r.Input.ThreadID, r.Route.BindingID, r.Route.DeploymentRevisionID}
+		r.Input.ThreadID, r.Route.BindingID, r.Route.DeploymentRevisionID, r.SocialIdentityID()}
+}
+
+// SocialIdentityID records an observed provider account, not a permission grant or
+// a Control login. Provider identities are not automatically linked across Bots.
+func (r Requested) SocialIdentityID() string {
+	b, _ := json.Marshal([]string{r.Route.TenantID, r.Route.Provider, r.Route.AccountID, r.Input.SenderID})
+	return StableID("soc", string(b))
 }
 func (r Requested) SessionID() string {
 	b, _ := json.Marshal(r.Scope()) // []string is always JSON-encodable.

@@ -27,17 +27,6 @@ import (
 
 type runtimeFake struct{}
 
-func (runtimeFake) ReadAuthorizationManifest(context.Context, application.WorkloadPrincipal, application.AuthorizationManifestRequest) (channelv1.AuthorizationSnapshotManifest, error) {
-	return channelv1.AuthorizationSnapshotManifest{}, application.ErrAccountNotFound
-}
-func (runtimeFake) ReadAuthorizationPage(context.Context, application.WorkloadPrincipal, application.AuthorizationPageRequest) (channelv1.AuthorizationSnapshotPage, error) {
-	return channelv1.AuthorizationSnapshotPage{}, application.ErrAuthorizationSnapshotChanged
-}
-
-func (runtimeFake) ResolveAccessPolicy(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyResolveResponse, error) {
-	return application.PolicyResolveResponse{}, nil
-}
-
 func (runtimeFake) ReadSnapshot(context.Context, application.WorkloadPrincipal) (domain.Snapshot, error) {
 	return domain.Snapshot{}, nil
 }
@@ -378,8 +367,4 @@ func TestPreflightPrivateOptionalSurfaceDoesNotChangeLegacyConstructor(t *testin
 			t.Fatal("invalid consumers accepted")
 		}
 	}
-}
-
-func (runtimeFake) ResolvePolicyDependencies(context.Context, application.WorkloadPrincipal, application.PolicyResolveRequest) (application.PolicyDependenciesResponse, error) {
-	return application.PolicyDependenciesResponse{}, application.ErrDependencyUnavailable
 }

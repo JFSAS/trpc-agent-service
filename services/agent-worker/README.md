@@ -65,8 +65,10 @@ NATS、HTTP、SDK Adapter 依赖内层接口。不会因为物理同库而访问
 7. Reply Relay 使用原正文/Digest/MsgID 获取 NATS PubAck 后标记。Gateway 查已提交 Final
    的不可变证明，Delivery 接纳和 transport receipt 均耐久后 ACK；重放不重新执行模型。
 
-SessionScope 为 Tenant、Provider、Account、Conversation、Thread、Binding、DeploymentRevision。
-它不包含 sender 或 RouteGeneration；切换 Revision 隔离历史，切回同一 Revision 恢复其历史。
+SessionScope 为 Tenant、Provider、Account、Conversation、Thread、Binding、DeploymentRevision 加社交身份 ID。
+社交身份按租户／Provider／Bot／sender 稳定记录；不同用户在同一会话中分区，RouteGeneration 刷新不改变历史。
+切换 Revision 隔离历史，切回同一 Revision 恢复该用户分区的历史。旧共享作用域不自动迁入新的用户分区。
+当前接线和前向迁移见[最小身份与连续对话](../../docs/architecture-next/channel-gateway/minimal-identity-session.md)。
 
 ## 3. 同库隔离与启动
 

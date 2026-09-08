@@ -31,7 +31,6 @@ import (
 	channelpg "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/adapter/outbound/postgres"
 	channelapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
 	channeldomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/domain"
-	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelpolicy"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
 	identitypg "github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity/adapter/outbound/postgres"
@@ -89,9 +88,6 @@ func composeChannel(t *testing.T, ctx context.Context, pool *pgxpool.Pool, route
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = channelpolicy.NewModule(channelpolicy.Dependencies{DB: pool, Routes: router, Authenticate: identity.AuthenticationMiddleware(), Access: tenantAccess{tenants: tenant.Service}, TransactionAuthorizer: channelCommitAuth{}, Signer: cipher}); err != nil {
-		t.Fatal(err)
-	}
 	if err = module.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +111,6 @@ func testChannelHTTP(t *testing.T, ctx context.Context, router http.Handler, poo
 		t.Fatal("incorrect initial account state")
 	}
 	id := created.Account.ID
-	t.Run("definition-http", func(t *testing.T) { testChannelDefinitionHTTP(t, ctx, router, pool, tenant, owner, member) })
-	t.Run("principal-http", func(t *testing.T) { testChannelPrincipalHTTP(t, ctx, router, pool, tenant, id, owner, member) })
 	path := base + "/" + id
 	deploymentRequest(t, router, "POST", base, owner, "channel-http-create", strings.Replace(body, "HTTP test", "Changed", 1), 409, nil)
 	deploymentRequest(t, router, "POST", base, owner, "channel-duplicate-physical", body, 409, nil)

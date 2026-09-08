@@ -33,10 +33,6 @@ func (p Plan) Uses() []CredentialUse {
 }
 
 type RuntimeResult struct {
-	// UsageKnown distinguishes an explicit final zero from absent/unverifiable usage.
-	// It can accompany an execution error; it authorizes accounting validation,
-	// never Session Stage or successful Completion.
-	UsageKnown                             bool
 	FinalText                              string
 	Snapshot                               []byte
 	InputTokens, OutputTokens, TotalTokens int64

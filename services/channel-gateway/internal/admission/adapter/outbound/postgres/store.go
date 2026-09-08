@@ -41,32 +41,17 @@ type TelegramGuard interface {
 	Required(context.Context) bool
 	VerifyPolling(context.Context, pgx.Tx, string, string, string, string, int64, int64) error
 }
-type AuthorizationGuard interface {
-	VerifyAuthorization(context.Context, pgx.Tx, domain.Inbound, domain.RouteSnapshot) (domain.AdmissionAuthorization, error)
-	RecheckAuthorization(context.Context, pgx.Tx, domain.AdmissionAuthorization) error
-}
-
 type Store struct {
-	tracer             trace.Tracer
-	authorizationGuard AuthorizationGuard
-	telegramGuard      TelegramGuard
-	accountGuard       AccountUseGuard
-	connectionGuard    ConnectionGuard
-	pool               *pgxpool.Pool
-	guard              RouteGuard
-	budget             Budget
+	tracer          trace.Tracer
+	telegramGuard   TelegramGuard
+	accountGuard    AccountUseGuard
+	connectionGuard ConnectionGuard
+	pool            *pgxpool.Pool
+	guard           RouteGuard
+	budget          Budget
 }
 
 func (s *Store) WithTelegramGuard(g TelegramGuard) *Store { cp := *s; cp.telegramGuard = g; return &cp }
-
-// WithAuthorizationGuard assembles the current-state gate without mutating a running Store.
-// Bootstrap must not enable this independently of Worker and policy dependencies.
-func (s *Store) WithAuthorizationGuard(g AuthorizationGuard) *Store {
-	cp := *s
-	cp.authorizationGuard = g
-	return &cp
-
-}
 
 func (s *Store) WithTracing(t trace.Tracer) *Store { cp := *s; cp.tracer = t; return &cp }
 
@@ -183,6 +168,9 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 		}
 		return old, tx.Commit(ctx)
 	}
+	if err = s.chargeBudget(ctx, tx, c.Route != nil); err != nil {
+		return domain.Receipt{}, err
+	}
 	if c.Input.TelegramFence != nil || s.telegramGuard != nil && s.telegramGuard.Required(ctx) {
 		f := c.Input.TelegramFence
 		if f == nil || s.telegramGuard == nil || c.Input.Key.Provider != "telegram" {
@@ -210,21 +198,6 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 		if err = s.guard.VerifyGeneration(ctx, tx, c.Input.Key.Provider, c.Input.Key.AccountID, c.Route.Generation); err != nil {
 			return domain.Receipt{}, fmt.Errorf("%w: %v", domain.ErrRouteChanged, err)
 		}
-	}
-	var authorization *domain.AdmissionAuthorization
-	if s.authorizationGuard != nil && c.Route != nil {
-		fact, e := s.authorizationGuard.VerifyAuthorization(ctx, tx, c.Input, *c.Route)
-		if e != nil || fact.ValidateFor(c.Input, *c.Route) != nil {
-			return domain.Receipt{}, domain.ErrUnavailable
-		}
-		authorization = &fact
-		if fact.Decision == "DENIED" {
-			c.Receipt = domain.Receipt{Decision: "denied", Reason: fact.Reason}
-			c.Route = nil
-		}
-	}
-	if err = s.chargeBudget(ctx, tx, c.Route != nil); err != nil {
-		return domain.Receipt{}, err
 	}
 	raw, err := json.Marshal(c.Receipt)
 	if err != nil {
@@ -254,7 +227,7 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 		if err != nil {
 			return domain.Receipt{}, err
 		}
-		payload, err := runRequestedPayload(c, authorization)
+		payload, err := runRequestedPayload(c)
 		if err != nil {
 			return domain.Receipt{}, fmt.Errorf("%w: normalized execution event", domain.ErrInvalidInput)
 		}
@@ -266,18 +239,6 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 			return domain.Receipt{}, err
 		}
 	}
-	if authorization != nil {
-		factJSON, e := json.Marshal(authorization)
-		if e != nil {
-			return domain.Receipt{}, domain.ErrUnavailable
-		}
-		if _, e = tx.Exec(ctx, `INSERT INTO gateway_admission_authorizations(provider,account_id,event_id,tenant_id,decision_fact) VALUES($1,$2,$3,$4,$5)`, c.Input.Key.Provider, c.Input.Key.AccountID, c.Input.Key.EventID, authorization.TenantID, factJSON); e != nil {
-			return domain.Receipt{}, e
-		}
-		if _, e = tx.Exec(ctx, `INSERT INTO gateway_authorization_audit_outbox(provider,account_id,event_id,tenant_id,decision_fact) VALUES($1,$2,$3,$4,$5)`, c.Input.Key.Provider, c.Input.Key.AccountID, c.Input.Key.EventID, authorization.TenantID, factJSON); e != nil {
-			return domain.Receipt{}, e
-		}
-	}
 	if c.Input.TelegramFence != nil {
 		f := c.Input.TelegramFence
 		if err = s.telegramGuard.VerifyPolling(ctx, tx, f.ScopeID, c.Input.Key.AccountID, f.InstanceID, f.InstanceEpoch, f.Epoch, f.Revision); err != nil {
@@ -286,11 +247,6 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 	}
 	if s.accountGuard != nil {
 		if err = s.accountGuard.RecheckAccount(ctx, tx); err != nil {
-			return domain.Receipt{}, domain.ErrUnavailable
-		}
-	}
-	if authorization != nil {
-		if err = s.authorizationGuard.RecheckAuthorization(ctx, tx, *authorization); err != nil {
 			return domain.Receipt{}, domain.ErrUnavailable
 		}
 	}

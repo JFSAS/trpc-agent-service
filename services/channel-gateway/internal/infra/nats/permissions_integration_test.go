@@ -2,7 +2,6 @@ package natsadapter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
-	channelv1 "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -72,7 +70,7 @@ func TestBrokerPermissionsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	for _, subject := range []string{channelv1.AccessPolicySubject, RouteSubject, ManifestSubject, ReplySubject, "$JS.API.CONSUMER.MSG.NEXT." + RunStream + "." + RunConsumer, "$JS.API.STREAM.UPDATE." + RunStream} {
+	for _, subject := range []string{RouteSubject, ManifestSubject, ReplySubject, "$JS.API.CONSUMER.MSG.NEXT." + RunStream + "." + RunConsumer, "$JS.API.STREAM.UPDATE." + RunStream} {
 		if err = c.Publish(subject, []byte(`{}`)); err != nil {
 			t.Fatal(err)
 		}
@@ -215,64 +213,4 @@ func TestWorkerBrokerPermissionsIntegration(t *testing.T) {
 		}
 	}
 	t.Log("WORKER_ACL_PASS: Reply-only publisher; Run/Manifest pull+ACK; Gateway Reply pull+ACK; cross-owner publication, Reply consumption and topology writes denied")
-}
-
-func TestControlPolicyNotificationPermissionsIntegration(t *testing.T) {
-	url := os.Getenv("GATEWAY_TEST_AUTH_NATS_URL")
-	if url == "" {
-		t.Skip("GATEWAY_TEST_AUTH_NATS_URL required")
-	}
-	denied := make(chan error, 8)
-	nc, err := nats.Connect(url, nats.UserInfo("control", os.Getenv("NATS_CONTROL_PASSWORD")), nats.CustomInboxPrefix("_INBOX.control"), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, e error) { denied <- e }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nc.Close()
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile("../../../../../api/schemas/channel/v1/fixtures/access-policy-published-valid.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Document json.RawMessage `json:"document"`
-	}
-	if json.Unmarshal(raw, &fixture) != nil {
-		t.Fatal("fixture")
-	}
-	e, err := channelv1.DecodeAccessPolicyEvent(fixture.Document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.EventID = fmt.Sprintf("evt_acl_%d", time.Now().UnixNano())
-	payload, _, err := e.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	msg := nats.NewMsg(channelv1.AccessPolicySubject)
-	msg.Data = payload
-	msg.Header.Set(nats.MsgIdHdr, e.TenantID+"/"+e.EventID)
-	ack, err := js.PublishMsg(msg, nats.ExpectStream(channelv1.AccessPolicyStream), nats.AckWait(2*time.Second))
-	if err != nil || ack == nil || ack.Stream != channelv1.AccessPolicyStream || ack.Sequence == 0 {
-		t.Fatal("limited Control durable policy ACK", ack, err)
-	}
-	for _, subject := range []string{RunSubject, "$JS.API.STREAM.UPDATE." + channelv1.AccessPolicyStream} {
-		if err = nc.Publish(subject, []byte(`{}`)); err != nil {
-			t.Fatal(err)
-		}
-		if err = nc.FlushTimeout(time.Second); err != nil {
-			t.Fatal(err)
-		}
-		select {
-		case e := <-denied:
-			if !errors.Is(e, nats.ErrPermissionViolation) {
-				t.Fatal(e)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("Control gained forbidden permission", subject)
-		}
-	}
-	t.Log("POLICY_ACL=PASS Control durable PubAck; Control Run publish and topology mutation denied")
 }

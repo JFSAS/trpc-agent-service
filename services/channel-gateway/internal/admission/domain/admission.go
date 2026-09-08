@@ -59,19 +59,18 @@ func (o ReplyOrigin) Validate() error {
 
 type Inbound struct {
 	// TelegramFence is local polling authority, not source content or a reply socket.
-	TelegramFence    *TelegramFence   `json:"-"`
-	ReplyOrigin      *ReplyOrigin     `json:"-"`
-	ConnectionFence  *ConnectionFence `json:"-"`
-	Key              EventKey         `json:"key"`
-	Kind             string           `json:"kind"`
-	ConversationKind string           `json:"-"`
-	ConversationID   string           `json:"conversation_id"`
-	ThreadID         string           `json:"thread_id,omitempty"`
-	SenderID         string           `json:"sender_id,omitempty"`
-	Text             string           `json:"text,omitempty"`
-	ReplyContext     json.RawMessage  `json:"reply_context,omitempty"`
-	SourceDigest     string           `json:"source_digest"`
-	ReceivedAt       time.Time        `json:"received_at"`
+	TelegramFence   *TelegramFence   `json:"-"`
+	ReplyOrigin     *ReplyOrigin     `json:"-"`
+	ConnectionFence *ConnectionFence `json:"-"`
+	Key             EventKey         `json:"key"`
+	Kind            string           `json:"kind"`
+	ConversationID  string           `json:"conversation_id"`
+	ThreadID        string           `json:"thread_id,omitempty"`
+	SenderID        string           `json:"sender_id,omitempty"`
+	Text            string           `json:"text,omitempty"`
+	ReplyContext    json.RawMessage  `json:"reply_context,omitempty"`
+	SourceDigest    string           `json:"source_digest"`
+	ReceivedAt      time.Time        `json:"received_at"`
 }
 
 type TelegramFence struct {
@@ -174,10 +173,6 @@ func (r Receipt) Validate() error {
 	switch r.Decision {
 	case "admit-run":
 		if !identifier.MatchString(r.AdmissionID) || !identifier.MatchString(r.RunID) || r.Reason != "" {
-			return ErrInvalidInput
-		}
-	case "denied":
-		if r.AdmissionID != "" || r.RunID != "" || r.Reason == "" || !opaque(r.Reason, 256, true) {
 			return ErrInvalidInput
 		}
 	case "ignore", "interaction":

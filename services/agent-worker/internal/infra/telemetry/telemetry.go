@@ -153,7 +153,7 @@ func boundedID(v string) string {
 }
 func operation(v string) string {
 	switch v {
-	case "usage_record", "consumption_reconcile", "quota_reconcile", "terminalize", "intake", "advance", "manifest", "claim", "prepare", "credential_resolve", "session_open", "session_load", "execute", "usage", "session_stage", "complete", "renew", "fence", "manifest_apply", "wire_reject", "reply_publish", "drain", "storage_sample", "startup":
+	case "terminalize", "intake", "advance", "manifest", "claim", "prepare", "credential_resolve", "session_open", "session_load", "execute", "usage", "session_stage", "complete", "renew", "fence", "manifest_apply", "wire_reject", "reply_publish", "drain", "storage_sample", "startup":
 		return v
 	default:
 		return "other"
@@ -161,7 +161,7 @@ func operation(v string) string {
 }
 func outcome(v string) string {
 	switch v {
-	case "quota_wait", "ok", "fenced", "conflict", "capacity", "manifest_wait", "session_wait", "invalid", "session_preparation", "session_invalid", "credential_denied", "cancelled", "deadline", "dependency", "failed":
+	case "ok", "fenced", "conflict", "capacity", "manifest_wait", "session_wait", "invalid", "session_preparation", "session_invalid", "credential_denied", "cancelled", "deadline", "dependency", "failed":
 		return v
 	default:
 		return "other"
@@ -196,7 +196,7 @@ func (r *Recorder) Observe(ctx context.Context, o application.Observation) {
 		}
 	}
 	// Routine polling/lease checks still have metrics without flooding logs.
-	if o.Result == "quota_wait" || o.Operation == "advance" || o.Result == "manifest_wait" || o.Result == "session_wait" || ((o.Operation == "fence" || o.Operation == "renew" || o.Operation == "manifest") && o.Result == "ok") {
+	if o.Operation == "advance" || o.Result == "manifest_wait" || o.Result == "session_wait" || ((o.Operation == "fence" || o.Operation == "renew" || o.Operation == "manifest") && o.Result == "ok") {
 		return
 	}
 	o.TenantID, o.RunID, o.AttemptID = boundedID(o.TenantID), boundedID(o.RunID), boundedID(o.AttemptID)

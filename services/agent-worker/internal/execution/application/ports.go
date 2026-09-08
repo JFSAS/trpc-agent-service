@@ -16,21 +16,14 @@ type ScheduledRun struct {
 	Carrier tracecontext.Carrier
 }
 
-// IntakeLedger owns receipt replay and new input admission. A durable pending
-// input returns ErrNotReady and must not be acknowledged as an accepted Run.
-type IntakeLedger interface {
-	Accept(context.Context, domain.Requested, domain.Policy, domain.IntakeLimits) (domain.Receipt, error)
-}
-
 type Ledger interface {
-	IntakeLedger
+	Accept(context.Context, domain.Requested, domain.Policy, domain.IntakeLimits) (domain.Receipt, error)
 	FindRun(context.Context, string, string) (domain.Run, error)
 	Ready(context.Context, int) ([]domain.Run, error)
 	Claim(context.Context, domain.ClaimRequest) (domain.Grant, error)
 	Renew(context.Context, domain.Grant) (domain.Grant, error)
 	Check(context.Context, domain.Grant) error
 	MarkExecuting(context.Context, domain.Grant) error
-	RecordModelUsage(context.Context, domain.Grant, domain.RuntimeResult) error
 	Complete(context.Context, domain.Finish) (domain.Completion, error)
 	FailAttempt(context.Context, domain.Grant, string, bool) error
 	FindCompletion(context.Context, string, string) (domain.Completion, error)
@@ -39,13 +32,13 @@ type Ledger interface {
 
 // Acknowledging durable intake never waits for a model or mutable configuration.
 type Acceptor struct {
-	ledger   IntakeLedger
+	ledger   Ledger
 	policy   domain.Policy
 	limits   domain.IntakeLimits
 	observer Observer
 }
 
-func NewAcceptor(ledger IntakeLedger, policy domain.Policy, limits domain.IntakeLimits, observers ...Observer) (*Acceptor, error) {
+func NewAcceptor(ledger Ledger, policy domain.Policy, limits domain.IntakeLimits, observers ...Observer) (*Acceptor, error) {
 	if ledger == nil || policy.Validate() != nil || limits.Validate() != nil || len(observers) > 1 {
 		return nil, domain.ErrInvalid
 	}

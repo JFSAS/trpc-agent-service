@@ -33,7 +33,7 @@ func TestAcceptorRequiresAndPassesExplicitIntakeLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := domain.Requested{EventID: "event", RunID: "run", AdmissionID: "admission", EventDigest: domain.Digest([]byte("event")), RunDigest: domain.Digest([]byte("run")), Route: domain.Route{TenantID: "tenant", Provider: "telegram", AccountID: "account", BindingID: "binding", DeploymentRevisionID: "revision", ManifestRef: "manifest", ManifestDigest: domain.Digest([]byte("manifest")), Generation: 1}, Input: domain.Input{ConversationID: "conversation", Text: "hello", ReceivedAt: time.Now()}}
+	req := domain.Requested{EventID: "event", RunID: "run", AdmissionID: "admission", EventDigest: domain.Digest([]byte("event")), RunDigest: domain.Digest([]byte("run")), Route: domain.Route{TenantID: "tenant", Provider: "telegram", AccountID: "account", BindingID: "binding", DeploymentRevisionID: "revision", ManifestRef: "manifest", ManifestDigest: domain.Digest([]byte("manifest")), Generation: 1}, Input: domain.Input{SenderID: "43", ConversationID: "conversation", Text: "hello", ReceivedAt: time.Now()}}
 	receipt, err := acceptor.Accept(context.Background(), req)
 	if err != nil || receipt.RunID != req.RunID || ledger.calls != 1 || ledger.limits != limits {
 		t.Fatalf("receipt=%+v calls=%d limits=%+v err=%v", receipt, ledger.calls, ledger.limits, err)

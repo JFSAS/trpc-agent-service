@@ -386,9 +386,9 @@ class Gateway:
             with error:
                 return error.code, error.read()
 
-    def send_text(self, text, conversation_id="42", update_id=None, *, thread_id=None, chat_type="private"):
+    def send_text(self, text, conversation_id="42", update_id=None, *, thread_id=None, chat_type="private", sender_id=100):
         update_id = int(update_id if update_id is not None else time.time_ns() // 1000000)
-        message = {"message_id": update_id % 1000000000 + 1, "date": int(time.time()), "chat": {"id": int(conversation_id), "type": chat_type}, "from": {"id": 100, "is_bot": False}, "text": text}
+        message = {"message_id": update_id % 1000000000 + 1, "date": int(time.time()), "chat": {"id": int(conversation_id), "type": chat_type}, "from": {"id": int(sender_id), "is_bot": False}, "text": text}
         if thread_id is not None:
             if int(thread_id) <= 0 or chat_type != "supergroup" or int(conversation_id) >= 0:
                 raise ValueError("forum input requires a negative supergroup chat and positive topic")

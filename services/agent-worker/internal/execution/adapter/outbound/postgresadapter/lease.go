@@ -51,25 +51,6 @@ func (l *Ledger) Claim(ctx context.Context, req domain.ClaimRequest) (grant doma
 	if r.WaitReason == "INVALID_CLOCK" || !now.Before(r.RunDeadline) || (r.ExecutionDeadline != nil && !now.Before(*r.ExecutionDeadline)) || r.Attempts >= r.Policy.MaxAttempts {
 		return domain.Grant{}, domain.ErrNotReady
 	}
-	// Admission-time evidence must never be downgraded into legacy execution.
-	// Until the independent Worker current-state guard is assembled, retain the
-	// request but do not allocate an Attempt or spend an execution retry.
-	if r.Request.Authorization != nil {
-		reason := "AUTHORIZATION_DEPENDENCIES_NOT_READY"
-		if check := l.currentAuthorization(ctx, tx, r.Request); check != nil {
-			reason = "AUTHORIZATION_NOT_READY"
-			if errors.Is(check, domain.ErrFenced) {
-				reason = "AUTHORIZATION_DENIED"
-			}
-		}
-		if _, err = tx.Exec(ctx, `UPDATE execution_runs SET wait_reason=$3 WHERE tenant_id=$1 AND run_id=$2`, req.TenantID, req.RunID, reason); err != nil {
-			return domain.Grant{}, err
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return domain.Grant{}, err
-		}
-		return domain.Grant{}, domain.ErrNotReady
-	}
 	if r.CurrentAttemptID != "" {
 		live, err := currentLive(ctx, tx, r, now)
 		if err != nil {
@@ -208,9 +189,6 @@ func (l *Ledger) Renew(ctx context.Context, g domain.Grant) (domain.Grant, error
 	}
 	return g, nil
 }
-
-// MarkExecuting consumes a one-time physical-dispatch permit. A repeated call,
-// including after an uncertain commit, is fenced rather than replayed as success.
 func (l *Ledger) MarkExecuting(ctx context.Context, g domain.Grant) error {
 	tx, err := l.pool.Begin(ctx)
 	if err != nil {

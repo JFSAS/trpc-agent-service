@@ -79,30 +79,22 @@ type ObservationView struct {
 }
 
 type RuntimeStore interface {
-	ReadAuthorizationManifest(context.Context, string, string) (channelv1.AuthorizationSnapshotManifest, error)
-	ReadAuthorizationPage(context.Context, string, string, string, int64, string) (channelv1.AuthorizationSnapshotPage, error)
-	ReadAccessPolicy(context.Context, string, string, domain.PolicyRevisionReference) (PolicyResolveResponse, error)
 	ReadSnapshot(context.Context, string) (domain.Snapshot, error)
 	WithCredentials(context.Context, string, string, string, func(domain.Account, []domain.CredentialRecord, string) error) error
 	SaveObservations(context.Context, string, []Observation) error
 	PruneObservations(context.Context) error
 }
 type RuntimeService struct {
-	definitions  PublishedDefinitionReader
 	store        RuntimeStore
 	cipher       CredentialCipher
 	scope, epoch string
 }
 
-func NewRuntimeService(store RuntimeStore, cipher CredentialCipher, scope, epoch string, definitions ...PublishedDefinitionReader) (*RuntimeService, error) {
-	if len(definitions) > 1 || (len(definitions) == 1 && definitions[0] == nil) || store == nil || cipher == nil || !domain.ValidID(scope) || !domain.ValidEpoch(epoch) {
+func NewRuntimeService(store RuntimeStore, cipher CredentialCipher, scope, epoch string) (*RuntimeService, error) {
+	if store == nil || cipher == nil || !domain.ValidID(scope) || !domain.ValidEpoch(epoch) {
 		return nil, ErrDependencyUnavailable
 	}
-	out := &RuntimeService{store: store, cipher: cipher, scope: scope, epoch: epoch}
-	if len(definitions) == 1 {
-		out.definitions = definitions[0]
-	}
-	return out, nil
+	return &RuntimeService{store, cipher, scope, epoch}, nil
 }
 func (s *RuntimeService) authorize(p WorkloadPrincipal) error {
 	if p.PrincipalID == "" || p.Audience != WorkloadAudience || p.ScopeID != s.scope || !domain.ValidID(p.InstanceID) {
@@ -111,9 +103,6 @@ func (s *RuntimeService) authorize(p WorkloadPrincipal) error {
 	return nil
 }
 func (s *RuntimeService) ReadSnapshot(ctx context.Context, p WorkloadPrincipal) (domain.Snapshot, error) {
-	if WorkerAuthorizationOnly(p) {
-		return domain.Snapshot{}, ErrWorkloadDenied
-	}
 	if err := s.authorize(p); err != nil {
 		return domain.Snapshot{}, err
 	}
@@ -127,9 +116,6 @@ func (s *RuntimeService) ReadSnapshot(ctx context.Context, p WorkloadPrincipal) 
 	return value, nil
 }
 func (s *RuntimeService) ResolveCredentials(ctx context.Context, p WorkloadPrincipal, tenant, account string, input ResolveRequest) (ResolveResponse, error) {
-	if WorkerAuthorizationOnly(p) {
-		return ResolveResponse{}, ErrWorkloadDenied
-	}
 	if err := s.authorize(p); err != nil {
 		return ResolveResponse{}, err
 	}
@@ -189,9 +175,6 @@ func (s *RuntimeService) ResolveCredentials(ctx context.Context, p WorkloadPrinc
 	return response, nil
 }
 func (s *RuntimeService) ReportObservations(ctx context.Context, p WorkloadPrincipal, input ObservationsRequest) error {
-	if WorkerAuthorizationOnly(p) {
-		return ErrWorkloadDenied
-	}
 	if err := s.authorize(p); err != nil {
 		return err
 	}

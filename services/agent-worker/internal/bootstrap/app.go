@@ -39,9 +39,6 @@ type readyLedger interface {
 	Scheduled(context.Context, int) ([]execution.ScheduledRun, error)
 }
 type App struct {
-	quota                                                                            quotaReconciler
-	consumption                                                                      quotaReconciler
-	authorization                                                                    *authorizationRuntime
 	tracing                                                                          *telemetrytrace.Runtime
 	config                                                                           Config
 	pool                                                                             *pgxpool.Pool
@@ -104,14 +101,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.authorization, err = newAuthorizationRuntime(c, a.pool)
-	if err != nil {
-		return nil, err
-	}
 	a.ledger = ledgerpg.New(a.pool)
-	if err = a.configureQuotaReconciliation(); err != nil {
-		return nil, err
-	}
 	a.ledger.Tracer = a.tracing.Tracer("agent-worker/execution-v1")
 	a.projection = observedProjection{Projection: projectionpg.New(a.pool), observer: a.observation}
 	reader := manifestadapter.Reader{Tracer: a.tracing.Tracer("agent-worker/execution-v1"), Projection: a.projection, ContractDigest: c.PlatformContractDigest}
@@ -124,7 +114,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 		return nil, err
 	}
 	a.executor = tracedProcessor{delegate: a.executor, tracer: a.tracing.Tracer("agent-worker/execution-v1")}
-	acceptor, err := execution.NewAcceptor(ledgerpg.NewIntake(a.pool), c.Policy.Domain(), domain.IntakeLimits{MaxQueuedRuns: c.Limits.MaxQueuedRuns, MaxRetainedRuns: c.Limits.MaxRetainedRuns}, a.observation)
+	acceptor, err := execution.NewAcceptor(a.ledger, c.Policy.Domain(), domain.IntakeLimits{MaxQueuedRuns: c.Limits.MaxQueuedRuns, MaxRetainedRuns: c.Limits.MaxRetainedRuns}, a.observation)
 	if err != nil {
 		return nil, err
 	}
@@ -238,9 +228,6 @@ func (a *App) Ready() bool {
 }
 func (a *App) closeOwned() {
 	a.closed.Do(func() {
-		if a.authorization != nil {
-			a.authorization.Close()
-		}
 		defer func() {
 			if a.tracing != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), a.config.Timing.HTTPShutdownTimeout.Value())
@@ -323,18 +310,6 @@ func (a *App) Run(ctx context.Context) error {
 	a.launch(func() { a.consume(workCtx, a.runs, &a.runHealthy, failures) })
 	a.launch(func() { a.consume(workCtx, a.manifests, &a.manifestHealthy, failures) })
 	a.launch(func() { a.monitor(workCtx, failures) })
-	if a.authorization != nil {
-		a.launch(func() {
-			if err := a.authorization.Run(workCtx); err != nil && workCtx.Err() == nil {
-				select {
-				case failures <- errors.New("Worker authorization refresh stopped"):
-				default:
-				}
-			}
-		})
-	}
-	a.launch(func() { a.reconcileQuota(workCtx) })
-	a.launch(func() { a.reconcileConsumption(workCtx) })
 	a.launch(func() { a.observeStorage(workCtx) })
 	a.launch(func() { a.schedule(workCtx, activeCtx, a.ledger) })
 	relayDone := make(chan struct{})

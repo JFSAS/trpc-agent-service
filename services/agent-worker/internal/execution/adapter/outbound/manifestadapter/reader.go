@@ -14,9 +14,8 @@ import (
 )
 
 type Reader struct {
-	Tracer     trace.Tracer
-	Projection projection.Reader
-
+	Tracer         trace.Tracer
+	Projection     projection.Projection
 	ContractDigest string
 }
 
