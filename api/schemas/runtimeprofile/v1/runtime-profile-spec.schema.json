@@ -384,6 +384,45 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
+        },
+        "dsn_credential_id": {
+          "type": "string",
+          "pattern": "^crd_[0-9a-f]{32}$"
+        },
+        "credential_audience_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "dependentRequired": {
+        "dsn_credential_id": [
+          "credential_audience_digest"
+        ],
+        "credential_audience_digest": [
+          "dsn_credential_id"
+        ]
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "managed_memory"
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "dsn_credential_id"
+              ]
+            },
+            {
+              "required": [
+                "credential_audience_digest"
+              ]
+            }
+          ]
         }
       }
     },
