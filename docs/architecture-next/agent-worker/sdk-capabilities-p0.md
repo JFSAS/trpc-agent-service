@@ -193,9 +193,20 @@ LLMAgent 请求实际包含摘要。原 Head 对应字节不变、重复 Put 幂
    重开 Store/Load → SDK 消费。模型失败、FAILED 带候选、错误 parent、实际 lease
    过期后的旧 Attempt Complete 均不提升 head。要求一主测五子测零跳过。
 
-**当前发布状态：**生产 Manifest Reader 尚未把 runtime.summary 投影为 Plan.Summary；
+**该批次当时的发布状态（已由下述正式闭环批次取代）：**生产 Manifest Reader 尚未把 runtime.summary 投影为 Plan.Summary；
 默认 WorkerV1 contract/gate 继续拒绝新能力。上述 Runtime 配置入口已可测试，但
 不是用户配置 Summary 后线上自动生效。后续先补 Reader 固定资源映射与最小
 Summary capability 合同，再联合 Control 编译/凭据导出/真实 Factory/数据库验收，
 最后开放该能力。Memory 的 accepted CAS、Artifact 双存储以及 Knowledge 检索/导入
 仍按后续独立切片完成；不因 Summary 接线而隐式开放它们。
+
+
+## 正式 Session Summary 发布与运行入口（2026-09-09）
+
+本批替换上一批的 Summary 拒绝门禁：Control WorkerV1 默认合同仅声明 summary，
+Reader 构造固定 SummaryPlan，Factory/Executor 使用真实 SDK 并沿原 Session 接受事务
+持久化。Memory/Artifact/Knowledge 与 managed Session 不随之开放。
+
+配置、SDK 阈值语义、失败 Final、摘要启停连续性、真实运行验收及 release pin 切换流程
+见 [正式 Session Summary V1](session-summary-v1.md)。既有共享服务保持原配置，
+新增验收在独立环境完成，不以 helper/手工 Plan 成功代替实际生产代码运行链路。

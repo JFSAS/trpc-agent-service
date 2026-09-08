@@ -63,5 +63,10 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 		p.Temperature = node.Generation.Temperature
 		p.NodeMaxOutputTokens = node.Generation.MaxOutputTokens
 	}
+	if content.Runtime != nil {
+		spec := content.Runtime.Summary
+		selected := content.Resources.Models[spec.ModelResource]
+		p.Summary = &domain.SummaryPlan{ModelEndpoint: selected.BaseURL, ModelName: selected.Model, ModelCredential: use(selected.Credential), EventThreshold: spec.EventThreshold, AddSessionSummary: node.AddSessionSummary != nil && *node.AddSessionSummary}
+	}
 	return p, nil
 }

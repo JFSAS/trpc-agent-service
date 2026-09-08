@@ -116,7 +116,7 @@ func TestReaderResolveWireValidDataCapabilitiesAreUnsupported(t *testing.T) {
 	cases := []struct {
 		name   string
 		change func(map[string]any)
-	}{{"runtime summary", summary}, {"node memory", memory}, {"node artifact", artifact}, {"node summary consumption", consume}, {"all capabilities", func(c map[string]any) { summary(c); memory(c); artifact(c); consume(c) }}}
+	}{{"node memory", memory}, {"node artifact", artifact}, {"node summary consumption", consume}, {"all capabilities", func(c map[string]any) { summary(c); memory(c); artifact(c); consume(c) }}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reader, route, raw, p := readerDataInput(t, tc.change)
@@ -160,6 +160,33 @@ func TestReaderResolveNullAndFalseDataAreInvalid(t *testing.T) {
 					t.Fatalf("expected Invalid/empty Plan, got %+v %v", plan, err)
 				}
 			})
+		}
+	}
+}
+
+func TestReaderSummaryBuildsOnlyFixedPublishedPlan(t *testing.T) {
+	for _, consume := range []bool{false, true} {
+		reader, route, _, projection := readerDataInput(t, func(c map[string]any) {
+			c["runtime"] = map[string]any{"summary": map[string]any{"enabled": true, "model_resource": "primary", "event_threshold": 5}}
+			if consume {
+				readerDataNode(c)["add_session_summary"] = true
+			}
+		})
+		p, err := reader.Resolve(context.Background(), route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Summary == nil || p.Summary.ModelEndpoint != p.ModelEndpoint || p.Summary.ModelName != p.ModelName || p.Summary.ModelCredential != p.ModelCredential || p.Summary.EventThreshold != 5 || p.Summary.AddSessionSummary != consume || projection.reads != 1 {
+			t.Fatalf("not a fixed summary projection: %+v", p.Summary)
+		}
+		if len(p.Uses()) != 2 {
+			t.Fatal("shared model credential duplicated")
+		}
+		// Config is owned by this returned Plan, not shared between resolutions.
+		p.Summary.ModelName = "mutated"
+		next, err := reader.Resolve(context.Background(), route)
+		if err != nil || next.Summary.ModelName == "mutated" {
+			t.Fatal("summary aliases another Plan", err)
 		}
 	}
 }

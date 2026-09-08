@@ -353,6 +353,7 @@ func cloneMap[K comparable, V any](source map[K]V) map[K]V {
 func WorkerV1PlatformExecutionContract() PlatformExecutionContract {
 	c := DefaultPlatformExecutionContract()
 	c.Version = deploymentv1.WorkerV1PlatformVersion
+	c.RuntimeDataCapabilities = []string{"summary"}
 	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{}
 	c.KnowledgeAdapters = map[profiledomain.KnowledgeKind]KnowledgeAdapterContract{}
 	digest, err := c.CalculateDigest()

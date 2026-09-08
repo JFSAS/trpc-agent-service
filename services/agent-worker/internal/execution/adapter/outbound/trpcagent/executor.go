@@ -135,7 +135,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	var summaryModel *summaryUsageModel
 	var local *overlay
 	if req.Summary == nil {
-		local, err = newOverlay(req.TenantID, req.SessionID, req.AcceptedSnapshot, e.CapacityBytes)
+		// Disabling summary generation does not invalidate the same Session.
+		// Retain previously accepted summaries, but do not consume or update them.
+		local, err = newOverlayState(req.TenantID, req.SessionID, req.AcceptedSnapshot, e.CapacityBytes, true)
 	} else {
 		summaryTransport := http.DefaultTransport.(*http.Transport).Clone()
 		defer summaryTransport.CloseIdleConnections()

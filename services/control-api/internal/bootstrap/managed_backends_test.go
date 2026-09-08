@@ -5,6 +5,7 @@ import (
 	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 	deployment "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	backend "github.com/liuzengh/trpc-agent-service/services/control-api/internal/platformbackend/domain"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,7 @@ func TestManagedBootstrapDoesNotEnableRuntimeAdapters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound.Digest == base.Digest || bound.ManagedCatalogDigest == "" || len(bound.RuntimeDataCapabilities) != 0 || len(bound.StorageAdapters) != len(base.StorageAdapters) {
+	if bound.Digest == base.Digest || bound.ManagedCatalogDigest == "" || !reflect.DeepEqual(bound.RuntimeDataCapabilities, base.RuntimeDataCapabilities) || !reflect.DeepEqual(bound.StorageAdapters, base.StorageAdapters) {
 		t.Fatal("catalog changed runtime capability")
 	}
 	cfg.PlatformBackendCatalogSHA256 = "bad"

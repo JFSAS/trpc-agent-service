@@ -7,7 +7,7 @@ import (
 )
 
 func TestWorkerV1RejectsDataCapabilityPresence(t *testing.T) {
-	for _, name := range []string{"runtime-empty", "summary", "memory-empty", "memory-tools", "memory-preload", "artifact-empty", "artifact", "summary-false", "summary-true"} {
+	for _, name := range []string{"runtime-empty", "memory-empty", "memory-tools", "memory-preload", "artifact-empty", "artifact", "summary-false", "summary-true"} {
 		t.Run(name, func(t *testing.T) {
 			c := workerFixture(t)
 			if err := ValidateWorkerV1(c, c.PlatformContract.Digest); err != nil {

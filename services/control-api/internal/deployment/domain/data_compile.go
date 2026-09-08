@@ -10,8 +10,13 @@ import (
 const DiagnosticCallableNameCollision = "DEPLOYMENT_CALLABLE_NAME_COLLISION"
 
 func dataContractDiagnostics(a agentdomain.Spec, p PlatformExecutionContract) []Diagnostic {
-	if len(p.RuntimeDataCapabilities) == 0 || p.Version == deploymentv1.WorkerV1PlatformVersion {
+	if len(p.RuntimeDataCapabilities) == 0 {
 		return pendingDataContractDiagnostics(a)
+	}
+	// Preserve the legacy no-data compilation path (including direct Go fixtures).
+	// Published data declarations still undergo the complete Agent schema checks.
+	if p.Version == deploymentv1.WorkerV1PlatformVersion && len(pendingDataContractDiagnostics(a)) == 0 {
+		return nil
 	}
 	raw, err := json.Marshal(a)
 	if err != nil {
@@ -21,6 +26,17 @@ func dataContractDiagnostics(a agentdomain.Spec, p PlatformExecutionContract) []
 		return []Diagnostic{diagnostic(DiagnosticInputInvalid, SeverityError, DiagnosticSourceAgent, "", "invalid agent data declaration")}
 	}
 	var out []Diagnostic
+	if p.Version == deploymentv1.WorkerV1PlatformVersion {
+		for _, id := range sortedKeys(a.Nodes) {
+			n := a.Nodes[id]
+			for _, field := range []string{"memory", "artifact"} {
+				present := (field == "memory" && n.Memory != nil) || (field == "artifact" && n.Artifact != nil)
+				if present {
+					out = append(out, diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, "/nodes/"+escapeJSONPointer(id)+"/"+field, "Worker V1 only supports session summary data capabilities"))
+				}
+			}
+		}
+	}
 	check := func(enabled bool, capability, path string) {
 		if enabled && !containsString(p.RuntimeDataCapabilities, capability) {
 			out = append(out, diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, path, "runtime data capability is not part of the fixed platform contract"))

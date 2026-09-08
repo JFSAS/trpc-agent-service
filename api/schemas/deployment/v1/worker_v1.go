@@ -31,14 +31,16 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion || (expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest) {
 		return reject("contract identity")
 	}
-	// Wire support is not execution support. Reject presence rather than truth:
-	// direct Go callers may construct empty components or an explicit false.
-	if c.Runtime != nil {
-		return reject("runtime data capabilities are not executable yet")
+	// Summary alone is executable. Other runtime data services remain closed.
+	if c.Runtime != nil && (c.Runtime.Summary == nil || c.Runtime.Summary.Validate() != nil) {
+		return reject("invalid session summary configuration")
 	}
 	for _, node := range c.AgentPlan.Nodes {
-		if node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
-			return reject("node data capabilities are not executable yet")
+		if node.Memory != nil || node.Artifact != nil {
+			return reject("memory and artifact are deferred")
+		}
+		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
+			return reject("summary consumption requires enabled runtime summary")
 		}
 	}
 	if c.Execution.Backend != "worker-process-v1" || c.Execution.MaxRunSeconds <= 0 || c.Execution.MaxOutputTokens <= 0 {
@@ -51,20 +53,22 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if len(node.ToolResources)+len(node.KnowledgeResources)+len(node.CallableEntries) > 0 || len(c.Resources.Tools)+len(c.Resources.Knowledge)+len(c.ResolvedRequirements.Tools)+len(c.ResolvedRequirements.Knowledge) > 0 {
 		return reject("tools, knowledge and callable entries are deferred")
 	}
-	model, ok := c.Resources.Models[node.ModelResource]
-	if !ok || len(c.Resources.Models) != 1 || len(c.ResolvedRequirements.Models) != 1 {
+	selectedModels := map[string]bool{node.ModelResource: true}
+	if c.Runtime != nil {
+		selectedModels[c.Runtime.Summary.ModelResource] = true
+	}
+	if len(c.Resources.Models) != len(selectedModels) || len(c.ResolvedRequirements.Models) != len(selectedModels) {
 		return reject("model closure")
 	}
-	for _, resourceKey := range c.ResolvedRequirements.Models {
-		if resourceKey != node.ModelResource {
+	bindings := map[string]bool{}
+	for _, key := range c.ResolvedRequirements.Models {
+		if !selectedModels[key] || bindings[key] {
 			return reject("model requirement binding")
 		}
+		bindings[key] = true
 	}
 	if node.Generation != nil && node.Generation.MaxOutputTokens != nil && *node.Generation.MaxOutputTokens > c.Execution.MaxOutputTokens {
 		return reject("generation exceeds fixed single-output policy")
-	}
-	if model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
-		return reject("model adapter")
 	}
 	sessionKey, ok := c.StorageRoles["session"]
 	session, exists := c.Resources.Storage[sessionKey]
@@ -77,23 +81,35 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if session.Destination.Username != WorkerV1SessionRuntimeRole {
 		return ErrWorkerV1SessionRuntimeRole
 	}
-	endpoint, err := url.Parse(model.BaseURL)
-	if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(model.BaseURL, "#") || endpoint.Hostname() == "" || !slices.Contains(c.Execution.AllowedEndpointHosts, strings.ToLower(endpoint.Hostname())) || !slices.Contains(c.Execution.AllowedEndpointHosts, strings.ToLower(session.Destination.Host)) {
-		return reject("fixed endpoint closure")
+	expectedHosts := []string{strings.ToLower(session.Destination.Host)}
+	if session.Credential.CredentialID == "" || session.Credential.AudienceDigest != CredentialAudienceDigest(session.Kind, session.Destination) {
+		return reject("credential audience does not match fixed destination")
 	}
-	expectedHosts := []string{strings.ToLower(endpoint.Hostname()), strings.ToLower(session.Destination.Host)}
+	credentials := map[string]CredentialUse{session.Credential.CredentialID: session.Credential}
+	for key := range selectedModels {
+		model, exists := c.Resources.Models[key]
+		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
+			return reject("model adapter")
+		}
+		endpoint, err := url.Parse(model.BaseURL)
+		if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(model.BaseURL, "#") || endpoint.Hostname() == "" {
+			return reject("fixed endpoint closure")
+		}
+		if model.Credential.AudienceDigest != CredentialAudienceDigest(model.Kind, model.BaseURL) {
+			return reject("credential audience does not match fixed destination")
+		}
+		if prior, ok := credentials[model.Credential.CredentialID]; ok && prior != model.Credential {
+			return reject("credential closure")
+		}
+		credentials[model.Credential.CredentialID] = model.Credential
+		expectedHosts = append(expectedHosts, strings.ToLower(endpoint.Hostname()))
+	}
 	slices.Sort(expectedHosts)
 	expectedHosts = slices.Compact(expectedHosts)
 	actualHosts := append([]string(nil), c.Execution.AllowedEndpointHosts...)
 	slices.Sort(actualHosts)
 	if !slices.Equal(actualHosts, expectedHosts) {
 		return reject("endpoint set must equal selected resource closure")
-	}
-	if model.Credential.AudienceDigest != CredentialAudienceDigest(model.Kind, model.BaseURL) || session.Credential.AudienceDigest != CredentialAudienceDigest(session.Kind, session.Destination) {
-		return reject("credential audience does not match fixed destination")
-	}
-	if model.Credential.CredentialID == session.Credential.CredentialID {
-		return reject("credential closure")
 	}
 	return nil
 }

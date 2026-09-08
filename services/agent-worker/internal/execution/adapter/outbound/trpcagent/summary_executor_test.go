@@ -11,12 +11,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
 func TestExecutorSummaryFixedModelAndNextRun(t *testing.T) {
 	var primaryCalls, summaryCalls atomic.Int32
 	var consumed atomic.Bool
+	var disabledConsumed atomic.Bool
+	var disabledHistory atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -41,7 +44,13 @@ func TestExecutorSummaryFixedModelAndNextRun(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer fixture-token" {
 			t.Error("wrong primary credential")
 		}
-		if primaryCalls.Add(1) == 3 {
+		call := primaryCalls.Add(1)
+		if call == 4 {
+			messages, _ := json.Marshal(body["messages"])
+			disabledConsumed.Store(strings.Contains(string(messages), "The secret remembered preference is green tea."))
+			disabledHistory.Store(strings.Contains(string(messages), "Hello") && strings.Contains(string(messages), "A normal answer"))
+		}
+		if call == 3 || call == 5 {
 			messages, _ := json.Marshal(body["messages"])
 			consumed.Store(strings.Contains(string(messages), "The secret remembered preference is green tea."))
 		}
@@ -78,11 +87,37 @@ func TestExecutorSummaryFixedModelAndNextRun(t *testing.T) {
 	req.RunID = "run-b"
 	req.AttemptID = "attempt-b"
 	req.InputText = "Continue"
-	if _, err = testExecutor().Execute(context.Background(), req); err != nil {
+	second, err := testExecutor().Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if !consumed.Load() {
 		t.Fatal("next run did not consume accepted summary")
+	}
+	before := summaryCalls.Load()
+	req.AcceptedSnapshot = second.Snapshot
+	enabled := req.Summary
+	req.Summary = nil
+	req.RunID = "summary-disabled-run"
+	req.AttemptID = "summary-disabled-attempt"
+	off, err := testExecutor().Execute(context.Background(), req)
+	if err != nil || len(off.Snapshot) == 0 {
+		t.Fatalf("disabling summary invalidated existing Session: %v", err)
+	}
+	if summaryCalls.Load() != before || disabledConsumed.Load() || !disabledHistory.Load() {
+		t.Fatal("disabled summary still generated or consumed")
+	}
+	if err = json.Unmarshal(off.Snapshot, &stored); err != nil || len(stored.Session.Summaries) != 1 {
+		t.Fatal("disabling summary destroyed accepted metadata", err)
+	}
+	consumed.Store(false)
+	req.AcceptedSnapshot = off.Snapshot
+	req.Summary = enabled
+	req.RunID = "summary-reenabled-run"
+	req.AttemptID = "summary-reenabled-attempt"
+	resumed, err := testExecutor().Execute(context.Background(), req)
+	if err != nil || len(resumed.Snapshot) == 0 || !consumed.Load() {
+		t.Fatalf("reenabling summary lost continuity: %v", err)
 	}
 }
 
