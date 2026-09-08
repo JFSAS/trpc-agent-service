@@ -16,9 +16,12 @@ type SessionDefinition struct {
 	Partition string `json:"partition"`
 }
 type QuotaDefinition struct {
-	PublicLimited     bool  `json:"public_limited"`
-	MaxConcurrentRuns int64 `json:"max_concurrent_runs"`
-	MaxRunsPerMinute  int64 `json:"max_runs_per_minute"`
+	// MaxTotalModelTokens is a cumulative tenant token cap across revisions.
+	// Nil is unconfigured, not unlimited; zero denies new model consumption.
+	MaxTotalModelTokens *int64 `json:"max_total_model_tokens,omitempty"`
+	PublicLimited       bool   `json:"public_limited"`
+	MaxConcurrentRuns   int64  `json:"max_concurrent_runs"`
+	MaxRunsPerMinute    int64  `json:"max_runs_per_minute"`
 }
 type PolicyDefinition struct {
 	Enabled bool               `json:"enabled"`

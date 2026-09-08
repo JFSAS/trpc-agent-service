@@ -1015,3 +1015,175 @@ Admission/Worker 同库授权 fence 仍待完成，全部 F01–F12 目标保持
   scheduler. Earlier entries describe their execution-time state, not the current
   publication status. Full design completion and live IM acceptance are not claimed.
 - Main-integration evidence: artifacts/review-main-20260908-0920/VERIFICATION.txt.
+
+### 2026-09-08 — Managed Run-quota reconciliation
+
+- Worker bootstrap now constructs the real Budget/Execution settlement owner and
+  starts it in the managed work lifetime. Existing poll interval, operation timeout
+  and scan batch bound its work; shutdown cancels and joins the loop.
+- Keyset pagination skips unknown/faulty candidates without refunding them, wraps
+  at the tail and revisits late inserts. Multiple Worker instances share immutable
+  settlement facts rather than relying on local cursor state for correctness.
+- Added bounded quota-reconcile telemetry and non-logging quota-wait metrics.
+  Tests cover database pagination, late input, replicas, restart, fault/unknown
+  preservation, loop backoff, operation deadlines and in-flight cancellation.
+  The real bootstrap composition/loop test frees concurrency after Ledger terminal
+  commit and successfully reserves the next Run; it does not exercise IM or models.
+- No admission promoter/cost reservation or F01-F12 completion is claimed. This
+  increment wires the previously manual Run-count release owner, not billing usage.
+- Evidence: artifacts/quota-reconcile-20260908-0950/VERIFICATION.txt.
+
+### 2026-09-08 — Shared operation-consumption reservation and settlement
+
+- Added Budget operation ledger and migration 0014. Stable operation identity binds
+  tenant/Run/input/unit/maximum/bound digest; shared locks make maximum consumption
+  reservations atomic across nodes. Exact retries replay original facts; new calls
+  consume new operation IDs. Tenant/unit totals do not reset on policy-ID changes.
+- Mandatory current-policy/bound and final-usage owner ports fail closed. Unknown
+  usage keeps the maximum; final usage replaces that charge. Overruns remain recorded
+  and fence further tenant/unit reservations rather than disappearing on rollback.
+- Append-only reservation/usage records, tenant-unique evidence and bounded storage
+  protect replay/retention semantics. Owner savepoints support atomic caller rollback.
+- Real PostgreSQL tests cover eight concurrent requests, two pools, final-vs-unknown
+  usage, identity isolation, rollback, overrun, reused evidence and dependency faults.
+  The proof sources are explicit fixtures: production policy/bound/usage adapters,
+  runtime filters, full PendingRunReservation and promoter still need implementation.
+  This does not change public Quota policy JSON or claim monetary billing enforcement.
+- Evidence: artifacts/consumption-budget-20260908-0920/VERIFICATION.txt.
+
+### 2026-09-08 — Preserve actual SDK usage provenance
+
+- Source inspection found the pinned SDK sums usage chunks and suppresses explicit
+  zero/empty-choice reports. Added a bounded, byte-transparent HTTP/SSE observer
+  instead of treating normalized SDK counters or default zero as final proof.
+- Actual stream reports distinguish absent usage from verified zero, deduplicate
+  identical cumulative usage and reject conflicting/incomplete/invalid evidence.
+  UsageKnown now propagates through runtime to Processor usage observations.
+- Real SDK plus local HTTP/SSE tests cover zero, missing/null, usage-only chunks,
+  duplicate/conflicting counts, invalid values and missing DONE. Early usage and
+  mixed-response reports remain unknown. Byte-level tests
+  cover fragmentation, multiline CRLF, oversized events and multiple requests.
+- This does not yet persist a stable operation usage fact or wire ConsumptionReader;
+  current budget policy/bound verification and Before/After dispatch remain pending.
+- Evidence: artifacts/sdk-usage-20260908-0930/VERIFICATION.txt.
+
+### 2026-09-08 — Persist known model usage before Session Stage
+
+- Added deterministic per-Attempt single-LLM operation identity and migration 0015
+  for immutable Execution model-usage facts. Digest binds input/Manifest/parent head
+  and counters; unknown usage never becomes a final zero fact.
+- Processor now calls the real Ledger persistence method before Stage. Failures stop
+  Stage/Completion; later execution/session failures cannot remove committed usage.
+- New writes require an authenticated live EXECUTING grant; exact terminal replay
+  still authenticates the original Attempt identity, rejects changed counters and
+  retains the first timestamp. Eight concurrent real-PG writes produce one fact.
+- SDK provenance, Processor order and PostgreSQL owner tests remain distinct evidence;
+  this is not full Control/SDK/DB integration or automatic Consumption settlement.
+  Current policy/bound proof, exact reservation join and production admission gates
+  remain pending. No F01-F12 completion claim.
+- Evidence: artifacts/model-usage-facts-20260908-0945/VERIFICATION.txt.
+
+### 2026-09-08 — Bind model reservations to actual Execution usage
+
+- Migration 0016 adds immutable pre-call links. Actual Budget verification binds
+  exact operation/input/bound/maximum to a live PREPARING Execution grant using
+  the caller transaction; rollback removes both reservation and link atomically.
+- Actual Execution ConsumptionReader joins its own persisted usage/link/Attempt,
+  recomputes identity digests and supplies final proof to Budget settlement.
+  Known consumption survives Stage failure; absent or unlinked zero stays held.
+- Real two-pool PostgreSQL tests replace usage/verifier fixtures, cover substituted
+  identities, exact replay, settled-receipt denial and late-binding rejection.
+  Current policy/enforceable maximum authority remains a fixture. Production
+  dispatch, settlement reconciliation and full admission remain unfinished.
+- Evidence: artifacts/consumption-link-20260908-1010/VERIFICATION.txt.
+
+### 2026-09-08 — Managed recovery of model consumption settlements
+
+- Separated settlement-only construction from reservation authorization. Bootstrap
+  now composes the actual Execution usage reader without a dummy policy authority.
+- Worker lifecycle launches bounded consumption reconciliation alongside Run quota:
+  operation-ID pages advance past unknown/errors, wrap, and replay safely on restart.
+  Poll delay, operation deadline, shutdown cancellation and join share existing limits.
+- Real PostgreSQL covers concurrent scans, late keys, held unknowns and failed owner
+  reads. Actual bootstrap loop settles persisted model20 after Stage failure and
+  allows next80 under a fixture cap100. No model/provider or live IM test is implied.
+- Production new-call authority, Before-model dispatch and complete admission still
+  remain pending; recovery only settles existing proved facts and never grants calls.
+- Evidence: artifacts/consumption-reconcile-20260908-1030/VERIFICATION.txt.
+
+### 2026-09-08 — Preserve completed usage across failed runtime output
+
+- Fixed a real failure path: invalid Final/local snapshot errors discarded complete
+  model usage before it reached durable accounting. SDK cleanup now retains only
+  final accounting evidence on error and clears output/candidate data.
+- Runtime forwards accounting-only failures without allowing Stage. Processor
+  persists known usage before FailAttempt, while the original execution still fails.
+- Red/green actual SDK tests cover empty Final with reported/zero/missing/incomplete
+  usage; runtime and Processor tests separately enforce no successful promotion.
+  Cancellation/incomplete drain remain unknown. Production authority still pending.
+- Evidence: artifacts/failed-model-usage-20260908-1050/VERIFICATION.txt.
+
+### 2026-09-08 — Publish explicit cumulative model-token budget
+
+- Added optional max_total_model_tokens to quota owner and consumer contracts,
+  JSON schemas and public/internal OpenAPI. Missing is unconfigured; zero remains
+  explicit. Existing definitions omit the field and retain their prior digest.
+- Control candidate cloning detaches the optional scalar. Signed owner-to-consumer
+  tests check bounds, malformed values and digest stripping/substitution. Actual
+  PostgreSQL publication checks cap-bound receipts, immutable revisions and outbox.
+- This supplies the policy configuration source, not current authorization or a
+  maximum-call proof. Worker admission/Before-model budget authority remain pending.
+- Contract: model-token-budget-contract.md.
+- Evidence: artifacts/model-budget-policy-20260908-1110/VERIFICATION.txt.
+
+### 2026-09-08 — Read model budget under pending/current authorization
+
+- Added PendingRouteAuthority.ReadModelBudget, binding the published cap to a
+  persisted pending event and current principal, exact Session policy and Manifest.
+  Snapshot locks remain in the caller transaction; DB freshness is checked again
+  after target/decode work. Missing cap is not-ready and zero remains explicit.
+- Real PG17 projection/pending/Manifest tests cover newer policy caps, scope/actor
+  substitutions, revocation, missing fields and stale snapshots; no Run/Attempt
+  allocation occurs. Source reader is a fixture, not real Control HTTP evidence.
+- This is a current-policy evidence port, not a maximum-cost proof or completed
+  ConsumptionAuthority. New-call reservation and dispatch composition remain pending.
+- Evidence: artifacts/current-model-budget-20260908-1130/VERIFICATION.txt.
+
+### 2026-09-08 — Gate the actual SDK request before model transport
+
+- Added attempt-local ModelCallGate with final serialized request bytes/digest,
+  model, output maximum and stable tenant/Run/Attempt identities. No credential
+  headers enter the gate. Inspection is bounded, detached and non-mutable.
+- Actual SDK tests verify gate-before-send, exact wire equality, zero sends after
+  denial/mutation, sanitized errors and no second send on 307 redirect. Invalid
+  model/limit, oversized body and cancellation are rejected before authority.
+- Nil gate retains legacy behavior; this seam is not production ConsumptionAuthority
+  or a token-count bound. Processor transition/atomic pre-call reservation must be
+  composed before enabling managed model dispatch. No hard budget claim.
+- Evidence: artifacts/model-dispatch-gate-20260908-1150/VERIFICATION.txt.
+
+### 2026-09-08 — Sequence governed reservation before EXECUTING
+
+- Added explicit ModelAdmission and GuardedAttemptRuntime ports. Authorization-
+  bearing Runs require both; neither missing component falls back to legacy Execute.
+- Processor validates actual request digest/model/output/identity, rechecks the grant,
+  calls admission while PREPARING, then marks EXECUTING before network send. Repeat
+  callbacks are fenced; transition failure sends nothing and retains any committed hold.
+- Runtime forwards the actual SDK gate and rejects direct legacy calls on governed
+  Runs. ModelCall is now an execution-domain type, not an application-to-SDK dependency.
+- Tests cover ordering, denial, transition failure, missing ports, repeated callback,
+  digest substitution and actual SDK forwarding. Admission/Ledger tests use fixtures;
+  real maximum-bound/policy/reservation implementation and bootstrap wiring remain pending.
+- Evidence: artifacts/governed-dispatch-20260908-1210/VERIFICATION.txt.
+
+### 2026-09-08 — Make model dispatch transition single-use across nodes
+
+- Reproduced eight successful MarkExecuting calls sharing one valid grant across
+  two pools. Replaced idempotent status UPDATE with PREPARING/null-start CAS.
+- Migration0017 rejects repeated old-code EXECUTING updates, backward state changes
+  and start timestamp rewrites; legitimate renewal, usage and terminalization remain.
+- Real PG race test verifies one permit/seven fenced, restart denial and token
+  forgery rejection. This is a one-time transition, not exactly-once HTTP delivery;
+  uncertain commit remains conservative and never authorizes automatic resend.
+- Real maximum-bound/admission composition still remains pending. No goal completion.
+- Evidence: artifacts/single-dispatch-20260908-1230/VERIFICATION.txt.

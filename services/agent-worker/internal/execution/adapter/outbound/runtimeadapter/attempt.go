@@ -50,6 +50,24 @@ func (a *attempt) Load(ctx context.Context, head domain.Head) ([]byte, error) {
 	return append([]byte(nil), c.Snapshot...), nil
 }
 func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeResult, error) {
+	if a.grant.Run.Request.Authorization != nil {
+		return domain.RuntimeResult{}, domain.ErrNotReady
+	}
+	return a.execute(ctx, history, nil)
+}
+func (a *attempt) ExecuteGuarded(ctx context.Context, history []byte, admit func(context.Context, domain.ModelCall) error) (domain.RuntimeResult, error) {
+	if admit == nil {
+		return domain.RuntimeResult{}, domain.ErrNotReady
+	}
+	return a.execute(ctx, history, admit)
+}
+
+type modelAdmissionFunc func(context.Context, domain.ModelCall) error
+
+func (f modelAdmissionFunc) AuthorizeModelCall(c context.Context, m domain.ModelCall) error {
+	return f(c, m)
+}
+func (a *attempt) execute(ctx context.Context, history []byte, admit func(context.Context, domain.ModelCall) error) (domain.RuntimeResult, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed || a.executed || !a.loaded || domain.Digest(history) != a.loadedDigest {
@@ -61,21 +79,28 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	}
 	p := a.plan
 	g := a.grant
-	result, err := a.executor.Execute(ctx, trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, AcceptedSnapshot: history})
+	executor := a.executor
+	if admit != nil {
+		executor.BeforeModel = modelAdmissionFunc(admit)
+	}
+	result, err := executor.Execute(ctx, trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, AcceptedSnapshot: history})
+	// Usage is independent of deliverability. On failure forward counters only;
+	// resultDigest stays empty, so Stage remains forbidden.
+	usage := domain.RuntimeResult{UsageKnown: result.UsageKnown, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}
 	if err != nil {
 		if ctx.Err() != nil {
 			return domain.RuntimeResult{}, ctx.Err()
 		}
 		if errors.Is(err, trpcagent.ErrSnapshot) || errors.Is(err, trpcagent.ErrCapacity) || errors.Is(err, trpcagent.ErrOverlay) {
-			return domain.RuntimeResult{}, application.ErrSessionInvalid
+			return usage, application.ErrSessionInvalid
 		}
 		if errors.Is(err, trpcagent.ErrRetryableModel) {
-			return domain.RuntimeResult{}, application.ErrDependency
+			return usage, application.ErrDependency
 		}
-		return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		return usage, application.ErrRuntimeFailed
 	}
 	a.resultDigest = domain.Digest(result.Snapshot)
-	return domain.RuntimeResult{FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
+	return domain.RuntimeResult{UsageKnown: result.UsageKnown, FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
 }
 func (a *attempt) Stage(ctx context.Context, snapshot []byte) (domain.Candidate, error) {
 	a.mu.Lock()

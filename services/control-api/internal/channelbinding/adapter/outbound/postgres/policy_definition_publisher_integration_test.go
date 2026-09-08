@@ -3,8 +3,10 @@ package postgresadapter
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	wire "github.com/liuzengh/trpc-agent-service/api/schemas/channel/v1"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -159,4 +161,86 @@ func TestPolicyDefinitionPublisherOwnerCASReplayAndRollbackAgainstPostgreSQL(t *
 		t.Fatal("revoked OWNER replay", err)
 	}
 	count(4)
+}
+
+func TestModelBudgetPublicationPostgres(t *testing.T) {
+	_, _, pool, _ := policyPG(t)
+	ctx := context.Background()
+	migration, e := migrations.Files.ReadFile("0007_channel_policy_definitions.sql")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = pool.Exec(ctx, string(migration)); e != nil {
+		t.Fatal(e)
+	}
+	publisher := definitionPublisher(t, pool)
+	actor := owner.Actor{TenantID: testActor.TenantID, UserID: testActor.UserID}
+	cap := int64(1000)
+	input := owner.PublishInput{Definition: def.Definition{Enabled: true, Quota: &def.QuotaDefinition{MaxConcurrentRuns: 1, MaxRunsPerMinute: 5, MaxTotalModelTokens: &cap}}}
+	first, e := publisher.Publish(ctx, actor, def.Quota, "model-budget", "first", input)
+	if e != nil {
+		t.Fatal(e)
+	}
+	replay, e := publisher.Publish(ctx, actor, def.Quota, "model-budget", "first", input)
+	if e != nil || replay != first {
+		t.Fatal("replay", e)
+	}
+	cap = 2000
+	if _, e = publisher.Publish(ctx, actor, def.Quota, "model-budget", "first", input); !errors.Is(e, owner.ErrIdempotencyConflict) {
+		t.Fatal("changed cap reused receipt", e)
+	}
+	reader, e := ownerpg.NewReader(pool)
+	if e != nil {
+		t.Fatal(e)
+	}
+	original, e := reader.ReadExact(ctx, actor.TenantID, def.Quota, "model-budget", 1)
+	if e != nil || original.Definition.Quota.MaxTotalModelTokens == nil || *original.Definition.Quota.MaxTotalModelTokens != 1000 {
+		t.Fatal("stored cap changed", e)
+	}
+	raw, _ := json.Marshal(original)
+	consumer, e := wire.DecodePolicyDefinitionDocument(raw)
+	if e != nil || consumer.Digest != first.Digest || *consumer.Definition.Quota.MaxTotalModelTokens != 1000 {
+		t.Fatal("consumer cap", e)
+	}
+	input.ExpectedRevision = 1
+	cap = 0
+	second, e := publisher.Publish(ctx, actor, def.Quota, "model-budget", "second", input)
+	if e != nil || second.Digest == first.Digest || second.Revision != 2 {
+		t.Fatal("zero publication", e)
+	}
+	updated, e := reader.ReadExact(ctx, actor.TenantID, def.Quota, "model-budget", 2)
+	if e != nil || updated.Definition.Quota.MaxTotalModelTokens == nil || *updated.Definition.Quota.MaxTotalModelTokens != 0 {
+		t.Fatal("zero became absent", e)
+	}
+	var revisions, receipts, outbox int
+	e = pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM channel_policy_definition_revisions),(SELECT count(*) FROM channel_policy_definition_receipts),(SELECT count(*) FROM control_outbox WHERE aggregate_type='ChannelPolicyDefinition')`).Scan(&revisions, &receipts, &outbox)
+	if e != nil || revisions != 2 || receipts != 2 || outbox != 4 {
+		t.Fatal("atomic publication", revisions, receipts, outbox, e)
+	}
+	rows, e := pool.Query(ctx, `SELECT payload_jsonb FROM control_outbox WHERE aggregate_type='ChannelPolicyDefinition'`)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		if e = rows.Scan(&raw); e != nil {
+			t.Fatal(e)
+		}
+		event, e := wire.DecodePolicyDefinitionEvent(raw)
+		if e != nil {
+			t.Fatal(e)
+		}
+		want := first.Digest
+		if event.Revision == 2 {
+			want = second.Digest
+		}
+		if event.Digest != want {
+			t.Fatal("outbox digest mismatch")
+		}
+	}
+	if e = rows.Err(); e != nil {
+		t.Fatal(e)
+	}
+	t.Log("MODEL_BUDGET_PUBLICATION=PASS postgres=REAL cap=1000 zero=PRESERVED receipt=BOUND outbox=ATOMIC consumer=DIGEST_VERIFIED")
 }

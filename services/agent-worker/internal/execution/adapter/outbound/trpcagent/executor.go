@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -49,12 +50,16 @@ type Request struct {
 }
 type Usage struct{ InputTokens, OutputTokens, TotalTokens int }
 type Result struct {
-	FinalText string
-	Snapshot  []byte
-	Usage     Usage
+	FinalText  string
+	Snapshot   []byte
+	Usage      Usage
+	UsageKnown bool
 }
 
 type Executor struct {
+	// BeforeModel inspects the actual outbound SDK request once before network I/O.
+	// Nil retains legacy execution; this seam alone does not enable managed budgets.
+	BeforeModel   ModelCallGate
 	CapacityBytes int
 	DrainTimeout  time.Duration
 	beforeAppend  func(*event.Event) error
@@ -98,6 +103,22 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	defer transport.CloseIdleConnections()
 	httpState := &modelTransport{base: transport}
+	if e.BeforeModel != nil {
+		httpState.gate = &dispatchGate{owner: e.BeforeModel, request: req, maximum: maxTokens}
+	}
+	// Registered before runner cleanup so this runs after Close. A failed result
+	// carries accounting only, never a publishable final or candidate snapshot.
+	defer func() {
+		if err != nil {
+			result = Result{}
+		}
+		// A drain timeout can leave SDK work in flight. A cancelled grant cannot
+		// authorize persistence; leave its maximum held instead of taking a snapshot
+		// of potentially changing evidence.
+		if ctx.Err() == nil && !errors.Is(err, ErrDrain) {
+			result.Usage, result.UsageKnown = httpState.usage.result()
+		}
+	}()
 	max := int(maxTokens)
 	clientOptions := []openaioption.RequestOption{openaioption.WithMaxRetries(0), openaioption.WithAPIKey(req.Model.APIKey), openaioption.WithOrganization(""), openaioption.WithProject(""), openaioption.WithHTTPClient(&http.Client{Transport: httpState})}
 	if req.Model.APIKey == "" {
@@ -160,7 +181,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			}
 			if evt.Error != nil {
 				observed = ErrModel
-				if httpState.retryable() {
+				if httpState.admissionDenied.Load() {
+					observed = ErrModelAdmission
+				} else if httpState.retryable() {
 					observed = ErrRetryableModel
 				}
 				cancel()
@@ -174,9 +197,6 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 				if !evt.IsPartial && choice.Message.Role == model.RoleAssistant && len(choice.Message.ContentParts) == 0 && choice.Message.Content != "" {
 					result.FinalText = choice.Message.Content
 				}
-			}
-			if !evt.IsPartial && evt.Usage != nil {
-				result.Usage = Usage{InputTokens: evt.Usage.PromptTokens, OutputTokens: evt.Usage.CompletionTokens, TotalTokens: evt.Usage.TotalTokens}
 			}
 			if observed != nil {
 				if !drain(events, e.DrainTimeout) {
@@ -205,18 +225,34 @@ func drain(events <-chan *event.Event, timeout time.Duration) bool {
 // Keep transport status separate from provider error text. Retry classification
 // never parses, returns or logs an arbitrary model response body.
 type modelTransport struct {
-	base           *http.Transport
-	code           atomic.Int32
-	networkFailure atomic.Bool
+	gate            *dispatchGate
+	admissionDenied atomic.Bool
+	usage           usageCapture
+	base            *http.Transport
+	code            atomic.Int32
+	networkFailure  atomic.Bool
 }
 
 func (t *modelTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.gate != nil {
+		if err := t.gate.check(r); err != nil {
+			t.admissionDenied.Store(true)
+			return nil, err
+		}
+	}
+	t.usage.start()
 	response, err := t.base.RoundTrip(r)
 	if err != nil {
 		t.networkFailure.Store(true)
 	}
 	if response != nil {
 		t.code.Store(int32(response.StatusCode))
+		media, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		if response.StatusCode == http.StatusOK && parseErr == nil && media == "text/event-stream" && response.Body != nil {
+			response.Body = &usageBody{ReadCloser: response.Body, capture: &t.usage}
+		} else {
+			t.usage.reject()
+		}
 	}
 	return response, err
 }

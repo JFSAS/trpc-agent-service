@@ -23,6 +23,7 @@ type Ledger interface {
 	Renew(context.Context, domain.Grant) (domain.Grant, error)
 	Check(context.Context, domain.Grant) error
 	MarkExecuting(context.Context, domain.Grant) error
+	RecordModelUsage(context.Context, domain.Grant, domain.RuntimeResult) error
 	Complete(context.Context, domain.Finish) (domain.Completion, error)
 	FailAttempt(context.Context, domain.Grant, string, bool) error
 	FindCompletion(context.Context, string, string) (domain.Completion, error)

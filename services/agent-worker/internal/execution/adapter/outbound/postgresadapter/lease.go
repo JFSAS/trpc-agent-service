@@ -196,6 +196,9 @@ func (l *Ledger) Renew(ctx context.Context, g domain.Grant) (domain.Grant, error
 	}
 	return g, nil
 }
+
+// MarkExecuting consumes a one-time physical-dispatch permit. A repeated call,
+// including after an uncertain commit, is fenced rather than replayed as success.
 func (l *Ledger) MarkExecuting(ctx context.Context, g domain.Grant) error {
 	tx, err := l.pool.Begin(ctx)
 	if err != nil {
@@ -206,8 +209,12 @@ func (l *Ledger) MarkExecuting(ctx context.Context, g domain.Grant) error {
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE execution_attempts SET status='EXECUTING',agent_started_at=COALESCE(agent_started_at,$3) WHERE tenant_id=$1 AND attempt_id=$2`, r.Request.Route.TenantID, g.AttemptID, now); err != nil {
+	tag, err := tx.Exec(ctx, `UPDATE execution_attempts SET status='EXECUTING',agent_started_at=$3 WHERE tenant_id=$1 AND attempt_id=$2 AND status='PREPARING' AND agent_started_at IS NULL`, r.Request.Route.TenantID, g.AttemptID, now)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrFenced
 	}
 	return tx.Commit(ctx)
 }

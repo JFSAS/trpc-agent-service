@@ -37,6 +37,8 @@ type readyLedger interface {
 	Ready(context.Context, int) ([]domain.Run, error)
 }
 type App struct {
+	quota                                                                            quotaReconciler
+	consumption                                                                      quotaReconciler
 	authorization                                                                    *authorizationRuntime
 	config                                                                           Config
 	pool                                                                             *pgxpool.Pool
@@ -100,6 +102,9 @@ func New(ctx context.Context, c Config) (*App, error) {
 		return nil, err
 	}
 	a.ledger = ledgerpg.New(a.pool)
+	if err = a.configureQuotaReconciliation(); err != nil {
+		return nil, err
+	}
 	a.projection = observedProjection{Projection: projectionpg.New(a.pool), observer: a.observation}
 	reader := manifestadapter.Reader{Projection: a.projection, ContractDigest: c.PlatformContractDigest}
 	factory, err := runtimeadapter.New(runtimeadapter.Options{BaseURL: c.ControlURL, Client: client, RequestTimeout: c.Timing.RequestTimeout.Value(), MaxResponseBytes: c.Limits.MaxCredentialResponseBytes, SnapshotCapacityBytes: c.Limits.MaxSnapshotBytes, DrainTimeout: c.Timing.SDKDrainTimeout.Value(), MaxTrackedAttempts: c.Limits.MaxTrackedAttempts, Observer: a.observation})
@@ -306,6 +311,8 @@ func (a *App) Run(ctx context.Context) error {
 			}
 		})
 	}
+	a.launch(func() { a.reconcileQuota(workCtx) })
+	a.launch(func() { a.reconcileConsumption(workCtx) })
 	a.launch(func() { a.observeStorage(workCtx) })
 	a.launch(func() { a.schedule(workCtx, activeCtx, a.ledger) })
 	relayDone := make(chan struct{})

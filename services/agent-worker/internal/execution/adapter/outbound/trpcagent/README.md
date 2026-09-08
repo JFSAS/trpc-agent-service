@@ -144,3 +144,28 @@ staging to exactly the successful SDK result. Stage writes a deterministic
 candidate under a current Grant; an uncertain write is reconciled by reading that
 same candidate key/digest, never by resolving credentials again. Completion stays
 in Execution, outside both the SDK and the external store.
+
+## Exact outbound model request gate
+
+An optional attempt-local `Executor.BeforeModel` owner gate receives the final SDK
+HTTP JSON bytes (including history/instructions), SHA-256, tenant/Run/Attempt,
+endpoint/model and effective output maximum before sending. It receives no HTTP
+credential headers. Body data is sensitive, detached, temporary and cleared after
+the callback; it must not be logged or retained. Mutating its bytes is rejected.
+
+The gate checks the actual model and output-limit fields, bounds request inspection
+at 8 MiB (a byte/resource limit, not a token estimate), and permits only one outgoing
+request. Denial, callback error, cancellation, oversized input and redirect/retry
+reuse do not reach the model transport. Callback errors are replaced by a stable
+admission error without raw policy/provider details. Existing nil-gate legacy
+execution is unchanged.
+
+This is the exact-dispatch seam needed for budget proof, not an implemented token
+counter or hard-cost guarantee. No production caller installs an allowing default.
+The governed Processor path now keeps the Attempt PREPARING during admission,
+then marks EXECUTING only after the exact-call reservation owner returns success.
+Missing admission or guarded runtime is not-ready; direct legacy Execute refuses
+authorization-bearing Runs. Legacy ungoverned requests retain their prior order.
+The new constructor requires an explicit ModelAdmission; bootstrap does not install
+a default or claim that the real bound/policy/reservation implementation exists.
+Input-token proof and complete admission/dispatch wiring remain pending.

@@ -25,10 +25,15 @@ func (r workerAuthorizationReader) ReadAuthorization(ctx context.Context, target
 	}
 	return r.read, nil
 }
-func workerAuthorizationFixture(t *testing.T, req domain.Requested, generation int64, state string) workerAuthorizationReader {
+func workerAuthorizationFixture(t *testing.T, req domain.Requested, generation int64, state string, modelCaps ...int64) workerAuthorizationReader {
 	t.Helper()
 	a := req.Authorization
 	session, quota := authorizationDefinition(t, req.Route.TenantID, "session"), authorizationDefinition(t, req.Route.TenantID, "quota")
+	if len(modelCaps) > 0 {
+		value := modelCaps[0]
+		quota.Definition.Quota.MaxTotalModelTokens = &value
+		signAuthorizationDefinition(t, &quota)
+	}
 	sr := wire.PolicyReference{ID: session.PolicyID, Revision: 1, Digest: session.Digest}
 	qr := wire.PolicyReference{ID: quota.PolicyID, Revision: 1, Digest: quota.Digest}
 	policy := wire.AccessPolicyDocument{SchemaVersion: 1, TenantID: req.Route.TenantID, AccountID: req.Route.AccountID, Provider: req.Route.Provider, PolicyID: a.PolicyID, Revision: a.PolicyRevision, PublishedBy: "owner", PublishedAt: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), Body: wire.AccessPolicyBody{AccessMode: "ALLOWLIST", AllowedPrincipalIDs: []string{a.PrincipalID}, AllowedConversationIDs: []string{}, AllowedOperations: []string{"message.send"}, SessionPolicy: sr, TenantQuota: qr, AuthorizationMaxAgeMS: 30000}}
