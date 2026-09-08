@@ -82,3 +82,20 @@ SDK兼容事实：
 `TraceMemoryService` 为最终 Attempt 服务增加 `memory.read/search/write/delete` span。SDK工具从 invocation 使用外层服务，span沿调用上下文串联，不记录Memory正文、query、身份键或原始依赖错误；写span当前仅证明暂存操作，不代表正式数据库提交。
 
 当前生产 executor 仍拒绝工具调用事件，runtime factory 仍未创建上述 MemoryAttempt。下一步必须连同工具事件验证、多轮usage、Manifest映射、candidate持久协议一起接通，而非先放开门禁造成静默丢失Memory候选。真实六工具/SDK Runner/候选测试是适配层验收，不是正式PG/Redis或IM验收。
+
+## P0b2 聚合字段与 Worker 门禁（2026-09-09）
+
+已集成共享 Manifest 的 `content.runtime.summary` 与 LLM 节点
+`memory`、`artifact`、`add_session_summary` wire 字段、组件 Schema 和
+Control domain clone/presence 校验。省略字段保留旧编码；严格解码拒绝
+显式 null、false 和空启用组件，`add_session_summary` 仅允许 true。
+
+这仍是契约接线，不是完整编译或运行支持。Worker `ValidateWorkerV1`
+同批按字段存在性拒绝 `Runtime` 及任一节点的三个新增字段；直接 Go 调用
+即使传入空组件或 `*bool(false)` 也被拒绝。执行器保持旧单 LLM 行为。
+新 Manifest 在实际 Reader 中先完成 schema、digest 与来源校验，再返回
+unsupported；非法 wire 返回 invalid，不生成可执行 Plan。
+
+后续仍需后端资源描述、编译闭包、Summary 模型依赖、Memory 工具重名校验，
+以及 Worker 对应适配/候选持久化/真实后端回归全部就绪后，再逐能力替换
+拒绝门禁。不得以新增 DTO 或目录可选择作为开放生产能力的依据。

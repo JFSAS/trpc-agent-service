@@ -31,6 +31,16 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion || (expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest) {
 		return reject("contract identity")
 	}
+	// Wire support is not execution support. Reject presence rather than truth:
+	// direct Go callers may construct empty components or an explicit false.
+	if c.Runtime != nil {
+		return reject("runtime data capabilities are not executable yet")
+	}
+	for _, node := range c.AgentPlan.Nodes {
+		if node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
+			return reject("node data capabilities are not executable yet")
+		}
+	}
 	if c.Execution.Backend != "worker-process-v1" || c.Execution.MaxRunSeconds <= 0 || c.Execution.MaxOutputTokens <= 0 {
 		return reject("execution policy")
 	}
