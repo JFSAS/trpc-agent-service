@@ -8,7 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Ledger commits the entire acceptance, including Outbox, atomically. Commit
@@ -23,10 +26,12 @@ type RouteResolver interface {
 
 // Options contains initial operating limits, not a throughput guarantee.
 type Options struct {
+	Tracer        trace.Tracer
 	MaxConcurrent int
 	Timeout       time.Duration
 }
 type Service struct {
+	tracer   trace.Tracer
 	ledger   Ledger
 	routes   RouteResolver
 	slots    chan struct{}
@@ -35,8 +40,15 @@ type Service struct {
 	timeout  time.Duration
 }
 
-func New(ledger Ledger, routes RouteResolver) *Service {
-	service, err := NewWithOptions(ledger, routes, Options{MaxConcurrent: 128})
+func New(ledger Ledger, routes RouteResolver, tracers ...trace.Tracer) *Service {
+	var tracer trace.Tracer
+	if len(tracers) > 1 {
+		panic("one admission tracer required")
+	}
+	if len(tracers) == 1 {
+		tracer = tracers[0]
+	}
+	service, err := NewWithOptions(ledger, routes, Options{MaxConcurrent: 128, Tracer: tracer})
 	if err != nil {
 		panic(err)
 	}
@@ -52,14 +64,21 @@ func NewWithOptions(ledger Ledger, routes RouteResolver, options Options) (*Serv
 	if options.Timeout < 0 {
 		return nil, errors.New("invalid admission timeout")
 	}
-	return &Service{ledger: ledger, routes: routes, slots: make(chan struct{}, options.MaxConcurrent), lookups: make(chan struct{}, options.MaxConcurrent), timeout: options.Timeout}, nil
+	return &Service{tracer: options.Tracer, ledger: ledger, routes: routes, slots: make(chan struct{}, options.MaxConcurrent), lookups: make(chan struct{}, options.MaxConcurrent), timeout: options.Timeout}, nil
 }
 
 // Stop rejects new acceptance work but permits durable receipt replay. Work
 // already inside Commit is in-flight and drained by the workload HTTP shutdown.
 // No process mutex is held across a database call.
 func (s *Service) Stop() { s.stopping.Store(true) }
-func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (domain.Receipt, error) {
+func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt domain.Receipt, err error) {
+	ctx, span := telemetrytrace.Start(s.tracer, ctx, "gateway.run.admit")
+	defer func() {
+		if receipt.RunID != "" {
+			span.SetAttributes(attribute.String("app.run.id", receipt.RunID))
+		}
+		telemetrytrace.End(span, err)
+	}()
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	if err := in.Validate(); err != nil {

@@ -18,6 +18,31 @@ class ModelFixtureTests(unittest.TestCase):
                                headers={'Content-Type': 'application/json',
                                         'Authorization': 'Bearer ' + key}), timeout=5)
 
+    def test_transient_failure_is_authenticated_one_shot(self):
+        self.fixture.fail_once('retry')
+        with self.assertRaises(urllib.error.HTTPError) as wrong_key:
+            self.request('retry', 'wrong')
+        self.assertEqual(wrong_key.exception.code, 403)
+        wrong_key.exception.close()
+        self.assertEqual(self.fixture.failure_snapshot(), [])
+        with self.assertRaises(urllib.error.HTTPError) as failed:
+            self.request('retry', self.fixture.key)
+        self.assertEqual(failed.exception.code, 503)
+        self.assertIn('error', json.load(failed.exception))
+        failed.exception.close()
+        with self.request('retry', self.fixture.key) as response:
+            self.assertIn('[DONE]', response.read().decode())
+        self.assertEqual(len(self.fixture.requests), 2)
+        self.assertEqual(len(self.fixture.failure_snapshot()), 1)
+
+    def test_failure_rejects_nontransient_and_conflicting_faults(self):
+        for code in (400, True, 429):
+            with self.assertRaises(ValueError):
+                self.fixture.fail_once('retry', code)
+        self.fixture.hold('held')
+        with self.assertRaises(ValueError):
+            self.fixture.fail_once('held')
+
     def test_partial_is_flushed_without_done_and_only_first_call_is_poisoned(self):
         self.fixture.hold_partial('streaming', 'unaccepted-partial')
         with self.request('streaming', self.fixture.key) as response:

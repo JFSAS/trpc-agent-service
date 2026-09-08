@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
 	"io"
 	"net"
 	"net/url"
@@ -14,7 +13,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application"
+	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
 	connectiondomain "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain"
 	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
 )
@@ -25,6 +26,7 @@ type Account struct {
 	Secret    string `json:"-"`
 }
 type Config struct {
+	Tracing                                                               *telemetrytrace.Config
 	TelegramPreflightEnabled                                              bool
 	telegramFactory                                                       telegramruntime.RemoteFactory
 	AccountSource                                                         string
@@ -55,6 +57,10 @@ func LoadConfig() (Config, error) {
 	c.TelegramAPIURL = os.Getenv("GATEWAY_TELEGRAM_API_URL")
 	c.InstanceID = os.Getenv("GATEWAY_INSTANCE_ID")
 	var err error
+	c.Tracing, err = loadTracingConfig(os.Getenv("GATEWAY_TRACING_CONFIG_FILE"))
+	if err != nil {
+		return Config{}, err
+	}
 	c.WeComAccounts, err = (accountFileSource{path: c.WeComAccountsFile}).List(context.Background())
 	if err != nil {
 		return Config{}, err
@@ -102,6 +108,14 @@ func LoadConfig() (Config, error) {
 	return c, nil
 }
 func (c Config) Validate() error {
+	if c.Tracing != nil {
+		if err := c.Tracing.Validate(); err != nil {
+			return err
+		}
+		if c.InstanceID == "" {
+			return errors.New("Gateway tracing requires an instance identity")
+		}
+	}
 	if err := validateTelegramAPIURL(c.TelegramAPIURL); err != nil {
 		return err
 	}

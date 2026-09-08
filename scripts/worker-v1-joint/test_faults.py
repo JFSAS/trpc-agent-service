@@ -40,6 +40,14 @@ class ProofSwitchTest(unittest.TestCase):
                     while len(result) < len(payload):
                         result += client.recv(len(payload) - len(result))
                     self.assertEqual(result, payload)
+            with socket.create_connection(('127.0.0.1', relay.port), timeout=2) as client:
+                client.sendall(b'before')
+                self.assertEqual(client.recv(6), b'before')
+                self.assertGreaterEqual(relay.disconnect(), 2)
+                self.assertEqual(client.recv(1), b'')
+            with socket.create_connection(('127.0.0.1', relay.port), timeout=2) as client:
+                client.sendall(b'after')
+                self.assertEqual(client.recv(5), b'after')
             relay.remove('survivor')
             with socket.create_connection(('127.0.0.1', relay.port), timeout=2) as client:
                 self.assertEqual(client.recv(1), b'')

@@ -3,6 +3,7 @@ package natsadapter
 import (
 	"context"
 	"errors"
+	app "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"os"
 	"strings"
 	"testing"
@@ -10,10 +11,12 @@ import (
 
 	execution "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	manifest "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/domain"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 type testMessage struct {
+	headers nats.Header
 	jetstream.Msg
 	raw        []byte
 	subject    string
@@ -22,6 +25,8 @@ type testMessage struct {
 	ackErr     error
 	onAck      func()
 }
+
+func (m *testMessage) Headers() nats.Header { return m.headers }
 
 func (m *testMessage) Data() []byte                              { return m.raw }
 func (m *testMessage) Subject() string                           { return m.subject }
@@ -52,12 +57,14 @@ type testConsumer struct {
 func (c testConsumer) Next(...jetstream.FetchOpt) (jetstream.Msg, error) { return c.msg, c.err }
 
 type intake struct {
+	ctx   context.Context
 	calls int
 	err   error
 	last  execution.Requested
 }
 
-func (i *intake) Accept(_ context.Context, r execution.Requested) (execution.Receipt, error) {
+func (i *intake) Accept(ctx context.Context, r execution.Requested) (execution.Receipt, error) {
+	i.ctx = ctx
 	i.calls++
 	i.last = r
 	return execution.Receipt{EventID: r.EventID, RunID: r.RunID, TenantID: r.Route.TenantID}, i.err
@@ -215,9 +222,9 @@ type publisher struct {
 	onPublish func()
 }
 
-func (p *publisher) Publish(_ context.Context, subject string, body []byte, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+func (p *publisher) PublishMsg(_ context.Context, msg *nats.Msg, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
 	p.calls++
-	p.payloads = append(p.payloads, append([]byte(nil), body...))
+	p.payloads = append(p.payloads, append([]byte(nil), msg.Data...))
 	if p.onPublish != nil {
 		p.onPublish()
 	}
@@ -261,4 +268,13 @@ func TestSourceValidationRejectsInPlaceStreamAndDurableDrift(t *testing.T) {
 			}
 		}
 	}
+}
+
+func (o *outbox) PendingTracedReplies(ctx context.Context, limit int) ([]app.TracedReply, error) {
+	rows, err := o.PendingReplies(ctx, limit)
+	out := make([]app.TracedReply, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, app.TracedReply{OutboxItem: row})
+	}
+	return out, err
 }

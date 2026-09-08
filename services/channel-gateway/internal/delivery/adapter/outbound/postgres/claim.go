@@ -2,11 +2,20 @@ package postgresadapter
 
 import (
 	"context"
+	app "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/application"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
 	"time"
 )
 
 func (s *Store) ClaimDue(ctx context.Context, r domain.ClaimRequest) ([]domain.Claim, error) {
+	rows, err := s.ClaimTraced(ctx, r)
+	out := make([]domain.Claim, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Claim)
+	}
+	return out, err
+}
+func (s *Store) ClaimTraced(ctx context.Context, r domain.ClaimRequest) ([]app.TracedClaim, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
@@ -49,7 +58,7 @@ func (s *Store) ClaimDue(ctx context.Context, r domain.ClaimRequest) ([]domain.C
 	if err != nil {
 		return nil, databaseError(ctx, err)
 	}
-	out := make([]domain.Claim, 0, len(ids))
+	out := make([]app.TracedClaim, 0, len(ids))
 	if len(ids) > 0 {
 		if err = s.verifyOwner(ctx, tx, domain.Claim{Target: domain.Target{Provider: r.Provider, AccountID: r.AccountID}, InstanceID: r.InstanceID, Owner: r.Owner}); err != nil {
 			return nil, err
@@ -94,7 +103,7 @@ func (s *Store) ClaimDue(ctx context.Context, r domain.ClaimRequest) ([]domain.C
 		p.claim.InstanceID = r.InstanceID
 		p.claim.ExpiresAt = until
 		p.claim.Owner = r.Owner
-		out = append(out, p.claim)
+		out = append(out, app.TracedClaim{Claim: p.claim, Carrier: p.carrier})
 	}
 	if s.accountGuard != nil {
 		if err = s.accountGuard.RecheckAccount(ctx, tx); err != nil {

@@ -15,15 +15,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var ErrAlreadyPrepared = errors.New("attempt credential initialization already started")
 
 type Options struct {
+	Tracer  trace.Tracer
 	BaseURL string
 	// Client is a borrowed mTLS client configured by bootstrap with trust roots
 	// and the Workload certificate. The factory never closes the shared transport.
@@ -67,7 +71,9 @@ func New(o Options) (*Factory, error) {
 	return f, nil
 }
 
-func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, check func(context.Context) error) (application.AttemptRuntime, error) {
+func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, check func(context.Context) error) (prepared application.AttemptRuntime, resultErr error) {
+	ctx, span := telemetrytrace.Start(f.options.Tracer, ctx, "worker.runtime.prepare", trace.WithAttributes(attribute.String("app.run.id", g.Run.Request.RunID), attribute.String("app.attempt.id", g.AttemptID), attribute.String("app.session.id", g.Run.SessionID)))
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
 	}
@@ -82,7 +88,9 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 		return nil, err
 	}
 	resolveStart := time.Now()
-	batch, err := f.resolve(ctx, g, p, uses)
+	resolveCtx, resolveSpan := telemetrytrace.Start(f.options.Tracer, ctx, "worker.credential.resolve")
+	batch, err := f.resolve(resolveCtx, g, p, uses)
+	telemetrytrace.End(resolveSpan, err)
 	f.observe(ctx, "credential_resolve", g, resolveStart, err)
 	if err != nil {
 		return nil, err
@@ -99,6 +107,8 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	}
 	t := p.SessionTarget
 	storeStart := time.Now()
+	ctx, openSpan := telemetrytrace.Start(f.options.Tracer, ctx, "worker.session.open")
+	defer func() { telemetrytrace.End(openSpan, resultErr) }()
 	target := sessionstore.Target{Host: t.Host, Port: t.Port, Database: t.Database, Username: t.Username, SSLMode: t.SSLMode}
 	// Control stores only the DSN password. The published destination, never the
 	// credential value, determines the Session connection target.
@@ -116,7 +126,7 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 		return nil, mapped
 	}
 	f.observe(ctx, "session_open", g, storeStart, nil)
-	return &attempt{grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
+	return &attempt{tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {

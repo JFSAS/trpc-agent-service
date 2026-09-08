@@ -10,6 +10,7 @@ import (
 	event "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/inbound/eventadapter"
 	app "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/application"
 	d "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
@@ -24,11 +25,12 @@ func (s inspector) Info(context.Context, ...jetstream.StreamInfoOpt) (*jetstream
 
 type message struct {
 	jetstream.Msg
-	data   []byte
-	meta   *jetstream.MsgMetadata
-	acks   int
-	onAck  func()
-	ackErr error
+	headers nats.Header
+	data    []byte
+	meta    *jetstream.MsgMetadata
+	acks    int
+	onAck   func()
+	ackErr  error
 }
 
 func (m *message) Data() []byte                              { return m.data }
@@ -285,3 +287,5 @@ func TestRunDelaysNAKWithoutACKOnTransientProof(t *testing.T) {
 		t.Fatal(msg.naks, msg.delay, m.acks)
 	}
 }
+
+func (m *message) Headers() nats.Header { return m.headers }

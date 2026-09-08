@@ -169,3 +169,14 @@ consumer. These local acceptance records do not prove real Execution or external
 IM integration, and this documentation-only update does not rerun those tests. See the
 [Gateway service status](../../../../services/channel-gateway/README.md) and
 [implementation record](../../../../docs/architecture-next/channel-gateway/implementation-status.md).
+
+## Tracing 传输元数据（M2 增量）
+
+`execution.run-requested.v1` 的 W3C `traceparent`/`tracestate` 位于 NATS Header，
+不进入本目录 JSON Schema、DTO、Event/Run digest 或 `Nats-Msg-Id`。Gateway Outbox
+保存不可变 creation context；每次实际发布的 Span 不替换消息 Header 中的 creation。
+Worker 在原接纳事务保存 process context；ACK、重投和首次接纳语义不变。
+
+仅两个 W3C 字段，各最多 512 字节，tracestate 最多 32 项；非法元数据归一化为空，
+不以元数据格式错误拒绝业务事件。没有 Baggage 或原始错误/用户正文。有效未采样 context
+仍传播，数据库首次值（包括 NULL）不被重放替换。ReplyIntent 的同类接线由 M4 实施。

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"go.opentelemetry.io/otel/trace"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/session"
 )
@@ -28,11 +30,13 @@ type snapshot struct {
 // overlay owns exactly one attempt-local session. No pointer is shared between
 // attempts and no SDK write has authority to accept formal history.
 type overlay struct {
-	mu       sync.Mutex
-	key      session.Key
-	stored   *session.Session
-	capacity int
-	sticky   error
+	tracer                 trace.Tracer
+	appends, snapshotBytes int64
+	mu                     sync.Mutex
+	key                    session.Key
+	stored                 *session.Session
+	capacity               int
+	sticky                 error
 	// Test seam exercises SDK's swallowed-persistence-error behavior.
 	beforeAppend func(*event.Event) error
 }
@@ -93,6 +97,7 @@ func (s *overlay) encoded() ([]byte, error) {
 	if err != nil {
 		return nil, s.fail(ErrSnapshot)
 	}
+	s.snapshotBytes = int64(len(body))
 	if len(body) > s.capacity {
 		return nil, s.fail(ErrCapacity)
 	}
@@ -106,8 +111,16 @@ func (s *overlay) Snapshot() ([]byte, error) {
 	}
 	return s.encoded()
 }
+func (s *overlay) stats() (int64, int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appends, s.snapshotBytes
+}
+
 func (s *overlay) Err() error { s.mu.Lock(); defer s.mu.Unlock(); return s.sticky }
-func (s *overlay) CreateSession(ctx context.Context, key session.Key, state session.StateMap, _ ...session.Option) (*session.Session, error) {
+func (s *overlay) CreateSession(ctx context.Context, key session.Key, state session.StateMap, _ ...session.Option) (created *session.Session, resultErr error) {
+	ctx, span := telemetrytrace.Start(s.tracer, ctx, "session.overlay.create")
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(ctx, key); err != nil {
@@ -116,7 +129,9 @@ func (s *overlay) CreateSession(ctx context.Context, key session.Key, state sess
 	// The attempt is initialized before Runner.Run; replacing it could lose history.
 	return nil, s.fail(errors.New("attempt session already exists"))
 }
-func (s *overlay) GetSession(ctx context.Context, key session.Key, _ ...session.Option) (*session.Session, error) {
+func (s *overlay) GetSession(ctx context.Context, key session.Key, _ ...session.Option) (loaded *session.Session, resultErr error) {
+	ctx, span := telemetrytrace.Start(s.tracer, ctx, "session.overlay.get")
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(ctx, key); err != nil {
@@ -166,7 +181,12 @@ func (s *overlay) UpdateSessionState(ctx context.Context, key session.Key, state
 	_, err := s.encoded()
 	return err
 }
-func (s *overlay) AppendEvent(ctx context.Context, sess *session.Session, evt *event.Event, _ ...session.Option) error {
+func (s *overlay) AppendEvent(ctx context.Context, sess *session.Session, evt *event.Event, _ ...session.Option) (resultErr error) {
+	if evt == nil || evt.Response == nil || !evt.IsPartial {
+		var span trace.Span
+		ctx, span = telemetrytrace.Start(s.tracer, ctx, "session.overlay.append")
+		defer func() { telemetrytrace.End(span, resultErr) }()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(ctx, keyFromSession(sess)); err != nil {
@@ -190,6 +210,7 @@ func (s *overlay) AppendEvent(ctx context.Context, sess *session.Session, evt *e
 		sess.UpdateUserSession(evt)
 	}
 	s.stored.UpdateUserSession(evt)
+	s.appends++
 	_, err := s.encoded()
 	return err
 }

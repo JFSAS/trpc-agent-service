@@ -3,19 +3,25 @@ package manifestadapter
 import (
 	"context"
 	"errors"
+
 	protocol "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	projection "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/application"
 	manifest "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/domain"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Reader struct {
+	Tracer         trace.Tracer
 	Projection     projection.Projection
 	ContractDigest string
 }
 
-func (r Reader) Resolve(ctx context.Context, route domain.Route) (domain.Plan, error) {
+func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domain.Plan, resultErr error) {
+	ctx, span := telemetrytrace.Start(r.Tracer, ctx, "worker.manifest.resolve")
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	if r.Projection == nil || !domain.DigestValid(r.ContractDigest) {
 		return domain.Plan{}, application.ErrManifestInvalid
 	}

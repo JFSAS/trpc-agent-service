@@ -8,10 +8,22 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func (l *Ledger) Claim(ctx context.Context, req domain.ClaimRequest) (domain.Grant, error) {
+func (l *Ledger) Claim(ctx context.Context, req domain.ClaimRequest) (grant domain.Grant, resultErr error) {
+	parent := trace.SpanFromContext(ctx)
+	ctx, span := telemetrytrace.Start(l.Tracer, ctx, "worker.run.claim")
+	defer func() {
+		if resultErr == nil {
+			span.SetAttributes(attribute.String("app.attempt.id", grant.AttemptID))
+			parent.SetAttributes(attribute.String("app.attempt.id", grant.AttemptID))
+		}
+		telemetrytrace.End(span, resultErr)
+	}()
 	if req.TenantID == "" || req.RunID == "" || req.WorkerID == "" || req.MaxRunSeconds <= 0 || req.MaxRunSeconds > int64((1<<63-1)/time.Second) || req.MaxActive < 1 {
 		return domain.Grant{}, domain.ErrInvalid
 	}

@@ -6,6 +6,10 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"time"
 
 	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
@@ -31,6 +35,7 @@ type ReceiptStore interface {
 	RecordTransportReceipt(context.Context, d.TransportReceipt) error
 }
 type Consumer struct {
+	Tracer   trace.Tracer
 	consumer MessageConsumer
 	stream   StreamInspector
 	handler  Handler
@@ -41,7 +46,7 @@ func New(consumer MessageConsumer, stream StreamInspector, handler Handler, rece
 	if consumer == nil || stream == nil || handler == nil || receipts == nil {
 		return nil, d.ErrInvalid
 	}
-	return &Consumer{consumer, stream, handler, receipts}, nil
+	return &Consumer{consumer: consumer, stream: stream, handler: handler, receipts: receipts}, nil
 }
 func (c *Consumer) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
@@ -67,7 +72,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 // process ACKs only after a durable terminal receipt. It verifies broker metadata
 // and stream incarnation on every message, including replay and malformed JSON.
-func (c *Consumer) process(ctx context.Context, msg jetstream.Msg) error {
+func (c *Consumer) process(ctx context.Context, msg jetstream.Msg) (resultErr error) {
 	metadata, err := msg.Metadata()
 	if err != nil || metadata == nil {
 		return d.ErrUnavailable
@@ -79,10 +84,19 @@ func (c *Consumer) process(ctx context.Context, msg jetstream.Msg) error {
 	if info == nil || info.Config.Name != StreamName || len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != wire.ReplyIntentSubject || info.Created.IsZero() || metadata.Timestamp.Before(info.Created) || metadata.Stream != StreamName || metadata.Consumer != DurableName || msg.Subject() != wire.ReplyIntentSubject || metadata.Sequence.Stream == 0 || metadata.Sequence.Stream > info.State.LastSeq {
 		return d.ErrUnavailable
 	}
+	carrier := tracecontext.FromHeaders(msg.Headers())
+	parent := trace.SpanContextFromContext(carrier.Restore(context.Background()))
+	opts := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindConsumer)}
+	if parent.IsValid() {
+		opts = append(opts, trace.WithLinks(trace.Link{SpanContext: parent}))
+	}
+	ctx, span := telemetrytrace.Resume(c.Tracer, ctx, carrier, "process execution.reply-intent.v1", opts...)
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	p := d.TransportPosition{StreamName: StreamName, StreamID: info.Created.UTC().Format(time.RFC3339Nano), Sequence: metadata.Sequence.Stream, RawDigest: fmt.Sprintf("sha256:%x", sha256.Sum256(msg.Data()))}
-	if _, found, err := c.receipts.FindTransportReceipt(ctx, p); err != nil {
+	if receipt, found, err := c.receipts.FindTransportReceipt(ctx, p); err != nil {
 		return err
 	} else if found {
+		recordReceiptSpan(span, receipt)
 		return msg.DoubleAck(ctx)
 	}
 	result, err := c.handler.Handle(ctx, msg.Data())
@@ -98,7 +112,15 @@ func (c *Consumer) process(ctx context.Context, msg jetstream.Msg) error {
 	if err = c.receipts.RecordTransportReceipt(ctx, r); err != nil {
 		return err
 	}
+	recordReceiptSpan(span, r)
 	return msg.DoubleAck(ctx)
+}
+func recordReceiptSpan(span trace.Span, receipt d.TransportReceipt) {
+	outcome := "failed"
+	if receipt.Outcome == "ACCEPTED" {
+		outcome = "ACCEPTED"
+	}
+	span.SetAttributes(attribute.String("app.run.id", receipt.RunID), attribute.String("app.intent.id", receipt.IntentID), attribute.String("app.outcome", outcome))
 }
 func permanentReason(err error) string {
 	switch {

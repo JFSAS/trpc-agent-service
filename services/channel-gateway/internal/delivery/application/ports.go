@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
 )
 
@@ -50,4 +51,13 @@ type SenderProvider interface {
 type ReservedSender interface {
 	SendFinal(context.Context, domain.Attempt) domain.Result
 	Release()
+}
+
+// TracedClaim carries durable technical context separately from send authority.
+type TracedClaim struct {
+	domain.Claim
+	Carrier tracecontext.Carrier
+}
+type TracedClaimer interface {
+	ClaimTraced(context.Context, domain.ClaimRequest) ([]TracedClaim, error)
 }

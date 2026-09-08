@@ -5,13 +5,17 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type attempt struct {
+	tracer       trace.Tracer
 	grant        domain.Grant
 	plan         domain.Plan
 	store        candidateStore
@@ -27,7 +31,14 @@ type attempt struct {
 	resultDigest string
 }
 
-func (a *attempt) Load(ctx context.Context, head domain.Head) ([]byte, error) {
+func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, resultErr error) {
+	ctx, span := telemetrytrace.Start(a.tracer, ctx, "worker.session.load")
+	defer func() {
+		if resultErr == nil {
+			span.SetAttributes(attribute.Int("app.storage.bytes", len(history)))
+		}
+		telemetrytrace.End(span, resultErr)
+	}()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed || head != a.grant.Parent {
@@ -77,7 +88,14 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	a.resultDigest = domain.Digest(result.Snapshot)
 	return domain.RuntimeResult{FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
 }
-func (a *attempt) Stage(ctx context.Context, snapshot []byte) (domain.Candidate, error) {
+func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Candidate, resultErr error) {
+	ctx, span := telemetrytrace.Start(a.tracer, ctx, "worker.session.stage", trace.WithAttributes(attribute.Int("app.storage.bytes", len(snapshot))))
+	defer func() {
+		if resultErr == nil {
+			span.SetAttributes(attribute.String("app.outcome", "candidate"))
+		}
+		telemetrytrace.End(span, resultErr)
+	}()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed || !a.executed || a.resultDigest == "" || domain.Digest(snapshot) != a.resultDigest {
@@ -93,6 +111,7 @@ func (a *attempt) Stage(ctx context.Context, snapshot []byte) (domain.Candidate,
 		if errors.Is(err, sessionstore.ErrConflict) || errors.Is(err, sessionstore.ErrCapacity) || errors.Is(err, sessionstore.ErrCorrupt) {
 			return domain.Candidate{}, sessionError(ctx, err)
 		}
+		span.SetAttributes(attribute.String("app.outcome", "UNKNOWN"))
 		// An insert may commit before its response is lost. Read only the exact
 		// deterministic key/digest under the same still-current authorization batch.
 		if e := a.check(ctx); e != nil {
@@ -102,7 +121,10 @@ func (a *attempt) Stage(ctx context.Context, snapshot []byte) (domain.Candidate,
 		if e != nil {
 			return domain.Candidate{}, application.ErrSessionInvalid
 		}
-		if _, e = a.store.Load(ctx, a.plan.TenantID, g.Run.SessionID, expected); e != nil {
+		verifyCtx, verifySpan := telemetrytrace.Start(a.tracer, ctx, "worker.session.verify")
+		_, e = a.store.Load(verifyCtx, a.plan.TenantID, g.Run.SessionID, expected)
+		telemetrytrace.End(verifySpan, e)
+		if e != nil {
 			return domain.Candidate{}, sessionError(ctx, err)
 		}
 		head = expected

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	d "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
 )
 
@@ -13,7 +14,8 @@ func (s *Store) FindTransportReceipt(ctx context.Context, p d.TransportPosition)
 	}
 	r := d.TransportReceipt{Position: p}
 	var digest string
-	err := s.pool.QueryRow(ctx, `SELECT raw_digest,outcome,reason,intent_id,run_id FROM gateway_reply_transport_receipts WHERE stream_name=$1 AND stream_id=$2 AND stream_sequence=$3`, p.StreamName, p.StreamID, int64(p.Sequence)).Scan(&digest, &r.Outcome, &r.Reason, &r.IntentID, &r.RunID)
+	var carrier tracecontext.Carrier
+	err := s.pool.QueryRow(ctx, `SELECT r.raw_digest,r.outcome,r.reason,r.intent_id,r.run_id,COALESCE(i.traceparent,''),COALESCE(i.tracestate,'') FROM gateway_reply_transport_receipts r LEFT JOIN gateway_delivery_intents i ON i.intent_id=r.intent_id WHERE r.stream_name=$1 AND r.stream_id=$2 AND r.stream_sequence=$3`, p.StreamName, p.StreamID, int64(p.Sequence)).Scan(&digest, &r.Outcome, &r.Reason, &r.IntentID, &r.RunID, &carrier.Traceparent, &carrier.Tracestate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d.TransportReceipt{}, false, nil
 	}
@@ -23,6 +25,7 @@ func (s *Store) FindTransportReceipt(ctx context.Context, p d.TransportPosition)
 	if digest != p.RawDigest {
 		return d.TransportReceipt{}, false, d.ErrConflict
 	}
+	linkCarrier(ctx, carrier)
 	return r, true, nil
 }
 func (s *Store) RecordTransportReceipt(ctx context.Context, r d.TransportReceipt) error {

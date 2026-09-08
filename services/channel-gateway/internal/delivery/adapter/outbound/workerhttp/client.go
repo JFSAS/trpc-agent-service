@@ -7,6 +7,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net"
 	"net/http"
@@ -24,6 +27,7 @@ type Options struct {
 	Certificate tls.Certificate
 }
 type Client struct {
+	Tracer    trace.Tracer
 	base      *url.URL
 	http      *http.Client
 	transport *http.Transport
@@ -36,14 +40,16 @@ func New(o Options) (*Client, error) {
 	}
 	tr := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: o.RootCAs.Clone(), Certificates: []tls.Certificate{o.Certificate}}, TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: 5 * time.Second, DisableCompression: true, MaxResponseHeaderBytes: 16 << 10, MaxIdleConns: 8, MaxIdleConnsPerHost: 4, MaxConnsPerHost: 8, IdleConnTimeout: 30 * time.Second}
 	h := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &Client{u, h, tr}, nil
+	return &Client{base: u, http: h, transport: tr}, nil
 }
 func (c *Client) Close() { c.transport.CloseIdleConnections() }
-func (c *Client) VerifyCommittedFinal(ctx context.Context, i d.Intent, digest string) (app.FinalAuthorization, error) {
+func (c *Client) VerifyCommittedFinal(ctx context.Context, i d.Intent, digest string) (authorization app.FinalAuthorization, resultErr error) {
 	var zero app.FinalAuthorization
 	if ctx == nil {
 		return zero, d.ErrInvalid
 	}
+	ctx, span := telemetrytrace.Start(c.Tracer, ctx, "gateway.reply.verify", trace.WithSpanKind(trace.SpanKindClient))
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	r := wire.FinalRequest{IntentID: i.ID, Digest: digest, AdmissionID: i.AdmissionID, RunID: i.RunID, AttemptID: i.AttemptID, CompletionID: i.CompletionID, ExecutionGeneration: i.ExecutionGeneration, Sequence: i.Sequence}
 	body, err := wire.EncodeFinalRequest(r)
 	if err != nil {
@@ -58,6 +64,7 @@ func (c *Client) VerifyCommittedFinal(ctx context.Context, i d.Intent, digest st
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Encoding", "identity")
+	tracecontext.Capture(ctx).Inject(req.Header)
 	res, err := c.http.Do(req)
 	if err != nil {
 		return zero, d.ErrUnavailable

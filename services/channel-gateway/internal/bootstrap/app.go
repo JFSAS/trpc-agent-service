@@ -6,31 +6,33 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	catalogpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/catalogpostgres"
-	controlhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
-	registrationpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/registrationpostgres"
-	registrationremote "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/telegramregistration"
-	accountuse "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
-	catalogrefresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
-	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
-	wecomdelivery "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/wecomadapter"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	telegram "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/inbound/telegramadapter"
 	admissionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/outbound/postgres"
 	admissionapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/application"
 	admissiondomain "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
+	catalogpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/catalogpostgres"
+	controlhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/controlhttp"
 	connectionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/postgres"
+	registrationpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/registrationpostgres"
+	registrationremote "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/adapter/outbound/telegramregistration"
 	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application"
+	accountuse "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
+	catalogrefresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
+	telegramruntime "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/telegramruntime"
 	replyevent "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/inbound/eventadapter"
 	replyconsumer "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/inbound/nats"
 	deliverypg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/postgres"
+	wecomdelivery "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/wecomadapter"
 	workerhttp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/adapter/outbound/workerhttp"
 	deliveryapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/application"
 	transport "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/infra/nats"
@@ -41,6 +43,7 @@ import (
 )
 
 type App struct {
+	tracing                   *telemetrytrace.Runtime
 	workerProof               *workerhttp.Client
 	replyAcceptor             *deliveryapp.Acceptor
 	replyConsumer             *replyconsumer.Consumer
@@ -75,6 +78,18 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
+	traces, err := telemetrytrace.New(ctx, c.Tracing, telemetrytrace.Identity{Service: "channel-gateway", Instance: c.InstanceID, Environment: os.Getenv("DEPLOYMENT_ENVIRONMENT")})
+	if err != nil {
+		return nil, err
+	}
+	assembled := false
+	defer func() {
+		if !assembled {
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = traces.Shutdown(shutdown)
+		}
+	}()
 	pool, err := openDatabaseForTarget(ctx, c, expected)
 	if err != nil {
 		return nil, err
@@ -147,11 +162,11 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	ledger := admissionpg.NewStore(pool, routes).WithConnectionGuard(leases)
+	ledger := admissionpg.NewStore(pool, routes).WithConnectionGuard(leases).WithTracing(traces.Tracer("channel-gateway"))
 	if catalogStore != nil {
 		ledger = ledger.WithAccountUseGuard(accountGuardBridge{store: catalogStore, ingress: true})
 	}
-	acceptor := admissionapp.New(ledger, routeBridge{routing})
+	acceptor := admissionapp.New(ledger, routeBridge{routing}, traces.Tracer("channel-gateway"))
 	stream, err := n.JS.Stream(ctx, transport.RouteStream)
 	if err != nil {
 		return fail(err)
@@ -160,7 +175,8 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	app := &App{catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+	app := &App{tracing: traces, catalog: catalog, control: controlClient, use: use, controlConfig: c.Control, instanceID: c.InstanceID, instanceEpoch: boot, delivery: deliveryLedger, pool: pool, transport: n, maintenance: maintenance, ledger: ledger, admission: acceptor, routes: routing, relay: admissionapp.NewRelay(ledger, n), consumer: routeconsumer.New(consumer, stream, routing)}
+	app.relay.Tracer = traces.Tracer("channel-gateway")
 	if err := app.consumer.Initialize(ctx); err != nil {
 		return fail(err)
 	}
@@ -192,6 +208,7 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		if err != nil {
 			return fail(err)
 		}
+		workerProof.Tracer = traces.Tracer("channel-gateway")
 		app.workerProof = workerProof
 		app.replyAcceptor, err = deliveryapp.NewAcceptor(deliveryLedger, admissionDeliveryReader{ledger}, workerProof, deliveryapp.AcceptOptions{})
 		if err != nil {
@@ -213,11 +230,12 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		if e != nil {
 			return fail(e)
 		}
+		app.replyConsumer.Tracer = traces.Tracer("channel-gateway")
 		provider, e := wecomdelivery.NewProvider(connectionDeliverySource{app.connections})
 		if e != nil {
 			return fail(e)
 		}
-		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{})
+		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{Tracer: traces.Tracer("channel-gateway")})
 		if e != nil {
 			return fail(e)
 		}
@@ -254,8 +272,9 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	if err != nil {
 		return fail(err)
 	}
-	app.server = newServer(c.HTTPAddress, mux)
+	app.server = newServer(c.HTTPAddress, traces.IMHandler(mux))
 	app.admin = newServer(c.AdminAddress, admin)
+	assembled = true
 	return app, nil
 }
 func newServer(address string, h http.Handler) *http.Server {
@@ -265,6 +284,13 @@ func (a *App) Handler() http.Handler      { return a.server.Handler }
 func (a *App) AdminHandler() http.Handler { return a.admin.Handler }
 func (a *App) Close() {
 	a.closeOnce.Do(func() {
+		defer func() {
+			if a.tracing != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = a.tracing.Shutdown(ctx)
+			}
+		}()
 		if a.workerProof != nil {
 			a.workerProof.Close()
 		}

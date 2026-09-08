@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
 	"time"
 )
@@ -59,6 +60,7 @@ func (s *Store) verifyOwner(ctx context.Context, tx pgx.Tx, claim domain.Claim) 
 }
 
 type partRow struct {
+	carrier        tracecontext.Carrier
 	claim          domain.Claim
 	deadline       time.Time
 	callingUntil   *time.Time
@@ -72,11 +74,11 @@ func readPart(ctx context.Context, tx pgx.Tx, id string, lock bool) (partRow, er
 	var intent, target, owner []byte
 	var token, instance, current *string
 	var expires *time.Time
-	query := `SELECT p.part_id,p.intent_id,p.part_index,p.body,p.state,p.attempt_number,i.intent,i.target,p.claim_token,p.instance_id,p.owner_fence,p.claim_until,i.deadline,p.calling_until,p.current_attempt_id,p.next_attempt_at,p.preparation_attempts,p.claim_use_binding FROM gateway_delivery_parts p JOIN gateway_delivery_intents i ON i.intent_id=p.intent_id WHERE p.part_id=$1`
+	query := `SELECT p.part_id,p.intent_id,p.part_index,p.body,p.state,p.attempt_number,i.intent,i.target,p.claim_token,p.instance_id,p.owner_fence,p.claim_until,i.deadline,p.calling_until,p.current_attempt_id,p.next_attempt_at,p.preparation_attempts,p.claim_use_binding,COALESCE(i.traceparent,''),COALESCE(i.tracestate,'') FROM gateway_delivery_parts p JOIN gateway_delivery_intents i ON i.intent_id=p.intent_id WHERE p.part_id=$1`
 	if lock {
 		query += ` FOR UPDATE OF p`
 	}
-	err := tx.QueryRow(ctx, query, id).Scan(&p.claim.Part.ID, &p.claim.Part.IntentID, &p.claim.Part.Index, &p.claim.Part.Text, &p.claim.Part.State, &p.claim.Part.AttemptNumber, &intent, &target, &token, &instance, &owner, &expires, &p.deadline, &p.callingUntil, &current, &p.next, &p.prepAttempts, &p.claim.UseBinding)
+	err := tx.QueryRow(ctx, query, id).Scan(&p.claim.Part.ID, &p.claim.Part.IntentID, &p.claim.Part.Index, &p.claim.Part.Text, &p.claim.Part.State, &p.claim.Part.AttemptNumber, &intent, &target, &token, &instance, &owner, &expires, &p.deadline, &p.callingUntil, &current, &p.next, &p.prepAttempts, &p.claim.UseBinding, &p.carrier.Traceparent, &p.carrier.Tracestate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, domain.ErrNotFound
 	}

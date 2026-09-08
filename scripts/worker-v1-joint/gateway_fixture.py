@@ -89,6 +89,8 @@ class TelegramFixture:
         self.calls = []
         self.messages = []
         self.registrations = []
+        self._reject_once = set()
+        self._rejections = []
         self._response_loss = set()
         self._response_losses = []
         fixture = self
@@ -106,6 +108,22 @@ class TelegramFixture:
                     return
                 try:
                     values = _form(self)
+                    rejection = (method, bot["bot_id"], str(values.get("chat_id", "")), values.get("text", ""))
+                    with fixture.lock:
+                        reject = rejection in fixture._reject_once
+                        if reject:
+                            fixture._reject_once.remove(rejection)
+                            fixture._rejections.append({"method": method, "bot_id": bot["bot_id"], "chat_id": rejection[2], "text": rejection[3], "status": 429, "accepted": False})
+                            fixture.calls.append({"bot_id": bot["bot_id"], "method": method, "result": "rate_limited"})
+                            fixture._save()
+                    if reject:
+                        raw = json.dumps({"ok": False, "error_code": 429, "description": "fixture rate limit", "parameters": {"retry_after": 1}}).encode()
+                        self.send_response(429)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(raw)))
+                        self.end_headers()
+                        self.wfile.write(raw)
+                        return
                     drop_response = False
                     with fixture.lock:
                         if method == "getMe":
@@ -179,6 +197,22 @@ class TelegramFixture:
             if self._response_loss or not any(bot["bot_id"] == bot_id for bot in self._bots.values()):
                 raise ValueError("response-loss fixture is armed or bot is absent")
             self._response_loss.add((bot_id, str(int(conversation_id)), text))
+
+    def reject_once(self, method, *, text='', conversation_id='', bot_id=None):
+        """One typed 429 before any external acceptance; getMe is preparation."""
+        bot_id = self.bot_id if bot_id is None else bot_id
+        if method not in ('getMe', 'sendMessage') or type(bot_id) is not int:
+            raise ValueError('unsupported rejection fixture')
+        if (method == 'getMe' and (text or conversation_id)) or (method == 'sendMessage' and (not text or not str(conversation_id).isdigit())):
+            raise ValueError('rejection requires exact method input')
+        with self.lock:
+            if self._reject_once or not any(bot['bot_id'] == bot_id for bot in self._bots.values()):
+                raise ValueError('rejection fixture is armed or bot is absent')
+            self._reject_once.add((method, bot_id, str(conversation_id), text))
+
+    def rejection_snapshot(self):
+        with self.lock:
+            return json.loads(json.dumps(self._rejections))
 
     def response_loss_snapshot(self):
         with self.lock:

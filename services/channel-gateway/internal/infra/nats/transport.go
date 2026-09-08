@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -85,10 +86,16 @@ func Connect(serverURL string, topology Topology, auth Auth) (*Transport, error)
 }
 func (t *Transport) Close() { t.Conn.Close() }
 func (t *Transport) Publish(ctx context.Context, subject, id string, payload []byte) error {
+	return t.PublishMessage(ctx, subject, id, payload, tracecontext.Carrier{})
+}
+
+func (t *Transport) PublishMessage(ctx context.Context, subject, id string, payload []byte, carrier tracecontext.Carrier) error {
 	if subject != RunSubject || id == "" {
 		return errors.New("unsupported outbox publication")
 	}
-	ack, err := t.JS.Publish(ctx, subject, payload, jetstream.WithMsgID(id))
+	msg := &nats.Msg{Subject: subject, Data: payload, Header: nats.Header{}}
+	carrier.Inject(msg.Header)
+	ack, err := t.JS.PublishMsg(ctx, msg, jetstream.WithMsgID(id))
 	if err != nil {
 		return err
 	}

@@ -339,7 +339,15 @@ class ResolveTLSProxyTests(unittest.TestCase):
         self.assertEqual(self.request('worker_two'), (200, BODY))
         self.assertEqual(self.owner.calls, [{'uris': ['spiffe://agent-platform/worker/two'],
             'request_unchanged': True, 'identity_header': None}])
-        event = self.proxy.events()[0]
+        # The client can receive the final bytes before the proxy records its
+        # post-flush observation. Wait for that phase, then compare exact bytes.
+        deadline = time.monotonic() + 3
+        while True:
+            event = self.proxy.events()[0]
+            if 'downstream_status' in event or time.monotonic() >= deadline:
+                break
+            time.sleep(.005)
+        self.assertEqual(event.get('downstream_status'), 200)
         self.assertEqual(event['attempt_id'], ATTEMPT)
         self.assertEqual(event['upstream_status'], 200)
         self.assertEqual(event['downstream_body_bytes_forwarded'], len(BODY))

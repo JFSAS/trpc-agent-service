@@ -7,12 +7,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"time"
 
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/delivery/domain"
 )
 
 type DispatchOptions struct {
+	Tracer                       trace.Tracer
 	CallTimeout, EvidenceTimeout time.Duration
 	MaxConcurrent                int
 }
@@ -57,7 +62,18 @@ func (s *Dispatcher) DispatchAccount(ctx context.Context, request domain.ClaimRe
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	claims, err := s.ledger.ClaimDue(ctx, request)
+	var claims []TracedClaim
+	var err error
+	if ledger, ok := s.ledger.(TracedClaimer); ok {
+		claims, err = ledger.ClaimTraced(ctx, request)
+	} else {
+		// Nonpersistent ledger implementations retain their existing contract.
+		var rows []domain.Claim
+		rows, err = s.ledger.ClaimDue(ctx, request)
+		for _, row := range rows {
+			claims = append(claims, TracedClaim{Claim: row})
+		}
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -78,7 +94,10 @@ func (s *Dispatcher) DispatchAccount(ctx context.Context, request domain.ClaimRe
 	}
 	return processed, combined
 }
-func (s *Dispatcher) dispatch(ctx context.Context, claim domain.Claim) error {
+func (s *Dispatcher) dispatch(ctx context.Context, item TracedClaim) (resultErr error) {
+	claim := item.Claim
+	ctx, span := telemetrytrace.Resume(s.options.Tracer, ctx, item.Carrier, "gateway.reply.deliver", trace.WithAttributes(attribute.String("app.intent.id", claim.Intent.ID), attribute.String("app.run.id", claim.Intent.RunID), attribute.Int("app.part.index", claim.Part.Index)))
+	defer func() { telemetrytrace.End(span, resultErr) }()
 	digest, err := domain.RequestDigest(claim)
 	if err != nil {
 		return err
@@ -113,6 +132,7 @@ func (s *Dispatcher) dispatch(ctx context.Context, claim domain.Claim) error {
 		case errors.Is(err, domain.ErrNotFound):
 			result.ErrorClass = domain.ErrorStaleOrigin
 		}
+		span.SetAttributes(attribute.String("app.outcome", string(result.Certainty)))
 		return s.ledger.FinishPreparation(ctx, claim, result)
 	}
 	attempt, err := s.ledger.MarkCalling(ctx, domain.CallingRequest{Claim: claim, RequestID: requestID, RequestDigest: digest, Timeout: s.options.CallTimeout + s.options.EvidenceTimeout})
@@ -130,11 +150,18 @@ func (s *Dispatcher) dispatch(ctx context.Context, claim domain.Claim) error {
 		callDeadline = attempt.CallingUntil
 	}
 	callCtx, cancel := context.WithDeadline(ctx, callDeadline)
+	callCtx, sendSpan := telemetrytrace.Start(s.options.Tracer, callCtx, "gateway.im.send", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.Int64("app.retry.number", attempt.Number-1), attribute.String("app.attempt.id", attempt.ID)))
 	result := sender.SendFinal(callCtx, attempt)
 	cancel()
 	if result.Validate() != nil {
 		result = domain.Result{Certainty: domain.CertaintyUnknown, ErrorClass: domain.ErrorPermanent}
 	}
+	span.SetAttributes(attribute.String("app.outcome", string(result.Certainty)))
+	sendSpan.SetAttributes(attribute.String("app.outcome", string(result.Certainty)))
+	if result.Certainty != domain.CertaintyAccepted {
+		sendSpan.SetStatus(codes.Error, "")
+	}
+	sendSpan.End()
 	// Keep the reservation alive through result persistence. Parent cancellation
 	// never converts a known ACK into UNKNOWN or skips bounded evidence recording.
 	settle, stop := context.WithTimeout(context.WithoutCancel(ctx), s.options.EvidenceTimeout)
