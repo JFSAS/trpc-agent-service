@@ -23,6 +23,10 @@ export interface GenerationOptionsV1 {
   max_output_tokens?: number;
 }
 
+export const MEMORY_TOOLS = ["memory_add", "memory_update", "memory_delete", "memory_clear", "memory_search", "memory_load"] as const;
+export type MemoryTool = (typeof MEMORY_TOOLS)[number];
+export type AgentRuntimeV1 = { summary?: { enabled: boolean; model_slot?: string; event_threshold?: number } };
+
 interface NamedNodeV1 {
   name?: string;
 }
@@ -34,6 +38,9 @@ export interface LLMNodeV1 extends NamedNodeV1 {
   tool_slots: string[];
   knowledge_slots: string[];
   generation?: GenerationOptionsV1;
+  memory?: { tools: MemoryTool[]; preload_limit?: number };
+  artifact?: { enabled: boolean };
+  add_session_summary?: boolean;
 }
 
 export interface SequenceNodeV1 extends NamedNodeV1 {
@@ -57,6 +64,7 @@ export type AgentNodeV1 = LLMNodeV1 | SequenceNodeV1 | ParallelNodeV1 | LoopNode
 export interface AgentSpecV1 {
   schema_version: typeof AGENT_SPEC_SCHEMA_VERSION;
   root: string;
+  runtime?: AgentRuntimeV1;
   requirements: AgentRequirementsV1;
   nodes: Record<string, AgentNodeV1>;
 }
@@ -141,7 +149,8 @@ export function isAgentSpecV1(value: unknown): value is AgentSpecV1 {
  * so visual edits cannot silently remove data the editor does not understand.
  */
 export function isRenderableAgentSpecV1(value: unknown): value is AgentSpecV1 {
-  return hasRenderableFields(value, ["schema_version", "root", "requirements", "nodes"])
+  return hasRenderableFields(value, ["schema_version", "root", "requirements", "nodes"], ["runtime"])
+    && (!("runtime" in value) || renderableRuntime(value.runtime))
     && value.schema_version === AGENT_SPEC_SCHEMA_VERSION
     && typeof value.root === "string"
     && isRenderableRequirements(value.requirements)
@@ -191,7 +200,8 @@ function isRenderableNode(value: unknown): boolean {
   if (!isRenderableRecord(value) || ("name" in value && typeof value.name !== "string")) return false;
   switch (value.kind) {
     case "llm":
-      return hasRenderableFields(value, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], ["name", "generation"])
+      return hasRenderableFields(value, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], ["name", "generation", "memory", "artifact", "add_session_summary"])
+        && renderableNodeData(value)
         && typeof value.instruction === "string"
         && typeof value.model_slot === "string"
         && isRenderableStringArray(value.tool_slots)
@@ -225,7 +235,8 @@ export function validateAgentSpecShape(value: unknown): AgentSpecDiagnostic[] {
     return [diagnostic("AGENT_SPEC_DOCUMENT_REQUIRED", "", "AgentSpec 顶层值必须是对象。")];
   }
 
-  allowedFields(value, "", ["schema_version", "root", "requirements", "nodes"], diagnostics);
+  allowedFields(value, "", ["schema_version", "root", "requirements", "nodes", "runtime"], diagnostics);
+  if ("runtime" in value) validateRuntime(value.runtime, diagnostics);
   requiredFields(value, "", ["schema_version", "root", "requirements", "nodes"], diagnostics);
 
   if ("schema_version" in value && value.schema_version !== AGENT_SPEC_SCHEMA_VERSION) {
@@ -351,7 +362,8 @@ function validateNode(node: Record<string, unknown>, pointer: string, nodeID: st
   }
 
   if (node.kind === "llm") {
-    allowedFields(node, pointer, ["kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation"], diagnostics);
+    allowedFields(node, pointer, ["kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation", "memory", "artifact", "add_session_summary"], diagnostics);
+    validateNodeData(node, pointer, diagnostics);
     requiredFields(node, pointer, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], diagnostics);
     validateOptionalName(node, pointer, diagnostics);
     if ("instruction" in node) {
@@ -536,4 +548,54 @@ function sortDiagnostics(diagnostics: AgentSpecDiagnostic[]): AgentSpecDiagnosti
     left.severity.localeCompare(right.severity) ||
     left.code.localeCompare(right.code),
   );
+}
+
+function renderableRuntime(value: unknown): boolean {
+  return hasRenderableFields(value, [], ["summary"]) && (!("summary" in value) || (
+    hasRenderableFields(value.summary, ["enabled"], ["model_slot", "event_threshold"])
+    && typeof value.summary.enabled === "boolean"
+    && (!("model_slot" in value.summary) || typeof value.summary.model_slot === "string")
+    && (!("event_threshold" in value.summary) || isFiniteNumber(value.summary.event_threshold))
+  ));
+}
+function renderableNodeData(value: Record<string, unknown>): boolean {
+  return (!("memory" in value) || (hasRenderableFields(value.memory, ["tools"], ["preload_limit"])
+    && isRenderableStringArray(value.memory.tools) && value.memory.tools.every((tool) => MEMORY_TOOLS.includes(tool as MemoryTool))
+    && (!("preload_limit" in value.memory) || isFiniteNumber(value.memory.preload_limit))))
+    && (!("artifact" in value) || (hasRenderableFields(value.artifact, ["enabled"]) && typeof value.artifact.enabled === "boolean"))
+    && (!("add_session_summary" in value) || typeof value.add_session_summary === "boolean");
+}
+function dataObject(value: unknown, pointer: string, allowed: string[], required: string[], d: AgentSpecDiagnostic[]): value is Record<string, unknown> {
+  if (!isRecord(value)) { d.push(invalidType(pointer)); return false; }
+  allowedFields(value, pointer, allowed, d); requiredFields(value, pointer, required, d); return true;
+}
+function dataInteger(value: unknown, pointer: string, min: number, d: AgentSpecDiagnostic[]) {
+  if (typeof value !== "number" || !Number.isInteger(value)) d.push(invalidType(pointer));
+  else if (!Number.isSafeInteger(value) || value < min) d.push(limitExceeded(pointer));
+}
+function validateRuntime(value: unknown, d: AgentSpecDiagnostic[]) {
+  if (!dataObject(value, "/runtime", ["summary"], [], d) || !("summary" in value)) return;
+  const s = value.summary, p = "/runtime/summary";
+  if (!dataObject(s, p, ["enabled", "model_slot", "event_threshold"], ["enabled"], d)) return;
+  if (!("enabled" in s)) return;
+  if (typeof s.enabled !== "boolean") { d.push(invalidType(`${p}/enabled`)); return; }
+  if (!s.enabled) { allowedFields(s, p, ["enabled"], d); return; }
+  requiredFields(s, p, ["model_slot", "event_threshold"], d);
+  if ("model_slot" in s) validateIdentifier(s.model_slot, `${p}/model_slot`, d);
+  if ("event_threshold" in s) dataInteger(s.event_threshold, `${p}/event_threshold`, 1, d);
+}
+function validateNodeData(node: Record<string, unknown>, p: string, d: AgentSpecDiagnostic[]) {
+  if ("memory" in node && dataObject(node.memory, `${p}/memory`, ["tools", "preload_limit"], ["tools"], d)) {
+    const m = node.memory;
+    if ("tools" in m) {
+      validateStringArray(m.tools, `${p}/memory/tools`, 0, 6, isAgentCapability, d);
+      if (Array.isArray(m.tools)) m.tools.forEach((tool, index) => {
+        if (typeof tool === "string" && !MEMORY_TOOLS.includes(tool as MemoryTool)) d.push(diagnostic("AGENT_SPEC_MEMORY_TOOL_UNSUPPORTED", `${p}/memory/tools/${index}`, "Memory 工具不受支持。"));
+      });
+    }
+    if ("preload_limit" in m) dataInteger(m.preload_limit, `${p}/memory/preload_limit`, -1, d);
+  }
+  if ("artifact" in node && dataObject(node.artifact, `${p}/artifact`, ["enabled"], ["enabled"], d)
+    && "enabled" in node.artifact && typeof node.artifact.enabled !== "boolean") d.push(invalidType(`${p}/artifact/enabled`));
+  if ("add_session_summary" in node && typeof node.add_session_summary !== "boolean") d.push(invalidType(`${p}/add_session_summary`));
 }

@@ -28,6 +28,7 @@ export type NodeAddMode = "child" | "wrap-selected" | "wrap-root";
 
 export type AgentEditorAction =
   | { type: "spec.replace"; spec: AgentSpecV1 }
+  | { type: "runtime.set"; runtime: AgentSpecV1["runtime"] }
   | { type: "node.select"; nodeID: string | null }
   | { type: "node.move"; nodeID: string; position: CanvasPoint }
   | { type: "node.add"; nodeID: string; kind: AgentNodeKind; parentID?: string | null; mode?: NodeAddMode; targetID?: string | null }
@@ -73,6 +74,12 @@ export function agentEditorReducer(state: AgentEditorState, action: AgentEditorA
   switch (action.type) {
     case "spec.replace":
       return reconcileAgentEditorState(state, action.spec);
+    case "runtime.set": {
+      const spec = cloneAgentSpec(state.spec);
+      if (action.runtime === undefined) delete spec.runtime;
+      else spec.runtime = structuredClone(action.runtime);
+      return { ...state, spec };
+    }
     case "node.select":
       return action.nodeID === null || state.spec.nodes[action.nodeID]
         ? { ...state, selectedNodeID: action.nodeID, focusRevision: (state.focusRevision ?? 0) + 1 }
@@ -201,6 +208,15 @@ export function validateAgentSpecLocally(value: unknown): AgentSpecDiagnostic[] 
   if (shapeDiagnostics.some((item) => item.severity === "error")) return shapeDiagnostics;
   const spec = value as AgentSpecV1;
   const diagnostics: AgentSpecDiagnostic[] = [];
+  const summary = spec.runtime?.summary;
+  if (summary?.enabled) {
+    const model = spec.requirements.models[summary.model_slot ?? ""];
+    if (!model) diagnostics.push(error("AGENT_SPEC_MODEL_SLOT_NOT_FOUND", "/runtime/summary/model_slot", "Summary 模型槽未声明。"));
+    else if (!model.capabilities.includes("chat")) diagnostics.push(error("AGENT_SPEC_SUMMARY_MODEL_CAPABILITY", "/runtime/summary/model_slot", "Summary 模型必须声明 chat 能力。"));
+  }
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (node.kind === "llm" && node.add_session_summary && !summary?.enabled) diagnostics.push(error("AGENT_SPEC_SUMMARY_NOT_ENABLED", `/nodes/${escapeJSONPointer(id)}/add_session_summary`, "消费摘要前必须启用 Agent 级 Summary。", id));
+  }
   const nodeIDs = Object.keys(spec.nodes).sort();
   const parents = new Map<string, string[]>();
   const adjacency = new Map<string, string[]>();
@@ -550,6 +566,7 @@ function validateSlots(
 
 function appendUnusedSlotWarnings(spec: AgentSpecV1, diagnostics: AgentSpecDiagnostic[]): void {
   const usedModels = new Set<string>();
+  if (spec.runtime?.summary?.enabled && spec.runtime.summary.model_slot) usedModels.add(spec.runtime.summary.model_slot);
   const usedTools = new Set<string>();
   const usedKnowledge = new Set<string>();
   for (const node of Object.values(spec.nodes)) {
