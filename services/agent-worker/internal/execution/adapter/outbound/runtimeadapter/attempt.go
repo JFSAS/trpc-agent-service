@@ -60,9 +60,12 @@ func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, r
 		a.loadedDigest = domain.Digest(nil)
 		return nil, nil
 	}
+	parentCtx := ctx
+	ctx, cancel := sessionContext(ctx, a.plan)
+	defer cancel()
 	c, err := a.store.Load(ctx, a.plan.TenantID, a.grant.Run.SessionID, sessionstore.Head{Ref: head.Ref, Digest: head.Digest})
 	if err != nil {
-		return nil, sessionError(ctx, err)
+		return nil, sessionOperationError(parentCtx, ctx, err)
 	}
 	a.loaded = true
 	a.loadedDigest = domain.Digest(c.Snapshot)
@@ -148,8 +151,14 @@ func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Can
 	}
 	g := a.grant
 	candidate := sessionstore.Candidate{Identity: sessionstore.Identity{TenantID: a.plan.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID}, Parent: sessionstore.Head{Ref: g.Parent.Ref, Digest: g.Parent.Digest}, ContentVersion: sessionstore.ContentVersion, Snapshot: snapshot}
+	parentCtx := ctx
+	ctx, cancel := sessionContext(ctx, a.plan)
+	defer cancel()
 	head, err := a.store.Put(ctx, candidate)
 	if err != nil {
+		if ctx.Err() != nil {
+			return domain.Candidate{}, sessionOperationError(parentCtx, ctx, err)
+		}
 		if errors.Is(err, sessionstore.ErrConflict) || errors.Is(err, sessionstore.ErrCapacity) || errors.Is(err, sessionstore.ErrCorrupt) {
 			return domain.Candidate{}, sessionError(ctx, err)
 		}

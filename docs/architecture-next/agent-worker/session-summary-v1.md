@@ -2,13 +2,16 @@
 
 ## 实现边界
 
-Summary 是原 Session 的能力，不是第二个数据库或服务。当前正式 Session
-使用 PostgreSQL `runtime_session.session_candidates`，摘要正文和 SDK structural
-boundary 与原事件一起保存在同一个不可变 snapshot 中。Worker 原有 `Complete`
+Summary 是原 Session 的能力，不是第二个数据库或服务。最初正式 Session 使用
+PostgreSQL `runtime_session.session_candidates`，后续也支持 managed Redis Session
+（见 `session-redis-v1.md`）；两者都将摘要正文、SDK structural boundary 与原事件
+保存在同一个不可变 snapshot 中。Worker 原有 `Complete`
 接受事务决定哪个 snapshot 成为正式 head；仅写入候选不等于正式保存成功。
 
-本次开放 `summary`，不同时开放 Memory、Artifact、Knowledge 或 managed
-Session 适配器。Redis Session/Memory 与其他数据能力属于后续独立工作包。
+本节记录最初开放 `summary` 的独立交付边界。当时未同时开放其他数据能力；后续已完成
+PostgreSQL/Redis Memory，以及 managed Redis Session + 同后端 Summary，分别见
+`memory-postgres-v1.md`、`memory-redis-v1.md`、`session-redis-v1.md`。Artifact/Knowledge
+仍为后续工作包。
 没有增加跨库事务、CAS 平台、恢复队列、补偿任务、后台调度或累计 Token 预算。
 
 ## 从配置到执行
@@ -74,8 +77,10 @@ Summary 没有额外 storage role。模型可独立配置，也可以将 `model_
 - 摘要 401 等确定性模型错误使 Run 正常失败；429/5xx/网络错误沿现有依赖分类处理。
   不误报为 Session 损坏。失败不 Stage 候选、不推进正式 head，后继不读取失败轮输入。
 - 失败 Run 仍遵守原有终态回复协议，可以发送固定失败 Final；这不代表接受了失败正文。
-- 后续发布物关闭 Summary 时，保留已有摘要 metadata，但不生成、不消费；原始完整事件
-  仍进入模型历史。再次开启可继续使用已接受摘要，而非把原 Session 判坏或清空。
+- 在同一 Session overlay/候选恢复层，关闭 Summary 时保留既有摘要 metadata，但不生成、
+  不消费；再次开启可继续使用已接受 metadata。这不表示跨发布的历史连续：现有
+  Session scope 包含 DeploymentRevisionID，正式发布修改 Summary 产生新 revision 时
+  建立新 Session，不自动继承旧版本历史或摘要，也不删除旧版本的 accepted Session。
 
 ## 验收入口
 

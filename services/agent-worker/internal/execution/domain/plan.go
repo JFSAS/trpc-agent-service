@@ -20,6 +20,7 @@ type Plan struct {
 	NodeMaxOutputTokens                                        *int64
 	MaxOutputTokens, MaxRunSeconds                             int64
 	ModelCredential, SessionCredential                         CredentialUse
+	SessionBackend                                             *datav1.Snapshot
 	SessionTarget                                              StorageTarget
 }
 

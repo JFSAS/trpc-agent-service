@@ -38,7 +38,8 @@ export function RuntimeSummaryFields({ state, dispatch, disabled }: {
     </>}
     <small>摘要跟随 Session 存储；阈值是事件数量，不是 token 预算。关闭生成不会自动清除节点的摘要消费意图，请处理相应诊断。</small>
     {state.spec.runtime && <button type="button" disabled={disabled} onClick={() => dispatch({ type: "runtime.set", runtime: undefined })}>移除 runtime 声明</button>}
-    <small role="note">P0a：可保存和发布 Agent；含新增运行声明的 Deployment 暂不支持发布，需等待对应编译契约。仅配置资源不代表运行能力已就绪。</small>
+    <small role="note">Session Summary 已支持配置、发布和 Worker 执行；需绑定 Session 存储及具备 chat 能力的摘要模型，实际发布能力以服务端校验为准。</small>
+    <small>新的 DeploymentRevision 对应新的 Session，不继承旧版本的会话历史或摘要。同 Session 内部 overlay 保留摘要元数据，不等于跨发布版本的历史迁移。</small>
   </section>;
 }
 

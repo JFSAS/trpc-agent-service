@@ -235,17 +235,43 @@ describe("ProfileRevisionDetail", () => {
   });
 });
 
-it.each(["retired-pg", "retired-redis"])("rotates fixed-revision %s Memory password using token/CAS without directory lookup", async (backendId) => {
-  const memoryRevision = { ...revision, config: { ...config, storage: { memory: { kind: "managed_memory", backend_id: backendId, backend_revision: 1 } } }, credential_states: { storage: { memory: { dsn_password: { configured: true, status: "active" as const, credential_revision: 2, association_token: token } } } } };
-  api.getRevision.mockResolvedValue(memoryRevision);
+it.each([
+  { resource: "memory", label: "Memory", backendId: "retired-pg" },
+  { resource: "memory", label: "Memory", backendId: "retired-redis" },
+  { resource: "session", label: "Session", backendId: "retired-redis-session" },
+])("rotates fixed-revision $resource/$backendId password using token/CAS without directory lookup", async ({ resource, label, backendId }) => {
+  const managedRevision = { ...revision, config: { ...config, storage: { [resource]: { kind: `managed_${resource}`, backend_id: backendId, backend_revision: 1 } } }, credential_states: { storage: { [resource]: { dsn_password: { configured: true, status: "active" as const, credential_revision: 2, association_token: token } } } } };
+  api.getRevision.mockResolvedValue(managedRevision);
   const fetcher = vi.spyOn(globalThis, "fetch");
   render(<ProfileRevisionDetail tenantId="tenant-1" profileId="profile-1" revisionNumber={3} />);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "更新 Storage / memory / dsn_password" }));
+  await user.click(await screen.findByRole("button", { name: `更新 Storage / ${resource} / dsn_password` }));
   const dialog = await screen.findByRole("dialog");
-  await user.type(within(dialog).getByLabelText("新 Memory 后端密码"), "test-raw-password");
+  expect(within(dialog).getByLabelText(`新 ${label} 后端密码`)).toHaveValue("");
+  expect(within(dialog).getByLabelText(`新 ${label} 后端密码`)).toHaveAttribute("type", "password");
+  await user.type(within(dialog).getByLabelText(`新 ${label} 后端密码`), "test-raw-password");
   await user.click(within(dialog).getByRole("button", { name: "确认更新凭证" }));
   await waitFor(() => expect(api.updateCredential).toHaveBeenCalled());
-  expect(api.updateCredential.mock.calls[0][2]).toMatchObject({ target: { profile_revision_number: 3, category: "storage", resource_name: "memory", purpose_field: "dsn_password", association_token: token }, expected_credential_revision: 2, action: "replace", value: "test-raw-password" });
+  expect(api.updateCredential.mock.calls[0][2]).toEqual({ target: { profile_revision_number: 3, category: "storage", resource_name: resource, purpose_field: "dsn_password", association_token: token }, expected_credential_revision: 2, action: "replace", value: "test-raw-password" });
+  await screen.findByText("凭证已更新，配置 Revision 与 digest 未改变。");
+  expect(screen.getByTestId("resource-editor")).toHaveTextContent(JSON.stringify(managedRevision.config));
+  expect(document.body.textContent).not.toContain("test-raw-password");
   expect(fetcher).not.toHaveBeenCalled();fetcher.mockRestore();
+});
+
+it("clears a published Redis Session password only with explicit confirmation and fixed association CAS", async () => {
+  api.getRevision.mockResolvedValue({ ...revision, config: { ...config, storage: { session: { kind: "managed_session", backend_id: "retired-redis-session", backend_revision: 1 } } }, credential_states: { storage: { session: { dsn_password: { configured: true, status: "active", credential_revision: 2, association_token: token } } } } });
+  const user = userEvent.setup();
+  render(<ProfileRevisionDetail tenantId="tenant-1" profileId="profile-1" revisionNumber={3} />);
+  await user.click(await screen.findByRole("button", { name: "更新 Storage / session / dsn_password" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("新 Session 后端密码"), "discarded-replacement");
+  await user.click(within(dialog).getByRole("radio", { name: "清除" }));
+  expect(within(dialog).queryByLabelText("新 Session 后端密码")).toBeNull();
+  const submit = within(dialog).getByRole("button", { name: "确认清除凭证" });
+  expect(submit).toBeDisabled();
+  await user.click(within(dialog).getByRole("checkbox", { name: /我确认清除将使共享该关联/ }));
+  await user.click(submit);
+  await waitFor(() => expect(api.updateCredential).toHaveBeenCalledTimes(1));
+  expect(api.updateCredential.mock.calls[0][2]).toEqual({ target: { profile_revision_number: 3, category: "storage", resource_name: "session", purpose_field: "dsn_password", association_token: token }, expected_credential_revision: 2, action: "clear" });
 });

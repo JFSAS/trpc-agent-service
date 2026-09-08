@@ -51,12 +51,15 @@ describe("runtime capability controls", () => {
     fireEvent.change(screen.getByLabelText("Artifact 服务"), { target: { value: "absent" } });
     expect(spec().nodes.assistant).not.toHaveProperty("artifact");
   });
-  it("disables controls for read-only users and explains deployment gate", () => {
+  it("disables controls and distinguishes supported Summary execution from cross-publication history migration", () => {
     render(<Harness disabled />);
     expect(screen.getByLabelText("声明 Memory 配置")).toBeDisabled();
     expect(screen.getByLabelText("生成会话摘要")).toBeDisabled();
     expect(screen.getByLabelText("Artifact 服务")).toBeDisabled();
-    expect(screen.getByText(/含新增运行声明的 Deployment 暂不支持发布/)).toBeInTheDocument();
+    expect(screen.getByText(/Session Summary 已支持配置、发布和 Worker 执行/)).toBeInTheDocument();
+    expect(screen.getByText(/新的 DeploymentRevision 对应新的 Session/)).toHaveTextContent("不继承旧版本的会话历史或摘要");
+    expect(screen.getByText(/内部 overlay 保留摘要元数据/)).toHaveTextContent("不等于跨发布版本的历史迁移");
+    expect(screen.queryByText(/P0a|含新增运行声明的 Deployment 暂不支持发布/)).toBeNull();
   });
 });
 

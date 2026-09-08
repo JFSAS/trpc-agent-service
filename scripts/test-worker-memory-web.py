@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own an isolated real stack while a browser configures and publishes Memory."""
+"""Own one isolated stack for real browser Memory or Redis Session publication."""
 import argparse
 import copy
 import json
@@ -38,26 +38,36 @@ def main():
     parser.add_argument('--coordination', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--backend', choices=('postgresql', 'redis'), default='postgresql')
+    parser.add_argument('--scenario', choices=('memory', 'session'), default='memory')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     harness = WebHarness
-    if args.backend == 'redis':
+    model_fixture = MemoryModelFixture
+    if args.scenario == 'session':
+        if args.backend != 'redis':
+            parser.error('session scenario requires --backend redis')
+        from redis_session_joint_fixture import RedisSessionHarness, SummaryModelFixture, wait_redis_success
+        class RedisSessionWebHarness(WebPublicationMixin, RedisSessionHarness):
+            pass
+        harness = RedisSessionWebHarness
+        model_fixture = SummaryModelFixture
+    if args.backend == 'redis' and args.scenario == 'memory':
         from redis_memory_joint_fixture import RedisMemoryHarness
         class RedisWebHarness(WebPublicationMixin, RedisMemoryHarness):
             pass
         harness = RedisWebHarness
     h = harness(root, args.artifacts)
-    backend_id = 'joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'
+    backend_id = 'joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg')
     web = None
     web_log = None
     evidence = {'result': 'PENDING', 'gui': 'PENDING', 'external_model': 'DETERMINISTIC_HTTP_FIXTURE', 'shared_services_changed': False}
-    target = h.artifacts / 'memory-web.json'
+    target = h.artifacts / ('session-web.json' if args.scenario == 'session' else 'memory-web.json')
     def save():
         target.write_text(h.redact(json.dumps(evidence, indent=2, ensure_ascii=False)) + '\n')
     try:
         h.provision()
         h.model.close()
-        h.model = MemoryModelFixture(h)
+        h.model = model_fixture(h)
         h.urls['model'] = h.model.url
         h.control_start(gateway_fixture.prepare(h))
         h.seed()
@@ -83,7 +93,7 @@ def main():
                     raise RuntimeError('isolated Web readiness timeout') from None
                 time.sleep(.5)
         access = Path(h.work) / 'gui-access.json'
-        access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, 'memory_password': h.memory_password, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
+        access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
         access.chmod(0o600)
         args.coordination.mkdir(parents=True, exist_ok=True)
         (args.coordination / 'ready.json').write_text(json.dumps({'url': web_url, 'private_access_file': str(access), 'artifacts': str(h.artifacts)}))
@@ -102,23 +112,61 @@ def main():
         publication = h.api('GET', '/v1/tenants/' + h.tenant_id + '/deployments/' + h.deployment_id + '/revisions/' + str(h.revision_number))
         view = publication['manifest_view']
         node = view['agent_plan']['nodes'][view['agent_plan']['root']]
-        assert sorted(node['memory']['tools']) == sorted(TOOLS)
-        assert view['resources']['storage'][node['memory']['resource']]['backend']['backend_id'] == backend_id
+        if args.scenario == 'memory':
+            assert sorted(node['memory']['tools']) == sorted(TOOLS)
+            selected_storage = node['memory']['resource']
+        else:
+            assert view['runtime']['summary']['enabled'] and node['add_session_summary']
+            selected_storage = view['storage_roles']['session']
+        assert view['resources']['storage'][selected_storage]['backend']['backend_id'] == backend_id
         h.revision_id = publication['id']
         h.manifest_id, h.manifest_digest = publication['manifest_id'], publication['manifest_digest']
         evidence.update(gui='PASS', publication=publication, browser=marker)
         h.gateway = gateway_fixture.start(h)
-        run_id = h.send_text('memory-six')
-        delivery = h.wait_delivery(run_id)
-        result = wait_success(h, run_id)
-        assert delivery['final_text'] == 'memory final: memory-six'
-        actual_request = json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id=' + h.quote(run_id))[0][0])
-        assert actual_request['Route']['ManifestRef'] == h.manifest_id and actual_request['Route']['ManifestDigest'] == h.manifest_digest and actual_request['Route']['DeploymentRevisionID'] == h.revision_id
-        evidence['worker_request_route'] = actual_request['Route']
-        state = h.memory_state()
-        assert len(state) == 1 and 'persistent orchid memory' in json.dumps(state)
-        assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id=' + h.quote(run_id)) == [['APPLIED']]
-        evidence.update(result='PASS', worker_used_gui_manifest=True, run_id=run_id, delivery=delivery, memory=state, completion=result['completion'])
+        if args.scenario == 'memory':
+            run_id = h.send_text('memory-six')
+            delivery = h.wait_delivery(run_id)
+            result = wait_success(h, run_id)
+            assert delivery['final_text'] == 'memory final: memory-six'
+            actual_request = json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id=' + h.quote(run_id))[0][0])
+            assert actual_request['Route']['ManifestRef'] == h.manifest_id and actual_request['Route']['ManifestDigest'] == h.manifest_digest and actual_request['Route']['DeploymentRevisionID'] == h.revision_id
+            evidence['worker_request_route'] = actual_request['Route']
+            state = h.memory_state()
+            assert len(state) == 1 and 'persistent orchid memory' in json.dumps(state)
+            assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id=' + h.quote(run_id)) == [['APPLIED']]
+            evidence.update(result='PASS', worker_used_gui_manifest=True, run_id=run_id, delivery=delivery, memory=state, completion=result['completion'])
+        else:
+            from faults import run, head
+            rounds = []
+            prior_summary = None
+            prior_candidate = None
+            for text in ('gui redis history seed', 'gui redis summary generate', 'gui redis summary consume'):
+                offset = len(h.model.snapshot())
+                run_id = h.send_text(text)
+                delivery = h.wait_delivery(run_id)
+                result = wait_redis_success(h, run_id)
+                actual_request = json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id=' + h.quote(run_id))[0][0])
+                route = actual_request['Route']
+                assert (route['ManifestRef'], route['ManifestDigest'], route['DeploymentRevisionID']) == (h.manifest_id, h.manifest_digest, h.revision_id)
+                candidate = result['candidate']
+                accepted = head(h, run(h, run_id))
+                assert (accepted['accepted_ref'], accepted['accepted_digest']) == (candidate['candidate_ref'], candidate['content_digest'])
+                assert candidate['parent_ref'] == (prior_candidate['candidate_ref'] if prior_candidate else '')
+                calls = h.model.snapshot()[offset:]
+                primary = [call for call in calls if call['model'] == 'joint-fixture']
+                assert len(primary) == 1
+                if prior_summary:
+                    assert prior_summary in json.dumps(primary[0]['messages'])
+                summaries = candidate['content']['snapshot']['session'].get('summaries', {})
+                if summaries:
+                    prior_summary = next(iter(summaries.values()))['summary']
+                    assert prior_summary == h.model.summary_outputs()[-1]
+                assert delivery['final_text'] == 'joint answer: ' + text
+                rounds.append({'run_id': run_id, 'route': route, 'candidate': candidate, 'head': accepted, 'delivery': delivery, 'calls': calls})
+                prior_candidate = candidate
+            assert prior_summary and len(h.model.summary_outputs()) >= 2
+            assert len({item['candidate']['content']['identity']['session_id'] for item in rounds}) == 1
+            evidence.update(result='PASS', worker_used_gui_manifest=True, rounds=rounds, session=h.session_state(), same_redis_summary=True, next_run_consumed_summary=True)
         save()
     except BaseException as exc:
         evidence.update(result='FAIL', error=h.redact(str(exc)))
@@ -150,7 +198,7 @@ def main():
             save()
             if leaked:
                 raise RuntimeError('credential leak in browser artifacts')
-    print('WORKER_MEMORY_WEB=PASS', flush=True)
+    print('WORKER_' + args.scenario.upper() + '_WEB=PASS', flush=True)
 
 if __name__ == '__main__':
     main()
