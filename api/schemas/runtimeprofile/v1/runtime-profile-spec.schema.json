@@ -405,7 +405,10 @@
       "if": {
         "properties": {
           "kind": {
-            "const": "managed_memory"
+            "enum": [
+              "managed_memory",
+              "managed_session"
+            ]
           }
         }
       },

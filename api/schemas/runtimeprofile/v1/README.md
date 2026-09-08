@@ -112,13 +112,13 @@ and [credential contract](../../../../docs/architecture-next/control-api/runtime
 
 ### Managed PostgreSQL / Redis Memory password
 
-`managed_memory` may carry the server-generated paired canonical fields
+`managed_memory` and `managed_session` may carry the server-generated paired canonical fields
 `dsn_credential_id` and `credential_audience_digest`. The latter is the exact
-role-bound PostgreSQL or Redis backend Snapshot digest, obtained through a trusted platform port.
+role-bound PostgreSQL/Redis Memory or Redis Session backend Snapshot digest, obtained through a trusted platform port.
 Neither field is accepted or returned in public config. Public write actions and
 credential state use `storage.<name>.dsn_password`; the value is a password, not
 a DSN. Deployment requires a configured, matching association for active managed
 Memory. Changing backend identity/revision requires replacement, not implicit keep.
 Published credential rotation uses the immutable association without consulting
-current backend availability. Other managed roles do not gain this
+current backend availability. Managed Session only enables Redis/session_runtime; Memory retains memory_runtime. Other managed roles do not gain this
 credential purpose.

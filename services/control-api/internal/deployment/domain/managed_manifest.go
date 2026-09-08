@@ -35,7 +35,7 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 		}
 		var credential *CredentialUse
 		if r.Credential != (CredentialUse{}) {
-			if r.Kind != profiledomain.StorageKindManagedMemory || (r.Backend.Kind != datav1.PostgreSQL && r.Backend.Kind != datav1.Redis) {
+			if !managedPasswordBackend(r.Kind, *r.Backend) {
 				return nil, ErrInvalidManifestContent
 			}
 			c := r.Credential
@@ -77,7 +77,7 @@ func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 func (r ManifestStorageResourceView) MarshalJSON() ([]byte, error) {
 	if r.Backend != nil {
 		var present *bool
-		if r.Kind == profiledomain.StorageKindManagedMemory && (r.Backend.Kind == datav1.PostgreSQL || (r.Backend.Kind == datav1.Redis && r.CredentialPresent)) {
+		if (r.Kind == profiledomain.StorageKindManagedMemory && r.Backend.Kind == datav1.PostgreSQL) || ((r.Kind == profiledomain.StorageKindManagedMemory || r.Kind == profiledomain.StorageKindManagedSession) && r.Backend.Kind == datav1.Redis && r.CredentialPresent) {
 			v := r.CredentialPresent
 			present = &v
 		}
@@ -160,7 +160,7 @@ func validateManagedWire(raw []byte) error {
 				continue
 			}
 			allowed := map[string]bool{"kind": true, "adapter_version": true, "backend": true}
-			if category == "storage" && kind == string(profiledomain.StorageKindManagedMemory) {
+			if category == "storage" && (kind == string(profiledomain.StorageKindManagedMemory) || kind == string(profiledomain.StorageKindManagedSession)) {
 				if _, ok := fields["credential"]; ok {
 					allowed["credential"] = true
 				}
@@ -184,9 +184,9 @@ func validateManagedWire(raw []byte) error {
 			if err != nil {
 				return ErrInvalidManifestContent
 			}
-			if category == "storage" && kind == string(profiledomain.StorageKindManagedMemory) {
+			if category == "storage" && (kind == string(profiledomain.StorageKindManagedMemory) || kind == string(profiledomain.StorageKindManagedSession)) {
 				credentialRaw, present := fields["credential"]
-				if snapshot.Kind == datav1.PostgreSQL || (snapshot.Kind == datav1.Redis && present) {
+				if (kind == string(profiledomain.StorageKindManagedMemory) && snapshot.Kind == datav1.PostgreSQL) || (snapshot.Kind == datav1.Redis && present) {
 					var use CredentialUse
 					if !present || strictDecodeJSON(credentialRaw, &use) != nil || !validCredentialUse(use, CredentialPurposeDSNPassword) {
 						return ErrInvalidManifestContent
@@ -210,4 +210,8 @@ func urlHost(raw string) string {
 		return ""
 	}
 	return strings.ToLower(u.Hostname())
+}
+
+func managedPasswordBackend(kind profiledomain.StorageKind, b datav1.Snapshot) bool {
+	return (kind == profiledomain.StorageKindManagedMemory && (b.Kind == datav1.PostgreSQL || b.Kind == datav1.Redis)) || (kind == profiledomain.StorageKindManagedSession && b.Kind == datav1.Redis)
 }

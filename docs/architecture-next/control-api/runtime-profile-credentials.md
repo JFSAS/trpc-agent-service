@@ -543,7 +543,7 @@ Adapter 是消费接入基础，不代表真实执行拥有方与 Worker 已经�
 其他托管角色不因此获得密码输入能力。Redis 是正式持久 Memory 后端，不配置隐式 TTL；
 密码仅用于认证，不能改变 Snapshot 固定的 Host/Port/Username/Database/TLS。
 
-Profile 使用方端口 `ManagedCredentialTargetResolver.ResolveMemoryCredentialAudience`
+Profile 使用方端口 `ManagedCredentialTargetResolver.ResolveStorageCredentialAudience`
 从可信目录解析租户作用域、确定 backend ID/revision 的 PostgreSQL／Redis Memory 目标，返回
 `Snapshot.Digest()`。服务端将这个摘要与生成的 `dsn_credential_id` 一起保存到
 内部 canonical 的 `credential_audience_digest`，不接受用户提交或在公开 config 返回。
@@ -567,3 +567,23 @@ Redis Memory 的历史无凭据 Manifest descriptor 保持 Canonical／详情读
 这不授予执行能力，新编译／发布仍要求固定凭据关联，Worker gate 也拒绝无凭据执行。
 本批使用协调同批发布；新 Redis Memory Manifest 不投递给旧 PG-only Worker，
 不滚动混用这两种实现。当前不新增协议字段或扩大运行契约版本。
+
+## Redis 托管 Session 密码与 Summary 边界
+
+`managed_session` 选择 Redis 时复用 `credentials.storage.session.dsn_password`，
+对应 `credential_states.storage.session.dsn_password`。输入值只用于认证，不是 DSN。
+公开配置仍为 kind/backend_id/backend_revision，内部同样成对保存
+`dsn_credential_id` 与 `credential_audience_digest=Snapshot.Digest()`。
+
+`ResolveStorageCredentialAudience(ctx, tenant, backendID, revision, role)` 按角色验证：
+Memory 允许 PostgreSQL／Redis 的 `memory_runtime`；Session 仅允许 Redis 的
+`session_runtime`。托管 PostgreSQL Session 暂不启用，旧 `postgres_state` 不受影响。
+保存／发布使用固定 Snapshot 的 Host/Port/Username/Database/TLS 与租户、角色范围。
+更换目标时 keep 拒绝、replace 重绑；已发布凭据的状态与轮换继续按不可变关联，
+不重新查询当前目录，不新增凭据生命周期。
+
+Worker 发布托管 Redis Session 必须携带匹配的密码引用；历史无凭据描述仍可读取，
+公开投影不额外增加 credential_present，Worker 拒绝执行缺少凭据的描述。
+Summary 与消息和状态共用同一 Session 后端快照。Session 身份仍包含
+DeploymentRevisionID，不跨 Revision 迁移 Session，也不引入新的 identity。
+本批仍协调同批发布，不将新 Session Manifest 交给旧 Worker。

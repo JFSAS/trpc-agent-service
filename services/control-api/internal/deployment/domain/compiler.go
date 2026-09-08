@@ -29,6 +29,12 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/memory", "Worker V1 Memory requires managed PostgreSQL or Redis with memory_runtime principal"))
 		}
 	}
+	if input.Platform.Version == deploymentv1.WorkerV1PlatformVersion && input.Profile.Spec.Storage["session"].Kind == profiledomain.StorageKindManagedSession {
+		b, ok := input.ManagedBackends["storage/session"]
+		if !ok || b.Kind != datav1.Redis || b.Redis == nil || b.Redis.Username != "session_runtime" {
+			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/session", "Worker V1 managed Session requires Redis with session_runtime principal"))
+		}
+	}
 	diagnostics = append(diagnostics, dataContractDiagnostics(input.Agent.Spec, input.Platform)...)
 	if len(errorDiagnostics(diagnostics)) > 0 {
 		return CompiledManifest{}, NewValidationReport(
@@ -583,10 +589,10 @@ func compileResources(
 			host, _ := snapshot.EndpointHost()
 			hosts[host] = true
 			compiledResource := ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
-			if resource.Kind == profiledomain.StorageKindManagedMemory && (snapshot.Kind == datav1.PostgreSQL || snapshot.Kind == datav1.Redis) {
+			if managedPasswordBackend(resource.Kind, snapshot) && (resource.Kind == profiledomain.StorageKindManagedMemory || platform.Version == deploymentv1.WorkerV1PlatformVersion || resource.DSNCredentialID != "" || resource.CredentialAudienceDigest != "") {
 				digest, err := snapshot.Digest()
 				if err != nil || resource.CredentialAudienceDigest != digest || resource.DSNCredentialID == "" {
-					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name)+"/dsn_credential_id", "storage", name, "Memory credential is missing or bound to a different target"))
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name)+"/dsn_credential_id", "storage", name, "Storage credential is missing or bound to a different target"))
 				} else {
 					compiledResource.Credential = credentialUse(resource.DSNCredentialID, CredentialPurposeDSNPassword, digest)
 					uses = append(uses, compiledResource.Credential)

@@ -216,7 +216,7 @@ func validateEmbedding(value any, pointer string, diagnostics *[]Diagnostic) {
 func validateStorageResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
 	if k, ok := object["kind"].(string); ok && StorageKind(k).Managed() {
 		selection := object
-		if StorageKind(k) == StorageKindManagedMemory {
+		if StorageKind(k) == StorageKindManagedMemory || StorageKind(k) == StorageKindManagedSession {
 			selection = make(map[string]any, len(object))
 			for key, v := range object {
 				selection[key] = v

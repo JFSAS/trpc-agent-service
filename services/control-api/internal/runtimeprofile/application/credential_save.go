@@ -151,7 +151,7 @@ func (s *Service) SaveCredentialDraft(ctx context.Context, command SaveCredentia
 		if err := s.checkManaged(ctx, command.TenantID, next); err != nil {
 			return err
 		}
-		if err := s.bindManagedMemoryCredentialTargets(ctx, command.TenantID, input, &next, previous); err != nil {
+		if err := s.bindManagedStorageCredentialTargets(ctx, command.TenantID, input, &next, previous); err != nil {
 			return err
 		}
 		// DSNs carry a password and destination. Resolve their non-secret part before

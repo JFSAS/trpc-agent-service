@@ -78,7 +78,7 @@ func TestPGMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := deploymentBackendAccess{targets: targets}
-			digest, err := a.ResolveMemoryCredentialAudience(context.Background(), "tenant-a", "pg", 1)
+			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "memory")
 			if (err == nil) != (username == "memory_runtime") {
 				t.Fatal("principal check", err)
 			}
@@ -89,7 +89,7 @@ func TestPGMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 					t.Fatal("digest mismatch")
 				}
 			}
-			if _, err = a.ResolveMemoryCredentialAudience(context.Background(), "tenant-b", "pg", 1); err == nil {
+			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "memory"); err == nil {
 				t.Fatal("tenant bypass")
 			}
 		})
@@ -109,7 +109,7 @@ func TestRedisMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := deploymentBackendAccess{targets: targets}
-			digest, err := a.ResolveMemoryCredentialAudience(context.Background(), "tenant-a", "pg", 1)
+			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "memory")
 			if (err == nil) != (username == "memory_runtime") {
 				t.Fatal("principal check", err)
 			}
@@ -120,7 +120,69 @@ func TestRedisMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 					t.Fatal("digest mismatch")
 				}
 			}
-			if _, err = a.ResolveMemoryCredentialAudience(context.Background(), "tenant-b", "pg", 1); err == nil {
+			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "memory"); err == nil {
+				t.Fatal("tenant bypass")
+			}
+		})
+	}
+}
+
+func TestRedisSessionPasswordTargetRequiresSessionRuntimePrincipal(t *testing.T) {
+	for _, username := range []string{"session_runtime", "memory_runtime", "runtime"} {
+		t.Run(username, func(t *testing.T) {
+			c, err := backend.NewCatalog([]backend.Entry{{ID: "pg", Revision: 1, Label: "PG Memory", Kind: backend.Redis, Roles: []backend.Role{backend.Session}, Enabled: true, TenantIDs: []string{"tenant-a"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := backend.RuntimeTarget{BackendID: "pg", BackendRevision: 1, Kind: datav1.Redis, Adapter: "managed-redis-v1", Isolation: datav1.SessionIsolation, Limits: datav1.Limits{TimeoutMS: 1000, MaxConcurrency: 1, MaxBytes: 1024}, Redis: &datav1.RedisTarget{Host: "redis.internal", Port: 6379, Database: 3, Username: username, TLS: true}}
+			targets, err := backend.NewRuntimeCatalog(c, []backend.RuntimeTarget{target})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := deploymentBackendAccess{targets: targets}
+			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "session")
+			if (err == nil) != (username == "session_runtime") {
+				t.Fatal("principal check", err)
+			}
+			if err == nil {
+				snapshot, _ := targets.ResolveSnapshot("tenant-a", backend.Selection{BackendID: "pg", Revision: 1, Role: backend.Session})
+				want, _ := snapshot.Digest()
+				if digest != want {
+					t.Fatal("digest mismatch")
+				}
+			}
+			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "session"); err == nil {
+				t.Fatal("tenant bypass")
+			}
+		})
+	}
+}
+
+func TestManagedPostgresSessionPasswordTargetRemainsDisabled(t *testing.T) {
+	for _, username := range []string{"memory_runtime", "session_runtime", "runtime"} {
+		t.Run(username, func(t *testing.T) {
+			c, err := backend.NewCatalog([]backend.Entry{{ID: "pg", Revision: 1, Label: "PG Memory", Kind: backend.PostgreSQL, Roles: []backend.Role{backend.Session}, Enabled: true, TenantIDs: []string{"tenant-a"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := backend.RuntimeTarget{BackendID: "pg", BackendRevision: 1, Kind: datav1.PostgreSQL, Adapter: "managed-postgres-v1", Isolation: datav1.SessionIsolation, Limits: datav1.Limits{TimeoutMS: 1000, MaxConcurrency: 1, MaxBytes: 1024}, PostgreSQL: &datav1.PostgresTarget{Host: "pg.internal", Port: 5432, Database: "memory", Username: username, SSLMode: "verify-full"}}
+			targets, err := backend.NewRuntimeCatalog(c, []backend.RuntimeTarget{target})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := deploymentBackendAccess{targets: targets}
+			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "session")
+			if err == nil {
+				t.Fatal("principal check", err)
+			}
+			if err == nil {
+				snapshot, _ := targets.ResolveSnapshot("tenant-a", backend.Selection{BackendID: "pg", Revision: 1, Role: backend.Session})
+				want, _ := snapshot.Digest()
+				if digest != want {
+					t.Fatal("digest mismatch")
+				}
+			}
+			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "session"); err == nil {
 				t.Fatal("tenant bypass")
 			}
 		})

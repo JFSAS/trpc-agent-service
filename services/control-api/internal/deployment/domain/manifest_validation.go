@@ -275,7 +275,7 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 				return profiledomain.Spec{}, ErrInvalidManifestContent
 			}
 			profileResource := profiledomain.StorageResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision}
-			if resource.Kind == profiledomain.StorageKindManagedMemory && (resource.Backend.Kind == datav1.PostgreSQL || (resource.Backend.Kind == datav1.Redis && resource.Credential != (CredentialUse{}))) {
+			if managedPasswordBackend(resource.Kind, *resource.Backend) && ((resource.Kind == profiledomain.StorageKindManagedMemory && resource.Backend.Kind == datav1.PostgreSQL) || resource.Credential != (CredentialUse{})) {
 				digest, err := resource.Backend.Digest()
 				if err != nil || !validCredentialUse(resource.Credential, CredentialPurposeDSNPassword) || resource.Credential.AudienceDigest != digest {
 					return profiledomain.Spec{}, ErrInvalidManifestContent

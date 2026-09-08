@@ -28,7 +28,7 @@ func TestManagedMemoryCredentialCanonicalSharedSchema(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				want := fields == "none" || (kind == "managed_memory" && fields == "pair")
+				want := fields == "none" || ((kind == "managed_memory" || kind == "managed_session") && fields == "pair")
 				canonical, report := domain.ValidateForPublication(raw, 1)
 				if report.Valid != want {
 					t.Fatalf("domain valid=%v want=%v report=%+v", report.Valid, want, report)

@@ -30,7 +30,10 @@ func (k StorageKind) Role() string {
 }
 func (r StorageResource) MarshalJSON() ([]byte, error) {
 	if r.Kind.Managed() {
-		if r.Destination != (StorageDestination{}) || (r.Kind != StorageKindManagedMemory && (r.DSNCredentialID != "" || r.CredentialAudienceDigest != "")) {
+		if (r.DSNCredentialID == "") != (r.CredentialAudienceDigest == "") {
+			return nil, ErrCredentialInput
+		}
+		if r.Destination != (StorageDestination{}) || (r.Kind != StorageKindManagedMemory && r.Kind != StorageKindManagedSession && (r.DSNCredentialID != "" || r.CredentialAudienceDigest != "")) {
 			return nil, ErrCredentialInput
 		}
 		return json.Marshal(struct {

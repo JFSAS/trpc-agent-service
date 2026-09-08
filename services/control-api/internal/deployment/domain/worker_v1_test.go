@@ -51,7 +51,7 @@ func TestWorkerV1ContractGatesAndPreservesLegacy(t *testing.T) {
 }
 
 func TestWorkerV1RoleRuleParticipatesInPinnedContractDigest(t *testing.T) {
-	if got := WorkerV1PlatformExecutionContract().Digest; got != "sha256:202027eb3daacf91cab1557f5ed7f8dc34efa814f599d472edcf8617447af545" {
+	if got := WorkerV1PlatformExecutionContract().Digest; got != "sha256:9bcb3b8fec8a0778132ac08d7fdb4eae6247492a61d3b465493054a874df0d6b" {
 		t.Fatalf("Worker role rule release identity = %s", got)
 	}
 	if got := DefaultPlatformExecutionContract().Digest; got != "sha256:e5c1019aa4fa0ea06b08f4966bc5cf154113b702f3ace93db6483fcc5a0d5d33" {

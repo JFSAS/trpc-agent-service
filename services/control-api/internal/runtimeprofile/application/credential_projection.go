@@ -40,7 +40,7 @@ func credentialSlots(spec domain.Spec) []credentialSlot {
 		slots = append(slots, credentialSlot{"knowledge", n, "embedding_api_key", r.Embedding.APIKeyCredentialID, audience(r.Kind, r.Embedding.BaseURL)})
 	}
 	for n, r := range spec.Storage {
-		if r.Kind == domain.StorageKindManagedMemory {
+		if r.Kind == domain.StorageKindManagedMemory || r.Kind == domain.StorageKindManagedSession {
 			slots = append(slots, credentialSlot{"storage", n, "dsn_password", r.DSNCredentialID, r.CredentialAudienceDigest})
 			continue
 		}

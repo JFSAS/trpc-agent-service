@@ -1762,7 +1762,7 @@ components:
               minLength: 1
               maxLength: 65536
               writeOnly: true
-              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL or Redis memory uses dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL/Redis Memory and Redis Session use dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
             expected_credential_revision:
               type: "integer"
               minimum: 0
@@ -2075,7 +2075,7 @@ components:
               minLength: 1
               maxLength: 65536
               writeOnly: true
-              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL or Redis memory uses dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL/Redis Memory and Redis Session use dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
         - type: "object"
           additionalProperties: false
           required: ["target", "action", "expected_credential_revision"]

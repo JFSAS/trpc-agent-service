@@ -65,21 +65,22 @@ func (a profileBackendAccess) CheckBackend(ctx context.Context, tenant, id strin
 	return err
 }
 
-// Only the trusted PostgreSQL or Redis Memory execution identity may receive this purpose.
+// Only role-scoped Memory (PostgreSQL/Redis) or Session (Redis) identities receive passwords.
 // Catalog availability alone never grants a runtime principal access.
-func (a deploymentBackendAccess) ResolveMemoryCredentialAudience(ctx context.Context, tenant, id string, revision uint64) (string, error) {
+func (a deploymentBackendAccess) ResolveStorageCredentialAudience(ctx context.Context, tenant, id string, revision uint64, role string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if a.targets == nil {
 		return "", backend.ErrUnavailable
 	}
-	snapshot, err := a.targets.ResolveSnapshot(tenant, backend.Selection{BackendID: id, Revision: revision, Role: backend.Memory})
+	snapshot, err := a.targets.ResolveSnapshot(tenant, backend.Selection{BackendID: id, Revision: revision, Role: backend.Role(role)})
 	if err != nil {
 		return "", err
 	}
-	principalOK := (snapshot.Kind == datav1.PostgreSQL && snapshot.PostgreSQL != nil && snapshot.PostgreSQL.Username == "memory_runtime") || (snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "memory_runtime")
-	if !principalOK || snapshot.ValidateForRole("memory") != nil {
+	principalOK := role == "memory" && ((snapshot.Kind == datav1.PostgreSQL && snapshot.PostgreSQL != nil && snapshot.PostgreSQL.Username == "memory_runtime") || (snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "memory_runtime"))
+	principalOK = principalOK || (role == "session" && snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "session_runtime")
+	if !principalOK || snapshot.ValidateForRole(role) != nil {
 		return "", backend.ErrCapability
 	}
 	return snapshot.Digest()
