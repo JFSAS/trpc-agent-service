@@ -203,8 +203,8 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	a.healthServer = &http.Server{Addr: c.HealthAddress, Handler: a.healthHandler(), ReadHeaderTimeout: c.Timing.OperationTimeout.Value()}
 	a.proofServer = &http.Server{Addr: c.InternalAddress, Handler: handler, ReadHeaderTimeout: c.Timing.OperationTimeout.Value(), ReadTimeout: c.Timing.ProofTimeout.Value(), WriteTimeout: c.Timing.ProofTimeout.Value() + c.Timing.OperationTimeout.Value(), MaxHeaderBytes: 64 * 1024}
+	trpcagent.BindLogging(a.observation.SDKLog)
 	if c.Tracing != nil {
-		trpcagent.BindLogging(a.observation.SDKLog)
 		trpcagent.BindTracing(a.tracing.Provider())
 	}
 	success = true

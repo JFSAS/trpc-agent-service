@@ -23,6 +23,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
+	"trpc.group/trpc-go/trpc-agent-go/memory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
@@ -51,7 +52,16 @@ type SummaryConfig struct {
 	EventThreshold    int64
 	AddSessionSummary bool
 }
+type MemoryConfig struct {
+	BoundKey     memory.UserKey
+	Entries      []*memory.Entry
+	BaseRevision uint64
+	Tools        []string
+	PreloadLimit int
+}
 type Request struct {
+	Memory                                *MemoryConfig
+	MaxToolCalls                          int64
 	Summary                               *SummaryConfig
 	TenantID, SessionID, RunID, AttemptID string
 	NodeID, Instruction, InputText        string
@@ -61,6 +71,7 @@ type Request struct {
 }
 type Usage struct{ InputTokens, OutputTokens, TotalTokens int }
 type Result struct {
+	Memory    *MemoryCandidate
 	FinalText string
 	Snapshot  []byte
 	Usage     Usage
@@ -156,8 +167,34 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		trace.SpanFromContext(ctx).SetAttributes(attribute.Int64("app.session.overlay.appends", appends), attribute.Int64("app.session.overlay.bytes", bytes))
 	}()
 	max := int(maxTokens)
-	a := llmagent.New(req.NodeID, llmagent.WithModel(m), llmagent.WithInstruction(req.Instruction), llmagent.WithGenerationConfig(model.GenerationConfig{MaxTokens: &max, Temperature: req.Model.Temperature, Stream: true}), llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithCodeExecutor(nil), llmagent.WithPreloadMemory(0), llmagent.WithAddSessionSummary(req.Summary != nil && req.Summary.AddSessionSummary), llmagent.WithSyncSummaryIntraRun(false), llmagent.WithMaxHistoryRuns(0), llmagent.WithPreserveSameBranch(true))
-	r := runner.NewRunner(local.key.AppName, a, runner.WithSessionService(local), runner.WithMemoryService(nil))
+	agentOptions := []llmagent.Option{llmagent.WithModel(m), llmagent.WithInstruction(req.Instruction), llmagent.WithGenerationConfig(model.GenerationConfig{MaxTokens: &max, Temperature: req.Model.Temperature, Stream: true}), llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithCodeExecutor(nil), llmagent.WithPreloadMemory(0), llmagent.WithAddSessionSummary(req.Summary != nil && req.Summary.AddSessionSummary), llmagent.WithSyncSummaryIntraRun(false), llmagent.WithMaxHistoryRuns(0), llmagent.WithPreserveSameBranch(true)}
+	runnerOptions := []runner.Option{runner.WithSessionService(local), runner.WithMemoryService(nil)}
+	var memoryAttempt *MemoryAttempt
+	var toolState *memoryToolState
+	if req.Memory != nil {
+		if req.Memory.BoundKey.AppName != req.TenantID || req.MaxToolCalls < 1 {
+			return Result{}, ErrMemoryScope
+		}
+		memoryAttempt, err = NewMemoryAttempt(ctx, memory.UserKey{AppName: local.key.AppName, UserID: local.key.UserID}, req.Memory.BoundKey, req.Memory.Entries, req.Memory.BaseRevision)
+		if err != nil {
+			return Result{}, err
+		}
+		defer memoryAttempt.Close()
+		service, traceErr := TraceMemoryService(memoryAttempt, e.Tracer)
+		if traceErr != nil {
+			return Result{}, traceErr
+		}
+		options, optionErr := BuildCapabilityOptions(CapabilityConfig{MemoryTools: req.Memory.Tools, MemoryPreloadLimit: req.Memory.PreloadLimit, AddSessionSummary: req.Summary != nil && req.Summary.AddSessionSummary}, CapabilityServices{Memory: service})
+		if optionErr != nil {
+			return Result{}, optionErr
+		}
+		toolState = newMemoryToolState(req.Memory.Tools, req.MaxToolCalls, e.Tracer)
+		agentOptions = append(agentOptions, options.Agent...)
+		agentOptions = append(agentOptions, llmagent.WithToolCallbacks(toolState.callbacks()))
+		runnerOptions = append(runnerOptions, options.Runner...)
+	}
+	a := llmagent.New(req.NodeID, agentOptions...)
+	r := runner.NewRunner(local.key.AppName, a, runnerOptions...)
 	defer func() {
 		if closeErr := r.Close(); err == nil && closeErr != nil {
 			result = Result{}
@@ -193,6 +230,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					}
 					return Result{}, err
 				}
+				if toolState != nil && toolState.failed.Load() {
+					return Result{}, ErrMemoryTool
+				}
 				if !validFinalText(result.FinalText) {
 					return Result{}, ErrFinal
 				}
@@ -205,6 +245,13 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					result.Usage.InputTokens += usage.InputTokens
 					result.Usage.OutputTokens += usage.OutputTokens
 					result.Usage.TotalTokens += usage.TotalTokens
+				}
+				if memoryAttempt != nil {
+					candidate, sealErr := memoryAttempt.Seal(ctx)
+					if sealErr != nil {
+						return Result{}, sealErr
+					}
+					result.Memory = &candidate
 				}
 				return result, nil
 			}
@@ -219,17 +266,28 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 				cancel()
 			}
 			for _, choice := range evt.Choices {
-				if len(choice.Message.ToolCalls) > 0 || len(choice.Delta.ToolCalls) > 0 {
+				if !evt.IsPartial && len(choice.Message.ToolCalls) > 0 {
+					result.FinalText = ""
+					for _, call := range choice.Message.ToolCalls {
+						if toolState == nil || !toolState.allowed[call.Function.Name] {
+							observed = ErrMemoryTool
+							cancel()
+						}
+					}
+				}
+				if req.Memory == nil && (len(choice.Message.ToolCalls) > 0 || len(choice.Delta.ToolCalls) > 0) {
 					observed = ErrFinal
 					cancel()
 					continue
 				}
-				if !evt.IsPartial && choice.Message.Role == model.RoleAssistant && len(choice.Message.ContentParts) == 0 && choice.Message.Content != "" {
+				if !evt.IsPartial && choice.Message.Role == model.RoleAssistant && len(choice.Message.ToolCalls) == 0 && len(choice.Message.ContentParts) == 0 && choice.Message.Content != "" {
 					result.FinalText = choice.Message.Content
 				}
 			}
 			if !evt.IsPartial && evt.Usage != nil {
-				result.Usage = Usage{InputTokens: evt.Usage.PromptTokens, OutputTokens: evt.Usage.CompletionTokens, TotalTokens: evt.Usage.TotalTokens}
+				result.Usage.InputTokens += evt.Usage.PromptTokens
+				result.Usage.OutputTokens += evt.Usage.CompletionTokens
+				result.Usage.TotalTokens += evt.Usage.TotalTokens
 			}
 			if observed != nil {
 				if !drain(events, e.DrainTimeout) {

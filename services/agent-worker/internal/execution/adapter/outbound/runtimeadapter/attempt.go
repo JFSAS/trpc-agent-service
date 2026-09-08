@@ -3,7 +3,9 @@ package runtimeadapter
 import (
 	"context"
 	"errors"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"sync"
+	"time"
 
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
@@ -15,21 +17,26 @@ import (
 )
 
 type attempt struct {
-	tracer       trace.Tracer
-	grant        domain.Grant
-	plan         domain.Plan
-	store        candidateStore
-	check        func(context.Context) error
-	modelKey     string
-	summaryKey   string
-	executor     trpcagent.Executor
-	capacity     int
-	mu           sync.Mutex
-	closed       bool
-	executed     bool
-	loaded       bool
-	loadedDigest string
-	resultDigest string
+	memoryStore     memoryStore
+	memoryCandidate *memorystore.Candidate
+	memoryDigest    string
+	finalText       string
+	staged          domain.Candidate
+	tracer          trace.Tracer
+	grant           domain.Grant
+	plan            domain.Plan
+	store           candidateStore
+	check           func(context.Context) error
+	modelKey        string
+	summaryKey      string
+	executor        trpcagent.Executor
+	capacity        int
+	mu              sync.Mutex
+	closed          bool
+	executed        bool
+	loaded          bool
+	loadedDigest    string
+	resultDigest    string
 }
 
 func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, resultErr error) {
@@ -73,9 +80,25 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	}
 	p := a.plan
 	g := a.grant
-	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, AcceptedSnapshot: history}
+	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, MaxToolCalls: p.MaxToolCalls, AcceptedSnapshot: history}
 	if p.Summary != nil {
 		request.Summary = &trpcagent.SummaryConfig{Model: trpcagent.Model{Endpoint: p.Summary.ModelEndpoint, Name: p.Summary.ModelName, APIKey: a.summaryKey}, EventThreshold: p.Summary.EventThreshold, AddSessionSummary: p.Summary.AddSessionSummary}
+	}
+	if p.Memory != nil {
+		scopeID, err := g.Run.Request.MemoryScopeID(p.Memory.AgentID)
+		if err != nil || a.memoryStore == nil {
+			return domain.RuntimeResult{}, application.ErrManifestInvalid
+		}
+		scope := memorystore.Scope{TenantID: p.TenantID, ID: scopeID}
+		readCtx, cancel := context.WithTimeout(ctx, time.Duration(p.Memory.Backend.Limits.TimeoutMS)*time.Millisecond)
+		readCtx, span := telemetrytrace.Start(a.tracer, readCtx, "worker.memory.load")
+		saved, err := a.memoryStore.Load(readCtx, scope)
+		telemetrytrace.End(span, memoryError(err))
+		cancel()
+		if err != nil {
+			return domain.RuntimeResult{}, memoryError(err)
+		}
+		request.Memory = &trpcagent.MemoryConfig{BoundKey: scope.Key(), Entries: saved.Entries, BaseRevision: saved.Revision, Tools: p.Memory.Tools, PreloadLimit: p.Memory.PreloadLimit}
 	}
 	result, err := a.executor.Execute(ctx, request)
 	if err != nil {
@@ -90,8 +113,22 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 		}
 		return domain.RuntimeResult{}, application.ErrRuntimeFailed
 	}
+	var memoryTimeout time.Duration
+	if p.Memory != nil {
+		if result.Memory == nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		c := result.Memory
+		a.memoryCandidate = &memorystore.Candidate{Scope: memorystore.Scope{TenantID: c.Scope.AppName, ID: c.Scope.UserID}, BaseRevision: c.BaseRevision, Entries: c.Entries}
+		a.memoryDigest, err = a.memoryCandidate.Digest()
+		if err != nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		memoryTimeout = time.Duration(p.Memory.Backend.Limits.TimeoutMS) * time.Millisecond
+	}
+	a.finalText = result.FinalText
 	a.resultDigest = domain.Digest(result.Snapshot)
-	return domain.RuntimeResult{FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
+	return domain.RuntimeResult{MemoryDigest: a.memoryDigest, MemoryTimeout: memoryTimeout, FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
 }
 func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Candidate, resultErr error) {
 	ctx, span := telemetrytrace.Start(a.tracer, ctx, "worker.session.stage", trace.WithAttributes(attribute.Int("app.storage.bytes", len(snapshot))))
@@ -134,7 +171,8 @@ func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Can
 		}
 		head = expected
 	}
-	return domain.Candidate{Ref: head.Ref, Digest: head.Digest, Parent: g.Parent}, nil
+	a.staged = domain.Candidate{Ref: head.Ref, Digest: head.Digest, Parent: g.Parent}
+	return a.staged, nil
 }
 func (a *attempt) Close() {
 	a.mu.Lock()
@@ -145,6 +183,11 @@ func (a *attempt) Close() {
 	a.closed = true
 	a.modelKey = ""
 	a.summaryKey = ""
+	if a.memoryStore != nil {
+		a.memoryStore.Close()
+		a.memoryStore = nil
+	}
+	a.memoryCandidate = nil
 	a.store.Close()
 	a.store = nil
 }

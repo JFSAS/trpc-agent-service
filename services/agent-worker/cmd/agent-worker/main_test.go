@@ -34,3 +34,15 @@ func TestProbeFailureAndPreparationRequireExplicitInput(t *testing.T) {
 		t.Fatal("remote probe accepted")
 	}
 }
+
+func TestMemoryPreparationRequiresExplicitMigrationInput(t *testing.T) {
+	t.Setenv("MEMORY_MIGRATION_DATABASE_URL", "")
+	if run([]string{"prepare-memory"}, &bytes.Buffer{}) == nil {
+		t.Fatal("implicit Memory migration URL accepted")
+	}
+	for _, args := range [][]string{{"prepare-memory", "--timeout=0"}, {"prepare-memory", "extra"}} {
+		if run(args, &bytes.Buffer{}) == nil {
+			t.Fatal("invalid preparation accepted")
+		}
+	}
+}

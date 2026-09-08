@@ -17,6 +17,7 @@ import (
 
 	protocol "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
@@ -41,11 +42,12 @@ type Options struct {
 	Observer              application.Observer
 }
 type Factory struct {
-	options   Options
-	client    *http.Client
-	mu        sync.Mutex
-	started   map[attemptKey]time.Time
-	openStore func(context.Context, string, sessionstore.Target, int) (candidateStore, error)
+	options    Options
+	client     *http.Client
+	mu         sync.Mutex
+	started    map[attemptKey]time.Time
+	openMemory func(context.Context, string, memorystore.Target, int) (memoryStore, error)
+	openStore  func(context.Context, string, sessionstore.Target, int) (candidateStore, error)
 }
 type attemptKey struct {
 	TenantID, RunID, AttemptID string
@@ -69,6 +71,9 @@ func New(o Options) (*Factory, error) {
 	f.openStore = func(ctx context.Context, dsn string, t sessionstore.Target, capacity int) (candidateStore, error) {
 		return sessionstore.Open(ctx, dsn, t, capacity)
 	}
+	f.openMemory = func(ctx context.Context, dsn string, target memorystore.Target, capacity int) (memoryStore, error) {
+		return memorystore.Open(ctx, dsn, target, capacity)
+	}
 	return f, nil
 }
 
@@ -77,6 +82,12 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	defer func() { telemetrytrace.End(span, resultErr) }()
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
+	}
+	if p.Memory != nil {
+		fixed := *p.Memory
+		fixed.Backend = fixed.Backend.Clone()
+		fixed.Tools = append([]string(nil), fixed.Tools...)
+		p.Memory = &fixed
 	}
 	if p.Summary != nil {
 		fixed := *p.Summary
@@ -135,7 +146,15 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	if p.Summary != nil {
 		summaryKey = batch[p.Summary.ModelCredential]
 	}
-	return &attempt{summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
+	var ms memoryStore
+	if p.Memory != nil {
+		ms, err = f.prepareMemory(ctx, p, batch[p.Memory.Credential])
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+	}
+	return &attempt{memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {
@@ -192,6 +211,11 @@ func requiredUses(p domain.Plan) ([]domain.CredentialUse, error) {
 		}
 		if summary.ModelCredential.CredentialID != "" && summary.ModelCredential.AudienceDigest != protocol.CredentialAudienceDigest("openai_compatible", summary.ModelEndpoint) {
 			return nil, application.ErrManifestInvalid
+		}
+	}
+	if p.Memory != nil {
+		if err := validateMemoryPlan(p); err != nil {
+			return nil, err
 		}
 	}
 	uses := p.Uses()

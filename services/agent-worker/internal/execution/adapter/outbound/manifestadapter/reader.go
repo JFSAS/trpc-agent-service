@@ -58,7 +58,15 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 	use := func(u protocol.CredentialUse) domain.CredentialUse {
 		return domain.CredentialUse{CredentialID: u.CredentialID, Purpose: u.Purpose, AudienceDigest: u.AudienceDigest}
 	}
-	p := domain.Plan{TenantID: m.TenantID, ManifestID: m.ManifestID, ManifestDigest: m.ContentDigest, DeploymentRevisionID: m.DeploymentRevisionID, ProfileID: content.Sources.Profile.ProfileID, ProfileRevision: content.Sources.Profile.RevisionNumber, NodeID: content.AgentPlan.Root, Instruction: node.Instruction, ModelEndpoint: model.BaseURL, ModelName: model.Model, MaxRunSeconds: content.Execution.MaxRunSeconds, MaxOutputTokens: content.Execution.MaxOutputTokens, ModelCredential: use(model.Credential), SessionCredential: use(storage.Credential), SessionTarget: domain.StorageTarget{Host: storage.Destination.Host, Port: uint16(storage.Destination.Port), Database: storage.Destination.Database, Username: storage.Destination.Username, SSLMode: storage.Destination.SSLMode}}
+	p := domain.Plan{TenantID: m.TenantID, ManifestID: m.ManifestID, ManifestDigest: m.ContentDigest, DeploymentRevisionID: m.DeploymentRevisionID, ProfileID: content.Sources.Profile.ProfileID, ProfileRevision: content.Sources.Profile.RevisionNumber, MaxToolCalls: content.Execution.MaxToolCalls, NodeID: content.AgentPlan.Root, Instruction: node.Instruction, ModelEndpoint: model.BaseURL, ModelName: model.Model, MaxRunSeconds: content.Execution.MaxRunSeconds, MaxOutputTokens: content.Execution.MaxOutputTokens, ModelCredential: use(model.Credential), SessionCredential: use(storage.Credential), SessionTarget: domain.StorageTarget{Host: storage.Destination.Host, Port: uint16(storage.Destination.Port), Database: storage.Destination.Database, Username: storage.Destination.Username, SSLMode: storage.Destination.SSLMode}}
+	if node.Memory != nil {
+		resource := content.Resources.Storage[node.Memory.Resource]
+		limit := 0
+		if node.Memory.PreloadLimit != nil {
+			limit = int(*node.Memory.PreloadLimit)
+		}
+		p.Memory = &domain.MemoryPlan{AgentID: content.Sources.Agent.AgentID, Backend: resource.Backend.Clone(), Credential: use(resource.Credential), Tools: append([]string(nil), node.Memory.Tools...), PreloadLimit: limit}
+	}
 	if node.Generation != nil {
 		p.Temperature = node.Generation.Temperature
 		p.NodeMaxOutputTokens = node.Generation.MaxOutputTokens

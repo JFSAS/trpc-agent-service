@@ -1,8 +1,15 @@
 package domain
 
+import (
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
+	"time"
+)
+
 // Plan is the runtime-ready projection of one fully validated immutable
 // Manifest. It carries only the V1 closure, never mutable Profile values.
 type Plan struct {
+	Memory                                                     *MemoryPlan
+	MaxToolCalls                                               int64
 	Summary                                                    *SummaryPlan
 	TenantID, ManifestID, ManifestDigest, DeploymentRevisionID string
 	ProfileID                                                  string
@@ -23,6 +30,15 @@ type SummaryPlan struct {
 	ModelCredential          CredentialUse
 	EventThreshold           int64
 	AddSessionSummary        bool
+}
+
+// MemoryPlan binds explicit node options to a fixed tenant backend and credential.
+type MemoryPlan struct {
+	AgentID      string
+	Backend      datav1.Snapshot
+	Credential   CredentialUse
+	Tools        []string
+	PreloadLimit int
 }
 
 type CredentialUse struct{ CredentialID, Purpose, AudienceDigest string }
@@ -53,10 +69,24 @@ func (p Plan) Uses() []CredentialUse {
 			uses = append(uses, use)
 		}
 	}
+	if p.Memory != nil && p.Memory.Credential.CredentialID != "" {
+		use := p.Memory.Credential
+		found := false
+		for _, existing := range uses {
+			if existing == use {
+				found = true
+			}
+		}
+		if !found {
+			uses = append(uses, use)
+		}
+	}
 	return uses
 }
 
 type RuntimeResult struct {
+	MemoryDigest                           string
+	MemoryTimeout                          time.Duration
 	FinalText                              string
 	Snapshot                               []byte
 	InputTokens, OutputTokens, TotalTokens int64

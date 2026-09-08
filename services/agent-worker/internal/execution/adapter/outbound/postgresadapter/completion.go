@@ -18,11 +18,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const completionColumns = `tenant_id,run_id,completion_id,COALESCE(attempt_id,''),kind,status,candidate_ref,candidate_digest,final_intent_id,reply_disposition,reason,completed_at,result_digest`
+const completionColumns = `tenant_id,run_id,completion_id,COALESCE(attempt_id,''),kind,status,candidate_ref,candidate_digest,final_intent_id,reply_disposition,reason,completed_at,result_digest,memory_digest,memory_status`
 
 func scanCompletion(row pgx.Row) (domain.Completion, error) {
 	var c domain.Completion
-	err := row.Scan(&c.TenantID, &c.RunID, &c.CompletionID, &c.AttemptID, &c.Kind, &c.Status, &c.Candidate.Ref, &c.Candidate.Digest, &c.FinalIntentID, &c.ReplyDisposition, &c.Reason, &c.CompletedAt, &c.ResultDigest)
+	err := row.Scan(&c.TenantID, &c.RunID, &c.CompletionID, &c.AttemptID, &c.Kind, &c.Status, &c.Candidate.Ref, &c.Candidate.Digest, &c.FinalIntentID, &c.ReplyDisposition, &c.Reason, &c.CompletedAt, &c.ResultDigest, &c.MemoryDigest, &c.MemoryStatus)
 	return c, mapped(err)
 }
 func (l *Ledger) FindCompletion(ctx context.Context, tenant, run string) (found domain.Completion, resultErr error) {
@@ -44,6 +44,9 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domai
 	defer func() { telemetrytrace.End(span, resultErr) }()
 	commitAttempted := false
 	if f.Status != domain.Succeeded && f.Status != domain.Failed {
+		return domain.Completion{}, domain.ErrInvalid
+	}
+	if f.MemoryDigest != "" && (f.Status != domain.Succeeded || !domain.DigestValid(f.MemoryDigest)) {
 		return domain.Completion{}, domain.ErrInvalid
 	}
 	if len(f.Reason) > 128 || !f.Candidate.Parent.Valid() {
@@ -88,6 +91,9 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domai
 	c := domain.Completion{TenantID: r.Request.Route.TenantID, RunID: r.Request.RunID, CompletionID: domain.StableID("cmp", r.Request.RunID), AttemptID: f.Grant.AttemptID, Kind: "ATTEMPT", Status: f.Status, ReplyDisposition: "NONE", Reason: f.Reason, CompletedAt: now}
 	if f.Status == domain.Succeeded {
 		c.Candidate = domain.Head{Ref: f.Candidate.Ref, Digest: f.Candidate.Digest}
+	}
+	if f.MemoryDigest != "" {
+		c.MemoryDigest, c.MemoryStatus = f.MemoryDigest, "PENDING"
 	}
 	var payload []byte
 	var digest string
@@ -134,7 +140,7 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domai
 			telemetrytrace.End(createSpan, resultErr)
 		}()
 		carrier := tracecontext.Capture(createCtx)
-		if _, err = tx.Exec(createCtx, `INSERT INTO execution_reply_outbox(intent_id,tenant_id,run_id,digest,payload,created_at,traceparent,tracestate) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''))`, c.FinalIntentID, c.TenantID, c.RunID, digest, payload, now, carrier.Traceparent, carrier.Tracestate); err != nil {
+		if _, err = tx.Exec(createCtx, `INSERT INTO execution_reply_outbox(intent_id,tenant_id,run_id,digest,payload,created_at,traceparent,tracestate,ready) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),$9)`, c.FinalIntentID, c.TenantID, c.RunID, digest, payload, now, carrier.Traceparent, carrier.Tracestate, c.MemoryStatus != "PENDING"); err != nil {
 			return domain.Completion{}, err
 		}
 	}
@@ -145,7 +151,7 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domai
 	return c, nil
 }
 func insertCompletion(ctx context.Context, tx pgx.Tx, r domain.Run, c domain.Completion, resultDigest string) error {
-	_, err := tx.Exec(ctx, `INSERT INTO execution_completions(tenant_id,run_id,completion_id,attempt_id,kind,status,candidate_ref,candidate_digest,final_intent_id,reply_disposition,reason,result_digest,completed_at) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9,$10,$11,$12,$13)`, c.TenantID, c.RunID, c.CompletionID, c.AttemptID, c.Kind, string(c.Status), c.Candidate.Ref, c.Candidate.Digest, c.FinalIntentID, c.ReplyDisposition, c.Reason, resultDigest, c.CompletedAt)
+	_, err := tx.Exec(ctx, `INSERT INTO execution_completions(tenant_id,run_id,completion_id,attempt_id,kind,status,candidate_ref,candidate_digest,final_intent_id,reply_disposition,reason,result_digest,completed_at,memory_digest,memory_status) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, c.TenantID, c.RunID, c.CompletionID, c.AttemptID, c.Kind, string(c.Status), c.Candidate.Ref, c.Candidate.Digest, c.FinalIntentID, c.ReplyDisposition, c.Reason, resultDigest, c.CompletedAt, c.MemoryDigest, c.MemoryStatus)
 	if err != nil {
 		return err
 	}
@@ -262,7 +268,7 @@ func (l *Ledger) PendingTracedReplies(ctx context.Context, limit int) ([]app.Tra
 	if limit < 1 {
 		return nil, domain.ErrInvalid
 	}
-	rows, err := l.pool.Query(ctx, `SELECT intent_id,digest,payload,COALESCE(traceparent,''),COALESCE(tracestate,'') FROM execution_reply_outbox WHERE published_at IS NULL ORDER BY created_at,intent_id LIMIT $1`, limit)
+	rows, err := l.pool.Query(ctx, `SELECT intent_id,digest,payload,COALESCE(traceparent,''),COALESCE(tracestate,'') FROM execution_reply_outbox WHERE published_at IS NULL AND ready ORDER BY created_at,intent_id LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +284,7 @@ func (l *Ledger) PendingTracedReplies(ctx context.Context, limit int) ([]app.Tra
 	return result, rows.Err()
 }
 func (l *Ledger) MarkReplyPublished(ctx context.Context, id, digest string) error {
-	r, err := l.pool.Exec(ctx, `UPDATE execution_reply_outbox SET published_at=COALESCE(published_at,clock_timestamp()) WHERE intent_id=$1 AND digest=$2`, id, digest)
+	r, err := l.pool.Exec(ctx, `UPDATE execution_reply_outbox SET published_at=COALESCE(published_at,clock_timestamp()) WHERE intent_id=$1 AND digest=$2 AND ready`, id, digest)
 	if err != nil {
 		return err
 	}
@@ -290,7 +296,7 @@ func (l *Ledger) MarkReplyPublished(ctx context.Context, id, digest string) erro
 func (l *Ledger) Final(ctx context.Context, id string) (domain.Final, error) {
 	var f domain.Final
 	var raw []byte
-	err := l.pool.QueryRow(ctx, `SELECT o.tenant_id,o.digest,o.payload,r.request_json FROM execution_reply_outbox o JOIN execution_runs r ON r.tenant_id=o.tenant_id AND r.run_id=o.run_id JOIN execution_completions c ON c.tenant_id=o.tenant_id AND c.run_id=o.run_id AND c.final_intent_id=o.intent_id WHERE o.intent_id=$1`, id).Scan(&f.TenantID, &f.Digest, &f.Payload, &raw)
+	err := l.pool.QueryRow(ctx, `SELECT o.tenant_id,o.digest,o.payload,r.request_json FROM execution_reply_outbox o JOIN execution_runs r ON r.tenant_id=o.tenant_id AND r.run_id=o.run_id JOIN execution_completions c ON c.tenant_id=o.tenant_id AND c.run_id=o.run_id AND c.final_intent_id=o.intent_id WHERE o.intent_id=$1 AND o.ready`, id).Scan(&f.TenantID, &f.Digest, &f.Payload, &raw)
 	if err != nil {
 		return f, mapped(err)
 	}

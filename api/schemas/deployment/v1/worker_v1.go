@@ -31,13 +31,13 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion || (expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest) {
 		return reject("contract identity")
 	}
-	// Summary alone is executable. Other runtime data services remain closed.
+	// Summary and explicitly declared PostgreSQL Memory are executable.
 	if c.Runtime != nil && (c.Runtime.Summary == nil || c.Runtime.Summary.Validate() != nil) {
 		return reject("invalid session summary configuration")
 	}
 	for _, node := range c.AgentPlan.Nodes {
-		if node.Memory != nil || node.Artifact != nil {
-			return reject("memory and artifact are deferred")
+		if node.Artifact != nil {
+			return reject("artifact is deferred")
 		}
 		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
 			return reject("summary consumption requires enabled runtime summary")
@@ -72,8 +72,12 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	}
 	sessionKey, ok := c.StorageRoles["session"]
 	session, exists := c.Resources.Storage[sessionKey]
-	if !ok || !exists || len(c.StorageRoles) != 1 || len(c.Resources.Storage) != 1 {
-		return reject("session-only storage is required; memory is deferred")
+	storageCount := 1
+	if node.Memory != nil {
+		storageCount++
+	}
+	if !ok || !exists || len(c.StorageRoles) != storageCount || len(c.Resources.Storage) != storageCount {
+		return reject("storage must equal explicit Session and Memory closure")
 	}
 	if session.Kind != "postgres_state" || session.AdapterVersion != "postgres-state-v1" || session.Credential.Purpose != "dsn" {
 		return reject("session adapter")
@@ -86,10 +90,38 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		return reject("credential audience does not match fixed destination")
 	}
 	credentials := map[string]CredentialUse{session.Credential.CredentialID: session.Credential}
+	if node.Memory != nil {
+		m := node.Memory
+		if m.Validate() != nil || c.Execution.MaxToolCalls < 1 || c.Sources.Agent.AgentID == "" {
+			return reject("invalid memory configuration")
+		}
+		key, ok := c.StorageRoles["memory"]
+		resource, exists := c.Resources.Storage[key]
+		if !ok || !exists || key != m.Resource || key == sessionKey || resource.Kind != "managed_memory" || resource.AdapterVersion != "managed-memory-v1" || resource.Backend == nil {
+			return reject("memory adapter binding")
+		}
+		backend := resource.Backend
+		d, err := backend.Digest()
+		if err != nil || backend.ValidateForRole("memory") != nil || backend.TenantID != c.TenantID || backend.Kind != "postgresql" || backend.PostgreSQL.Username != "memory_runtime" {
+			return reject("fixed PostgreSQL memory backend")
+		}
+		u := resource.Credential
+		if u.CredentialID == "" || u.Purpose != "dsn_password" || u.AudienceDigest != d {
+			return reject("memory credential audience")
+		}
+		if prior, ok := credentials[u.CredentialID]; ok && prior != u {
+			return reject("credential closure")
+		}
+		credentials[u.CredentialID] = u
+		expectedHosts = append(expectedHosts, strings.ToLower(backend.PostgreSQL.Host))
+	}
 	for key := range selectedModels {
 		model, exists := c.Resources.Models[key]
 		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
 			return reject("model adapter")
+		}
+		if key == node.ModelResource && node.Memory != nil && len(node.Memory.Tools) > 0 && !slices.Contains(model.Capabilities, "tool_call") {
+			return reject("memory tools require model tool_call capability")
 		}
 		endpoint, err := url.Parse(model.BaseURL)
 		if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(model.BaseURL, "#") || endpoint.Hostname() == "" {

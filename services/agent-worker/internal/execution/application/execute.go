@@ -16,6 +16,8 @@ var (
 	ErrDependency          = errors.New("execution dependency temporarily unavailable")
 	ErrCredentialDenied    = errors.New("execution credentials rejected")
 	ErrRuntimeFailed       = errors.New("agent runtime failed")
+	ErrMemoryApply         = errors.New("accepted memory application failed")
+	ErrMemoryFinalize      = errors.New("accepted memory finalization failed")
 	ErrSessionInvalid      = errors.New("session snapshot failed validation")
 	ErrSessionPreparation  = errors.New("session store requires explicit preparation")
 )
@@ -34,6 +36,13 @@ type AttemptRuntime interface {
 	Stage(context.Context, []byte) (domain.Candidate, error)
 	Close()
 }
+
+// AcceptedMemoryRuntime is optional. The ordinary runtime contract remains
+// unchanged; Memory-enabled results require this post-accept-only operation.
+type AcceptedMemoryRuntime interface {
+	ApplyAccepted(context.Context, domain.Completion) error
+}
+
 type Processor struct {
 	ledger    Ledger
 	manifests ManifestReader
@@ -121,7 +130,9 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 			}
 		}
 	}()
-	defer func() { close(stopRenew); <-renewDone }()
+	var stopRenewOnce sync.Once
+	stopRenewal := func() { stopRenewOnce.Do(func() { close(stopRenew) }); <-renewDone }
+	defer stopRenewal()
 	check := func(ctx context.Context) error {
 		start := time.Now()
 		err := p.ledger.Check(ctx, g)
@@ -184,6 +195,14 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	if err != nil {
 		return fail(err)
 	}
+	var memoryRuntime AcceptedMemoryRuntime
+	if result.MemoryDigest != "" {
+		var ok bool
+		memoryRuntime, ok = runtime.(AcceptedMemoryRuntime)
+		if !ok || !domain.DigestValid(result.MemoryDigest) || result.MemoryTimeout <= 0 {
+			return fail(ErrRuntimeFailed)
+		}
+	}
 	if err = check(attemptCtx); err != nil {
 		return fail(err)
 	}
@@ -193,12 +212,49 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	if err != nil {
 		return fail(err)
 	}
-	finish := domain.Finish{Grant: g, Status: domain.Succeeded, Candidate: candidate, FinalText: result.FinalText}
+	finish := domain.Finish{Grant: g, Status: domain.Succeeded, Candidate: candidate, FinalText: result.FinalText, MemoryDigest: result.MemoryDigest}
+	accepted := func(c domain.Completion) error {
+		if memoryRuntime == nil {
+			return nil
+		}
+		if c.TenantID != r.Request.Route.TenantID || c.RunID != r.Request.RunID || c.AttemptID != g.AttemptID || c.Kind != "ATTEMPT" || c.Status != domain.Succeeded || c.ResultDigest != domain.FinishDigest(finish) || c.MemoryDigest != result.MemoryDigest || c.Candidate != (domain.Head{Ref: candidate.Ref, Digest: candidate.Digest}) {
+			return domain.ErrFenced
+		}
+		// Complete has ended the Attempt. Renewal/check now reject it by design;
+		// synchronous Memory application uses the accepted identity, not that lease.
+		stopRenewal()
+		applyCtx, applyCancel := context.WithTimeout(ctx, result.MemoryTimeout)
+		applyStart := time.Now()
+		applyErr := memoryRuntime.ApplyAccepted(applyCtx, c)
+		p.observe(applyCtx, "memory_apply", r, g.AttemptID, applyStart, applyErr)
+		applyCancel()
+		// Use a fresh bounded child of the caller for the visibility decision: an
+		// expired backend call must still be able to release a fixed failure Final.
+		finalCtx, finalCancel := context.WithTimeout(ctx, result.MemoryTimeout)
+		defer finalCancel()
+		finalStart := time.Now()
+		finalErr := p.ledger.FinalizeMemory(finalCtx, c, applyErr == nil)
+		if finalErr != nil && finalCtx.Err() == nil && !errors.Is(finalErr, domain.ErrConflict) && !errors.Is(finalErr, domain.ErrInvalid) {
+			// A local commit response can be lost. Repeat only the identical decision.
+			finalErr = p.ledger.FinalizeMemory(finalCtx, c, applyErr == nil)
+		}
+		p.observe(finalCtx, "memory_finalize", r, g.AttemptID, finalStart, finalErr)
+		if applyErr != nil {
+			if finalErr != nil {
+				return errors.Join(ErrMemoryApply, ErrMemoryFinalize)
+			}
+			return ErrMemoryApply
+		}
+		if finalErr != nil {
+			return ErrMemoryFinalize
+		}
+		return nil
+	}
 	start = time.Now()
-	_, err = p.ledger.Complete(attemptCtx, finish)
+	completed, err := p.ledger.Complete(attemptCtx, finish)
 	p.observe(attemptCtx, "complete", r, g.AttemptID, start, err)
 	if err == nil {
-		return nil
+		return accepted(completed)
 	}
 	// Query stable identity after uncertain Completion before attempting any
 	// other state change. A retry uses the identical in-memory candidate/result.
@@ -206,7 +262,7 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	defer proofCancel()
 	if committed, e := p.ledger.FindCompletion(proofCtx, r.Request.Route.TenantID, r.Request.RunID); e == nil {
 		if committed.AttemptID == g.AttemptID && committed.Status == domain.Succeeded && committed.ResultDigest == domain.FinishDigest(finish) {
-			return nil
+			return accepted(committed)
 		}
 		return domain.ErrFenced
 	}
@@ -217,7 +273,10 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 		return e
 	}
 	start = time.Now()
-	_, err = p.ledger.Complete(attemptCtx, finish)
+	completed, err = p.ledger.Complete(attemptCtx, finish)
 	p.observe(attemptCtx, "complete", r, g.AttemptID, start, err)
-	return err
+	if err != nil {
+		return err
+	}
+	return accepted(completed)
 }

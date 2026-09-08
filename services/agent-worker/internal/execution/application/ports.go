@@ -25,6 +25,7 @@ type Ledger interface {
 	Check(context.Context, domain.Grant) error
 	MarkExecuting(context.Context, domain.Grant) error
 	Complete(context.Context, domain.Finish) (domain.Completion, error)
+	FinalizeMemory(context.Context, domain.Completion, bool) error
 	FailAttempt(context.Context, domain.Grant, string, bool) error
 	FindCompletion(context.Context, string, string) (domain.Completion, error)
 	Terminalize(context.Context, string, string, string) (bool, error)
