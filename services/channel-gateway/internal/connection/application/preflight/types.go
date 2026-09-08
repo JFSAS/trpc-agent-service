@@ -44,6 +44,7 @@ type Credential struct {
 	Configured  bool
 }
 type Grant struct {
+	EndpointProfile                                        string
 	AllowConnectionProbe                                   bool
 	ReceiveMode, DiagnosticPolicy, EffectiveConfigDigest   string
 	PreflightID, ScopeID, SourceEpoch, TenantID, AccountID string
@@ -81,6 +82,7 @@ type ProbeResult struct {
 	LastErrorAt    *time.Time
 }
 type ProbeRequest struct {
+	EndpointProfile  string
 	Token            Secret
 	ExpectedIdentity string
 	ExpectedWebhook  *string

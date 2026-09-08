@@ -33,7 +33,7 @@ func ValidateGrant(g Grant, cfg ConfigSnapshot) error {
 		if g.DiagnosticPolicy != wire.PreflightReceiveModesPolicy && g.DiagnosticPolicy != "wecom_long_connection_v1" {
 			return ErrInvalid
 		}
-		effective, e := wire.PreflightEffectiveConfigDigest(g.ScopeID, g.SourceEpoch, g.ReceiveMode, g.ConnectionRevision, cfg.PublicOrigin, cfg.OriginStatus)
+		effective, e := wire.PreflightEffectiveConfigDigest(g.ScopeID, g.SourceEpoch, g.ReceiveMode, g.ConnectionRevision, cfg.PublicOrigin, cfg.OriginStatus, g.EndpointProfile)
 		if e != nil || effective != g.EffectiveConfigDigest {
 			return ErrConflict
 		}
@@ -110,7 +110,7 @@ func (s Service) Execute(ctx context.Context, g Grant, cfg ConfigSnapshot) (Resu
 			value := *cfg.PublicOrigin + g.WebhookPath
 			expected = &value
 		}
-		probe, err = s.Probe.Inspect(ctx, ProbeRequest{Token: token, ExpectedIdentity: g.ProviderAccountID, ExpectedWebhook: expected})
+		probe, err = s.Probe.Inspect(ctx, ProbeRequest{EndpointProfile: g.EndpointProfile, Token: token, ExpectedIdentity: g.ProviderAccountID, ExpectedWebhook: expected})
 		if err != nil {
 			return Result{}, stableError(err)
 		}

@@ -195,6 +195,13 @@
     },
     "bot_secret_version": {
       "$ref": "common.schema.json#/$defs/version"
+    },
+    "endpoint_profile": {
+      "type": "string",
+      "enum": [
+        "official",
+        "test"
+      ]
     }
   },
   "required": [
@@ -456,6 +463,13 @@
           },
           "origin_status": {
             "const": "PUBLIC_ORIGIN_NOT_APPLICABLE"
+          },
+          "endpoint_profile": {
+            "type": "string",
+            "enum": [
+              "official",
+              "test"
+            ]
           }
         }
       },
@@ -472,6 +486,13 @@
               "PUBLIC_ORIGIN_STATIC_VALID",
               "PUBLIC_ORIGIN_INVALID",
               "PUBLIC_ORIGIN_NOT_PUBLIC"
+            ]
+          },
+          "endpoint_profile": {
+            "type": "string",
+            "enum": [
+              "official",
+              "test"
             ]
           }
         }
@@ -498,6 +519,13 @@
           },
           "allow_connection_probe": {
             "const": true
+          },
+          "endpoint_profile": {
+            "type": "string",
+            "enum": [
+              "official",
+              "test"
+            ]
           }
         },
         "required": [
@@ -534,6 +562,13 @@
             "enum": [
               "long_polling",
               "webhook"
+            ]
+          },
+          "endpoint_profile": {
+            "type": "string",
+            "enum": [
+              "official",
+              "test"
             ]
           }
         },

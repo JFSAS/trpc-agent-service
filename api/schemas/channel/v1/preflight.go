@@ -36,6 +36,7 @@ type PreflightCreated struct {
 type PreflightView struct {
 	BotSecretVersion       int64            `json:"bot_secret_version,omitempty"`
 	AllowConnectionProbe   bool             `json:"allow_connection_probe,omitempty"`
+	EndpointProfile        string           `json:"endpoint_profile,omitempty"`
 	ReceiveMode            string           `json:"receive_mode,omitempty"`
 	DiagnosticPolicy       string           `json:"diagnostic_policy,omitempty"`
 	EffectiveConfigDigest  string           `json:"effective_config_digest,omitempty"`
@@ -84,6 +85,7 @@ type PreflightCredential struct {
 }
 type PreflightGrant struct {
 	AllowConnectionProbe    bool                `json:"allow_connection_probe,omitempty"`
+	EndpointProfile         string              `json:"endpoint_profile,omitempty"`
 	ReceiveMode             string              `json:"receive_mode,omitempty"`
 	DiagnosticPolicy        string              `json:"diagnostic_policy,omitempty"`
 	EffectiveConfigDigest   string              `json:"effective_config_digest,omitempty"`
@@ -125,6 +127,7 @@ type PreflightResolveResponse struct {
 	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
 }
 type PreflightCompleteRequest struct {
+	EndpointProfile       string           `json:"endpoint_profile,omitempty"`
 	ReceiveMode           string           `json:"receive_mode,omitempty"`
 	DiagnosticPolicy      string           `json:"diagnostic_policy,omitempty"`
 	EffectiveConfigDigest string           `json:"effective_config_digest,omitempty"`
@@ -388,7 +391,7 @@ func validatePreflightSemantics(name string, raw []byte) error {
 			return ErrInvalidDocument
 		}
 		if result.DiagnosticPolicy != "" {
-			effective, e := PreflightEffectiveConfigDigest(result.ScopeID, result.SourceEpoch, result.ReceiveMode, result.ConnectionRevision, result.ExpectedPublicOrigin, result.OriginStatus)
+			effective, e := PreflightEffectiveConfigDigest(result.ScopeID, result.SourceEpoch, result.ReceiveMode, result.ConnectionRevision, result.ExpectedPublicOrigin, result.OriginStatus, result.EndpointProfile)
 			if e != nil || effective != result.EffectiveConfigDigest {
 				return ErrInvalidDocument
 			}

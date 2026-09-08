@@ -21,7 +21,7 @@ type PreflightResultBase = Omit<ChannelPreflightReceipt, "status_url"> & {
   gateway_config_freshness: "UNCONFIRMED" | null; expected_public_origin: string | null; checks: PreflightCheck[];
 };
 export type TelegramPreflightResult = PreflightResultBase & {
-  provider: "telegram"; receive_mode?: TelegramReceiveMode; diagnostic_policy?: "telegram-receive-modes-v1"; bot_token_version: number;
+  provider: "telegram"; endpoint_profile?: "official" | "test"; receive_mode?: TelegramReceiveMode; diagnostic_policy?: "telegram-receive-modes-v1"; bot_token_version: number;
 };
 export type WeComPreflightResult = PreflightResultBase & {
   provider: "wecom"; receive_mode: "long_connection"; diagnostic_policy: "wecom_long_connection_v1";
@@ -118,7 +118,8 @@ function result(v: unknown, t: string, a: string, id: string): v is ChannelPrefl
   const modern = Object.hasOwn(v, "diagnostic_policy");
   const mode = modern ? v.receive_mode : "webhook";
   const digest = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
-  const extraKeys = modern ? ["receive_mode", "diagnostic_policy", ...(Object.hasOwn(v, "effective_config_digest") ? ["effective_config_digest"] : [])] : [];
+  if (v.endpoint_profile !== undefined && !["official", "test"].includes(String(v.endpoint_profile))) return false;
+  const extraKeys = modern ? [...(Object.hasOwn(v, "endpoint_profile") ? ["endpoint_profile"] : []), "receive_mode", "diagnostic_policy", ...(Object.hasOwn(v, "effective_config_digest") ? ["effective_config_digest"] : [])] : [];
   if (!isTelegramReceiveMode(mode) || modern && (v.diagnostic_policy !== "telegram-receive-modes-v1" || (v.gateway_config_digest === null ? Object.hasOwn(v, "effective_config_digest") : !digest(v.effective_config_digest)))) return false;
   if (!fields(v, [...resultKeys, ...extraKeys]) || v.preflight_id !== id || v.tenant_id !== t || v.account_id !== a || v.provider !== "telegram" || typeof v.provider_account_id !== "string" || !/^[0-9]{1,1024}$/.test(v.provider_account_id) || !validPreflightId(v.requested_by)) return false;
   if (![v.account_revision, v.connection_revision, v.bot_token_version].every(version) || !list(v.state, ["QUEUED", "RUNNING", "COMPLETED", "TIMED_OUT", "STALE"]) || !list(v.outcome, ["PASS", "WARN", "FAIL", "UNKNOWN"]) || !list(v.freshness, ["NOT_CHECKED", "CURRENT", "STALE", "EXPIRED"]) || typeof v.metadata_changed !== "boolean" || typeof v.reason_code !== "string" || !/^CHANNEL_[A-Z_]{1,100}$/.test(v.reason_code)) return false;

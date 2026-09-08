@@ -66,7 +66,7 @@ func (cl *PreflightClient) Claim(ctx context.Context, r p.ClaimRequest) (*p.Gran
 	if err := wire.Decode("preflight-grant.schema.json", raw, &w); err != nil {
 		return nil, preflightWireError(err)
 	}
-	g := p.Grant{AllowConnectionProbe: w.AllowConnectionProbe, ReceiveMode: w.ReceiveMode, DiagnosticPolicy: w.DiagnosticPolicy, EffectiveConfigDigest: w.EffectiveConfigDigest, PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
+	g := p.Grant{EndpointProfile: w.EndpointProfile, AllowConnectionProbe: w.AllowConnectionProbe, ReceiveMode: w.ReceiveMode, DiagnosticPolicy: w.DiagnosticPolicy, EffectiveConfigDigest: w.EffectiveConfigDigest, PreflightID: w.PreflightID, ScopeID: w.ScopeID, SourceEpoch: w.SourceEpoch, TenantID: w.TenantID, AccountID: w.AccountID, Provider: w.Provider, ProviderAccountID: w.ProviderAccountID, WebhookPath: w.WebhookPath, AccountRevision: w.AccountRevision, ConnectionRevision: w.ConnectionRevision, LeaseEpoch: w.LeaseEpoch, Credential: p.Credential{Purpose: w.Credentials.Purpose, ID: w.Credentials.CredentialID, Version: w.Credentials.CredentialVersion, Configured: w.Credentials.Configured}, WebhookSecretConfigured: w.WebhookSecretConfigured, ServerTime: w.ServerTime, LeaseExpiresAt: w.LeaseExpiresAt, JobDeadlineAt: w.JobDeadlineAt, ConfigDigest: w.GatewayConfigDigest, Request: r}
 	if err := p.ValidateGrant(g, r.Config); err != nil {
 		return nil, err
 	}
@@ -119,6 +119,7 @@ func (cl *PreflightClient) Complete(ctx context.Context, g p.Grant, r p.Result) 
 	req := wire.PreflightCompleteRequest{SchemaVersion: 1, ScopeID: g.ScopeID, SourceEpoch: g.SourceEpoch, InstanceEpoch: g.Request.InstanceEpoch, LeaseEpoch: g.LeaseEpoch, ClaimToken: g.Request.Token.Reveal(), GatewayConfigDigest: r.Config.Digest, ExpectedPublicOrigin: r.Config.PublicOrigin, ObservedAt: r.ObservedAt, Checks: preflightWireChecks(r.Checks)}
 	if g.DiagnosticPolicy != "" {
 		req.ReceiveMode = g.ReceiveMode
+		req.EndpointProfile = g.EndpointProfile
 		req.DiagnosticPolicy = g.DiagnosticPolicy
 		req.EffectiveConfigDigest = g.EffectiveConfigDigest
 		req.ConnectionRevision = g.ConnectionRevision

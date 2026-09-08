@@ -1,3 +1,4 @@
+export type TelegramEndpointProfile = "official" | "test";
 /** Closed public Channel V1 DTOs; internal workload/credential-resolve APIs are not browser APIs. */
 export type ChannelProvider = "telegram" | "wecom";
 export type TelegramReceiveMode = "long_polling" | "webhook";
@@ -13,7 +14,7 @@ export type ChannelAccount = {
   tenant_id: string; account_id: string; provider: ChannelProvider; provider_account_id: string;
   name: string; description: string; account_revision: number; connection_revision: number;
   min_route_generation: number; enabled: boolean;
-  config: { webhook_path?: string; bot_id?: string; receive_mode?: TelegramReceiveMode };
+  config: { webhook_path?: string; bot_id?: string; receive_mode?: TelegramReceiveMode; endpoint_profile?: TelegramEndpointProfile };
   credentials: ChannelCredentialStatus[]; created_by: string; created_at: string; updated_at: string;
 };
 export type ChannelBinding = {
@@ -44,10 +45,10 @@ export type ChannelBindingPage = { bindings: ChannelBinding[]; next_cursor?: str
 export type CredentialEdit = { action: "replace"; value: string } | { action: "keep" | "clear"; value?: never };
 export type CreateAccountInput = {
   provider: ChannelProvider; provider_account_id: string; name: string; description?: string;
-  config?: { receive_mode: TelegramReceiveMode };
+  config?: { receive_mode: TelegramReceiveMode; endpoint_profile?: TelegramEndpointProfile };
   credentials: Partial<Record<CredentialPurpose, { action: "replace"; value: string }>>;
 };
-export type UpdateAccountInput = { expected_account_revision: number; name?: string; description?: string; config?: { receive_mode: TelegramReceiveMode } };
+export type UpdateAccountInput = { expected_account_revision: number; name?: string; description?: string; config?: { receive_mode: TelegramReceiveMode; endpoint_profile?: TelegramEndpointProfile } };
 export type UpdateCredentialInput = { expected_account_revision: number; expected_credential_version: number } & CredentialEdit;
 export type AccountEnabledInput = { expected_account_revision: number; enabled: boolean };
 export type CreateBindingInput = { account_id: string; target: ChannelTarget };
@@ -82,6 +83,7 @@ function accountShape(value: unknown, legacy = false): boolean {
   if (typeof value.min_route_generation !== "number" || !Number.isSafeInteger(value.min_route_generation) || value.min_route_generation < 0) return false;
   if (value.provider === "telegram" ? typeof value.config.webhook_path !== "string" : typeof value.config.bot_id !== "string") return false;
   if (value.provider === "telegram" ? !(legacy ? value.config.receive_mode === undefined : isTelegramReceiveMode(value.config.receive_mode)) : value.config.receive_mode !== undefined) return false;
+  if (value.config.endpoint_profile !== undefined && (value.provider !== "telegram" || !["official", "test"].includes(String(value.config.endpoint_profile)))) return false;
   return Array.isArray(value.credentials) && value.credentials.every((item) => object(item) && typeof item.purpose === "string" && positive(item.credential_version) && typeof item.configured === "boolean");
 }
 function bindingShape(value: unknown): boolean {
@@ -174,7 +176,7 @@ export const channelApi = {
     }
     const init = json("POST", {
       provider: input.provider, provider_account_id: input.provider_account_id, name: input.name,
-      ...(input.provider === "telegram" && input.config?.receive_mode !== undefined ? { config: { receive_mode: input.config.receive_mode } } : {}),
+      ...(input.provider === "telegram" && input.config?.receive_mode !== undefined ? { config: { receive_mode: input.config.receive_mode, ...(input.config.endpoint_profile !== undefined ? {endpoint_profile: input.config.endpoint_profile} : {}) } } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}), credentials,
     }, key);
     if (contract) init.headers = { ...init.headers, "X-Channel-Create-Contract": contract };
@@ -183,7 +185,7 @@ export const channelApi = {
   updateAccount(tenant: string, id: string, input: UpdateAccountInput, key: string) {
     return request<ChannelCommandResult>(path(tenant, "channel-accounts", id), json("PATCH", {
       expected_account_revision: input.expected_account_revision,
-      ...(input.config?.receive_mode !== undefined ? { config: { receive_mode: input.config.receive_mode } } : {}),
+      ...(input.config?.receive_mode !== undefined ? { config: { receive_mode: input.config.receive_mode, ...(input.config.endpoint_profile !== undefined ? {endpoint_profile: input.config.endpoint_profile} : {}) } } : {}),
       ...(input.name !== undefined ? { name: input.name } : {}), ...(input.description !== undefined ? { description: input.description } : {}),
     }, key));
   },

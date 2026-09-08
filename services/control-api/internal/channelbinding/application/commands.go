@@ -176,7 +176,8 @@ func (s *Service) readTarget(ctx context.Context, actor Actor, selector domain.T
 // CreateAccountInput never accepts a tenant, endpoint, credential reference or
 // enabled flag. Physical identity normalization precedes MAC canonicalization.
 type AccountConfigInput struct {
-	ReceiveMode string `json:"receive_mode"`
+	ReceiveMode     string  `json:"receive_mode"`
+	EndpointProfile *string `json:"endpoint_profile,omitempty"`
 }
 
 type CreateAccountInput struct {
@@ -212,7 +213,13 @@ func (s *Service) CreateAccount(ctx context.Context, actor Actor, key string, in
 		if !domain.ValidReceiveMode(mode) {
 			return CommandResult{}, invalid("/config/receive_mode")
 		}
-		input.Config = &AccountConfigInput{ReceiveMode: mode}
+		if input.Config == nil {
+			input.Config = &AccountConfigInput{}
+		}
+		input.Config.ReceiveMode = mode
+		if input.Config.EndpointProfile != nil && *input.Config.EndpointProfile != "official" && *input.Config.EndpointProfile != "test" {
+			return CommandResult{}, invalid("/config/endpoint_profile")
+		}
 	} else if input.Config != nil {
 		return CommandResult{}, invalid("/config")
 	}
@@ -242,6 +249,9 @@ func (s *Service) CreateAccount(ctx context.Context, actor Actor, key string, in
 		a, err := domain.NewAccount(actor.TenantID, id, s.deps.ScopeID, actor.UserID, input.Provider, physical, input.Name, input.Description, s.deps.Now(), mode)
 		if err != nil {
 			return nil, err
+		}
+		if input.Config != nil && input.Config.EndpointProfile != nil && *input.Config.EndpointProfile == "test" {
+			a.Config.EndpointProfile = "test"
 		}
 		records := make([]domain.CredentialRecord, 0, len(allowed))
 		for _, purpose := range allowed {
@@ -303,7 +313,14 @@ func (s *Service) UpdateAccount(ctx context.Context, actor Actor, id, key string
 			if input.Config != nil {
 				mode = &input.Config.ReceiveMode
 			}
-			updated, changed, err := a.Account.ChangeConfiguration(input.ExpectedAccountRevision, input.Name, input.Description, mode, s.deps.Now())
+			var endpoint []string
+			if input.Config != nil && input.Config.EndpointProfile != nil {
+				endpoint = []string{*input.Config.EndpointProfile}
+			}
+			if mode != nil && *mode == "" {
+				mode = nil
+			}
+			updated, changed, err := a.Account.ChangeConfiguration(input.ExpectedAccountRevision, input.Name, input.Description, mode, s.deps.Now(), endpoint...)
 			if err != nil {
 				return CommandResult{}, err
 			}
