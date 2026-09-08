@@ -96,6 +96,35 @@ Control domain clone/presence 校验。省略字段保留旧编码；严格解�
 新 Manifest 在实际 Reader 中先完成 schema、digest 与来源校验，再返回
 unsupported；非法 wire 返回 invalid，不生成可执行 Plan。
 
-后续仍需后端资源描述、编译闭包、Summary 模型依赖、Memory 工具重名校验，
-以及 Worker 对应适配/候选持久化/真实后端回归全部就绪后，再逐能力替换
+后端资源描述、编译闭包、Summary 模型依赖和最终工具名校验已在下述联合批次补齐。
+Worker 对应适配/候选持久化/真实后端回归全部就绪后，再逐能力替换
 拒绝门禁。不得以新增 DTO 或目录可选择作为开放生产能力的依据。
+
+
+## 完整编译与 Manifest → SDK 桥接（2026-09-09）
+
+Control 后端编译与完整应用切片已集成：managed Snapshot / DTO / 公开投影、
+Memory / Artifact / Summary 最小资源闭包、Summary 模型依赖、最终 provider
+工具名称碰撞校验，以及 Deployment resolver、Profile BackendAccess 和
+SHA256 pin 目录 Bootstrap 接线。默认 Worker V1 静态合同仍不登记这些
+未验收运行能力；目录存在不自动开启 Adapter。
+
+Worker 新增 `BuildManifestCapabilityOptions`，把已认证且完成 digest/schema
+校验的固定 Manifest 与选中 LLM 节点映射到 SDK Agent/Runner options。
+它验证组件、storage role/resource、Backend tenant/role、Artifact metadata
+contract、Summary 模型/Session 依赖与 Knowledge 维度，不隐式启用可用服务。
+目前 Knowledge 只接受一个明确资源引用，多资源需要显式组合服务后再开放。
+该桥接借用最终服务，调用者仍负责从同一固定资源构造服务、授权、生命周期、
+Summary Summarizer/Session 安装及 Memory Attempt 提交语义。
+
+`test-worker-manifest-sdk.sh` 重新运行真实 Control Compile，逐字节比对冻结
+Manifest fixture，然后执行真实 SDK LLMAgent → memory_add → memory_load →
+Final。模型为确定性测试 Model；Memory 为 traced Attempt 私有视图；生成的
+候选保留固定 scope/base revision。真实 SDK Tool span 下观察到 memory.write
+与 memory.read，正文未进入 OTLP。这个实验不连接 fixture 描述中的 Redis，
+不运行生产 runtime factory，不写 accepted Attempt / 正式 Memory；它证明
+编译产物和 SDK 选择契约已经对齐，而非完整存储上线。
+
+下一运行切片：平台固定后端连接/凭据适配、Session PG/Redis 与 Summary
+持久语义、Memory accepted candidate/CAS/恢复、Artifact S3+SQL 元数据、
+Knowledge 检索与独立导入；随后联合 Web/真实 Provider/IM 验收。
