@@ -79,15 +79,34 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if !ok || !exists || len(c.StorageRoles) != storageCount || len(c.Resources.Storage) != storageCount {
 		return reject("storage must equal explicit Session and Memory closure")
 	}
-	if session.Kind != "postgres_state" || session.AdapterVersion != "postgres-state-v1" || session.Credential.Purpose != "dsn" {
+	expectedHosts := []string{}
+	switch session.Kind {
+	case "postgres_state":
+		if session.AdapterVersion != "postgres-state-v1" || session.Credential.Purpose != "dsn" {
+			return reject("session adapter")
+		}
+		if session.Destination.Username != WorkerV1SessionRuntimeRole {
+			return ErrWorkerV1SessionRuntimeRole
+		}
+		if session.Credential.CredentialID == "" || session.Credential.AudienceDigest != CredentialAudienceDigest(session.Kind, session.Destination) {
+			return reject("credential audience does not match fixed destination")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(session.Destination.Host))
+	case "managed_session":
+		b := session.Backend
+		if sessionKey != "session" || session.AdapterVersion != "managed-session-v1" || b == nil || b.ValidateForRole("session") != nil || b.TenantID != c.TenantID || b.Kind != "redis" {
+			return reject("fixed managed Redis session backend")
+		}
+		if b.Redis.Username != WorkerV1SessionRuntimeRole {
+			return ErrWorkerV1SessionRuntimeRole
+		}
+		d, err := b.Digest()
+		if err != nil || session.Credential.CredentialID == "" || session.Credential.Purpose != "dsn_password" || session.Credential.AudienceDigest != d {
+			return reject("managed session credential audience")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(b.Redis.Host))
+	default:
 		return reject("session adapter")
-	}
-	if session.Destination.Username != WorkerV1SessionRuntimeRole {
-		return ErrWorkerV1SessionRuntimeRole
-	}
-	expectedHosts := []string{strings.ToLower(session.Destination.Host)}
-	if session.Credential.CredentialID == "" || session.Credential.AudienceDigest != CredentialAudienceDigest(session.Kind, session.Destination) {
-		return reject("credential audience does not match fixed destination")
 	}
 	credentials := map[string]CredentialUse{session.Credential.CredentialID: session.Credential}
 	if node.Memory != nil {
