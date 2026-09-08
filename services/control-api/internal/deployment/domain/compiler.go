@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 	"net/url"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ import (
 func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	compilerVersion := CompilerVersionV1
 	diagnostics := validateCompileInput(input)
+	diagnostics = append(diagnostics, ValidateManagedSnapshots(input)...)
 	diagnostics = append(diagnostics, pendingDataContractDiagnostics(input.Agent.Spec)...)
 	if len(errorDiagnostics(diagnostics)) > 0 {
 		return CompiledManifest{}, NewValidationReport(
@@ -32,7 +34,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	resolvedModels, resolvedTools, resolvedKnowledge := matchDeclaredRequirements(
 		input.Agent.Spec, input.Profile.Spec, used, &diagnostics,
 	)
-	selectedStorage, storageRoles := selectStorageRoles(input.Profile.Spec, &diagnostics)
+	selectedStorage, storageRoles := selectStorageRoles(input.Profile.Spec, &diagnostics, input.Agent.Spec)
 
 	plan := compileAgentPlan(
 		input.Agent.Spec, input.Profile.Spec,
@@ -41,7 +43,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	)
 	resources, uses, endpointHosts := compileResources(
 		used, resolvedModels, resolvedTools, resolvedKnowledge, selectedStorage,
-		input.Platform, &diagnostics,
+		input.Platform, input.ManagedBackends, &diagnostics,
 	)
 	if len(endpointHosts) > 128 {
 		diagnostics = append(diagnostics, diagnostic(
@@ -298,6 +300,7 @@ func matchDeclaredRequirements(
 func selectStorageRoles(
 	profile profiledomain.Spec,
 	diagnostics *[]Diagnostic,
+	agents ...agentdomain.Spec,
 ) (map[string]profiledomain.StorageResource, map[string]string) {
 	selected := make(map[string]profiledomain.StorageResource)
 	roles := make(map[string]string)
@@ -318,7 +321,8 @@ func selectStorageRoles(
 			"storage.session does not support the session runtime role",
 		))
 	}
-	if memory, exists := profile.Storage[StorageRoleMemory]; exists {
+	if memory, exists := profile.Storage[StorageRoleMemory]; exists &&
+		(!memory.Kind.Managed() || (len(agents) > 0 && agentUsesStorageRole(agents[0], StorageRoleMemory))) {
 		if storageSupportsRole(memory, profiledomain.CapabilityStorageMemory) {
 			selected[StorageRoleMemory] = memory
 			roles[StorageRoleMemory] = StorageRoleMemory
@@ -334,7 +338,7 @@ func selectStorageRoles(
 }
 
 func storageSupportsRole(resource profiledomain.StorageResource, capability string) bool {
-	return resource.Kind == profiledomain.StorageKindPostgresState &&
+	return (resource.Kind == profiledomain.StorageKindPostgresState || resource.Kind.Managed()) &&
 		containsString(resource.ProvidedCapabilities(), capability)
 }
 
@@ -418,6 +422,7 @@ func compileResources(
 	knowledge map[string]profiledomain.KnowledgeResource,
 	storage map[string]profiledomain.StorageResource,
 	platform PlatformExecutionContract,
+	backends map[string]datav1.Snapshot,
 	diagnostics *[]Diagnostic,
 ) (ManifestResources, []CredentialUse, []string) {
 	resources := ManifestResources{
@@ -496,6 +501,16 @@ func compileResources(
 				"knowledge adapter does not expose the frozen retrieval callable",
 			))
 		}
+		if resource.Kind == profiledomain.KnowledgeKindManaged {
+			snapshot := backends["knowledge/"+name].Clone()
+			host, _ := snapshot.EndpointHost()
+			hosts[host] = true
+			checkURLHost(resource.Embedding.BaseURL, "/knowledge/"+escapeJSONPointer(name)+"/embedding/base_url", "knowledge", name, allowedHosts, hosts, diagnostics)
+			credential := credentialUse(resource.Embedding.APIKeyCredentialID, CredentialPurposeEmbeddingAPIKey, audienceDigest(resource.Kind, resource.Embedding.BaseURL))
+			uses = append(uses, credential)
+			resources.Knowledge[name] = ManifestKnowledgeResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind, Embedding: ManifestEmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, Credential: credential}, Capability: profiledomain.CapabilityKnowledgeSearch}
+			continue
+		}
 		checkHost(resource.Host, "/knowledge/"+escapeJSONPointer(name)+"/host",
 			"knowledge", name, allowedHosts, hosts, diagnostics)
 		checkURLHost(resource.Embedding.BaseURL,
@@ -531,6 +546,13 @@ func compileResources(
 		adapter, supported := platform.StorageAdapters[resource.Kind]
 		if !supported {
 			*diagnostics = append(*diagnostics, unsupportedAdapter("storage", name, resource.Kind))
+		}
+		if resource.Kind.Managed() {
+			snapshot := backends["storage/"+name].Clone()
+			host, _ := snapshot.EndpointHost()
+			hosts[host] = true
+			resources.Storage[name] = ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
+			continue
 		}
 		checkHost(resource.Destination.Host,
 			"/storage/"+escapeJSONPointer(name)+"/destination/host",

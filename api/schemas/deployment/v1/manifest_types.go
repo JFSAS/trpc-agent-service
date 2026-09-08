@@ -2,6 +2,7 @@ package deploymentv1
 
 import (
 	"encoding/json"
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 )
 
 const (
@@ -274,6 +275,7 @@ func (a *ManifestToolAuth) UnmarshalJSON(data []byte) error {
 }
 
 type ManifestKnowledgeResource struct {
+	Backend        *datav1.Snapshot          `json:"backend,omitempty"`
 	AdapterVersion string                    `json:"adapter_version"`
 	Kind           string                    `json:"kind"`
 	Host           string                    `json:"host"`
@@ -293,10 +295,12 @@ type ManifestEmbeddingResource struct {
 }
 
 type ManifestStorageResource struct {
-	AdapterVersion string             `json:"adapter_version"`
-	Kind           string             `json:"kind"`
-	Destination    StorageDestination `json:"destination"`
-	Credential     CredentialUse      `json:"credential"`
+	MetadataContract string             `json:"metadata_contract,omitempty"`
+	Backend          *datav1.Snapshot   `json:"backend,omitempty"`
+	AdapterVersion   string             `json:"adapter_version"`
+	Kind             string             `json:"kind"`
+	Destination      StorageDestination `json:"destination"`
+	Credential       CredentialUse      `json:"credential"`
 }
 
 type ResolvedRequirements struct {

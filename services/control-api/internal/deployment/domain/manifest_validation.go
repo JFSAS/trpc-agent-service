@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"net/url"
 	"slices"
@@ -115,6 +116,20 @@ func validateManifestSemantics(content ManifestContent) error {
 			return ErrInvalidManifestContent
 		}
 	}
+	backends := map[string]datav1.Snapshot{}
+	for name, r := range content.Resources.Storage {
+		if r.Backend != nil {
+			backends["storage/"+name] = r.Backend.Clone()
+		}
+	}
+	for name, r := range content.Resources.Knowledge {
+		if r.Backend != nil {
+			backends["knowledge/"+name] = r.Backend.Clone()
+		}
+	}
+	if ds := ValidateManagedSnapshots(CompileInput{TenantID: content.TenantID, Agent: AgentVersionSource{Spec: agent}, Profile: ProfileRevisionSource{Spec: profile}, Platform: PlatformExecutionContract{Execution: content.Execution}, ManagedBackends: backends}); len(ds) > 0 {
+		return ErrInvalidManifestContent
+	}
 	return nil
 }
 
@@ -163,6 +178,23 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 		addURLHost(resource.ServerURL)
 	}
 	for name, resource := range content.Resources.Knowledge {
+		if resource.Kind == profiledomain.KnowledgeKindManaged {
+			r := BackendRequest{Category: "knowledge", Name: name, Role: "knowledge", Dimensions: resource.Embedding.Dimensions}
+			if resource.Backend == nil {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			r.BackendID = resource.Backend.BackendID
+			r.Revision = resource.Backend.BackendRevision
+			if !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != KnowledgeAdapterManagedV1 || resource.Credential != nil || resource.Host != "" || resource.Port != 0 || resource.TLS || resource.Collection != "" || resource.Capability != profiledomain.CapabilityKnowledgeSearch || resource.Embedding.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Embedding.BaseURL) {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			profile.Knowledge[name] = profiledomain.KnowledgeResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision, Embedding: profiledomain.EmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, APIKeyCredentialID: resource.Embedding.Credential.CredentialID}}
+			host, _ := resource.Backend.EndpointHost()
+			hosts[host] = true
+			addURLHost(resource.Embedding.BaseURL)
+			continue
+		}
+
 		if resource.Kind != profiledomain.KnowledgeKindQdrantOpenAI || resource.AdapterVersion != KnowledgeAdapterQdrantOpenAIV1 ||
 			resource.Capability != profiledomain.CapabilityKnowledgeSearch ||
 			resource.Embedding.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Embedding.BaseURL) {
@@ -187,6 +219,24 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 		addURLHost(resource.Embedding.BaseURL)
 	}
 	for name, resource := range content.Resources.Storage {
+		if resource.Kind.Managed() {
+			if resource.Backend == nil {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			r := BackendRequest{Category: "storage", Name: name, Role: resource.Kind.Role(), BackendID: resource.Backend.BackendID, Revision: resource.Backend.BackendRevision}
+			adapter := StorageAdapterManagedSessionV1
+			if resource.Kind == profiledomain.StorageKindManagedMemory {
+				adapter = StorageAdapterManagedMemoryV1
+			}
+			if name != r.Role || !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != adapter || resource.Credential != (CredentialUse{}) || resource.Destination != (profiledomain.StorageDestination{}) {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			profile.Storage[name] = profiledomain.StorageResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision}
+			host, _ := resource.Backend.EndpointHost()
+			hosts[host] = true
+			continue
+		}
+
 		if resource.Kind != profiledomain.StorageKindPostgresState || resource.AdapterVersion != StorageAdapterPostgresStateV1 ||
 			resource.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Destination) {
 			return profiledomain.Spec{}, ErrInvalidManifestContent

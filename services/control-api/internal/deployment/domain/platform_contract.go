@@ -52,6 +52,7 @@ type ExecutionPolicy struct {
 // PlatformExecutionContract is a process configuration snapshot. It is not a
 // user-selectable environment and is never mutated during one compilation.
 type PlatformExecutionContract struct {
+	ManagedCatalogDigest   string `json:"managed_catalog_digest,omitempty"`
 	Version                string `json:"version"`
 	Digest                 string `json:"digest"`
 	CompilerVersion        string `json:"compiler_version"`
@@ -135,6 +136,7 @@ func DefaultPlatformExecutionContract() PlatformExecutionContract {
 // itself. Set-shaped host lists and adapter maps are normalized first.
 func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 	payload := struct {
+		ManagedCatalogDigest     string                                                   `json:"managed_catalog_digest,omitempty"`
 		Version                  string                                                   `json:"version"`
 		CompilerVersion          string                                                   `json:"compiler_version"`
 		ManifestSchemaVersion    string                                                   `json:"manifest_schema_version"`
@@ -147,7 +149,8 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 		Limits                   CompileLimits                                            `json:"limits"`
 		WorkerSessionRuntimeRole string                                                   `json:"worker_session_runtime_role,omitempty"`
 	}{
-		Version: c.Version, CompilerVersion: c.CompilerVersion,
+		ManagedCatalogDigest: c.ManagedCatalogDigest,
+		Version:              c.Version, CompilerVersion: c.CompilerVersion,
 		ManifestSchemaVersion:  c.ManifestSchemaVersion,
 		RuntimeContractVersion: c.RuntimeContractVersion,
 		ModelAdapters:          cloneMap(c.ModelAdapters), ToolAdapters: cloneMap(c.ToolAdapters),
@@ -173,6 +176,9 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 }
 
 func (c PlatformExecutionContract) Validate() error {
+	if c.ManagedCatalogDigest != "" && !validDigest(c.ManagedCatalogDigest) {
+		return ErrInvalidPlatformExecutionContract
+	}
 	if (c.Version != PlatformContractVersionV1 && c.Version != deploymentv1.WorkerV1PlatformVersion) || c.CompilerVersion != CompilerVersionV1 ||
 		c.ManifestSchemaVersion != SchemaVersionV1 ||
 		c.RuntimeContractVersion != RuntimeContractVersionV1 ||
@@ -206,14 +212,18 @@ func (c PlatformExecutionContract) Validate() error {
 	}
 	for _, kind := range sortedAdapterKinds(c.KnowledgeAdapters) {
 		adapter := c.KnowledgeAdapters[kind]
-		if kind != profiledomain.KnowledgeKindQdrantOpenAI {
+		if kind != profiledomain.KnowledgeKindQdrantOpenAI && kind != profiledomain.KnowledgeKindManaged {
 			return invalidPlatformExecutionContract(
 				"unsupported knowledge adapter kind %q", kind,
 			)
 		}
-		if adapter.Version != KnowledgeAdapterQdrantOpenAIV1 {
+		expected := KnowledgeAdapterQdrantOpenAIV1
+		if kind == profiledomain.KnowledgeKindManaged {
+			expected = KnowledgeAdapterManagedV1
+		}
+		if adapter.Version != expected {
 			return invalidPlatformExecutionContract(
-				"knowledge adapter %q version must be %q", kind, KnowledgeAdapterQdrantOpenAIV1,
+				"knowledge adapter %q version must be %q", kind, expected,
 			)
 		}
 		if !adapter.CreatesCallable {
@@ -223,6 +233,12 @@ func (c PlatformExecutionContract) Validate() error {
 		}
 	}
 	if err := validateAdapterMap(c.StorageAdapters, "storage", func(kind profiledomain.StorageKind) (string, bool) {
+		if kind == profiledomain.StorageKindManagedSession {
+			return StorageAdapterManagedSessionV1, true
+		}
+		if kind == profiledomain.StorageKindManagedMemory {
+			return StorageAdapterManagedMemoryV1, true
+		}
 		return StorageAdapterPostgresStateV1, kind == profiledomain.StorageKindPostgresState
 	}); err != nil {
 		return err

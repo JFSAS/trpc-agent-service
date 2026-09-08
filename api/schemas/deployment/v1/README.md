@@ -62,9 +62,10 @@ explicit null, false, and empty enabled components are rejected by the aggregate
 schema. `add_session_summary` is represented by `*bool` and only accepts true.
 The existing publication guard and Control semantic acceptance guard remain
 active until compiler resource closure is complete. Worker must integrate its
-explicit new-field rejection gate together with these aggregate fields. This first slice does not change
-canonical bytes, authorize resources, resolve model references, enable Worker
-execution, or register backend implementations. Compiler closure, reference and
-callable collision checks, aggregate DTO/schema integration, and consumer gates
+explicit new-field rejection gate together with these aggregate fields. The new optional fields preserve legacy canonical bytes. Managed Session and
+Knowledge descriptors now have compiler/read-validation and redacted public
+projection paths under explicit static contracts; this does not enable Worker
+execution or automatically register platform adapters. Compiler closure, reference and
+callable collision checks and execution wiring
 must land before publication can use these components. Source disabled values
 are normalized by the future compiler, not represented as active components.

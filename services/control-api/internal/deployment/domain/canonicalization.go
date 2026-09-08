@@ -44,6 +44,9 @@ func DecodeManifestContent(raw json.RawMessage) (ManifestContent, error) {
 	if err := strictDecodeJSON(raw, &content); err != nil {
 		return ManifestContent{}, fmt.Errorf("%w: %v", ErrInvalidManifestContent, err)
 	}
+	if err := validateManagedWire(raw); err != nil {
+		return ManifestContent{}, err
+	}
 	return content, nil
 }
 
@@ -138,6 +141,12 @@ func validateManifestCredentialShape(content ManifestContent) error {
 		}
 	}
 	for _, resource := range content.Resources.Storage {
+		if resource.Kind.Managed() {
+			if resource.Credential != (CredentialUse{}) {
+				return ErrInvalidManifestContent
+			}
+			continue
+		}
 		if !validCredentialUse(resource.Credential, CredentialPurposeDSN) {
 			return ErrInvalidManifestContent
 		}
@@ -314,6 +323,10 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.Resources.Tools[name] = resource
 	}
 	for name, resource := range content.Resources.Knowledge {
+		if resource.Backend != nil {
+			b := resource.Backend.Clone()
+			resource.Backend = &b
+		}
 		if resource.Credential != nil {
 			credential := *resource.Credential
 			resource.Credential = &credential
@@ -321,6 +334,10 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.Resources.Knowledge[name] = resource
 	}
 	for name, resource := range content.Resources.Storage {
+		if resource.Backend != nil {
+			b := resource.Backend.Clone()
+			resource.Backend = &b
+		}
 		normalized.Resources.Storage[name] = resource
 	}
 	normalized.ResolvedRequirements = ResolvedRequirements{

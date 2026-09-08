@@ -102,6 +102,9 @@ func DecodeManifestContent(raw []byte) (ManifestContent, error) {
 	if err = strictDecodeJSON(canonical, &out); err != nil {
 		return ManifestContent{}, err
 	}
+	if err := validateManagedResourceRoles(out); err != nil {
+		return ManifestContent{}, err
+	}
 	return out, nil
 }
 func DecodeRuntimeManifest(raw []byte) (RuntimeManifest, error) {

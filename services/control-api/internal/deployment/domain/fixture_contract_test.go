@@ -116,13 +116,17 @@ func TestCompilerOutputsMatchPublishedSchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, optionalCredentials := range []bool{true, false} {
-		name := "with optional credentials"
+	for _, mode := range []string{"optional", "no-optional", "managed"} {
+		optionalCredentials := mode != "no-optional"
+		name := mode
 		if !optionalCredentials {
 			name = "without optional credentials"
 		}
 		t.Run(name, func(t *testing.T) {
 			input := validCompileInput()
+			if mode == "managed" {
+				input = managedExecutableInput()
+			}
 			if !optionalCredentials {
 				tool := input.Profile.Spec.Tools["search"]
 				tool.Auth.Kind, tool.Auth.CredentialID = "none", ""

@@ -38,14 +38,17 @@ Versioned buckets require explicit version cleanup support and are not silently
 accepted. PostgreSQL/Redis TLS flags and HTTP endpoints are static configuration;
 production transport policy is a separate deployment validation gate.
 
-Current stage (P0b1): protocol, private RuntimeCatalog resolver, and Profile
-backend-selection eligibility checks are implemented and tested. Profile checks
-require an injected BackendAccess dependency; absent injection rejects managed
-selections. This commit does not wire the catalog into application bootstrap.
-Deployment resource-closure resolution, internal RuntimeManifest compilation,
-persisted-read revalidation, target-free public projection, and bootstrap wiring
-remain subsequent P0b2/integration work. Worker execution also remains pending;
-protocol support does not prove an executing Adapter or an available online API.
+Current stage: protocol, private RuntimeCatalog resolver, and Profile selection
+eligibility checks are implemented and tested. The P0b2 backend slice adds pure
+Deployment compilation and persisted-read checks for selected managed Session
+and Knowledge resources, plus redacted public backend identities. Memory and
+Artifact request discovery follows explicit Agent enablement; complete capability
+compilation remains guarded. The Artifact wire requires the Worker metadata
+contract but does not yet mean Artifact compilation or execution is enabled.
+Application/bootstrap catalog injection and production Worker adapter activation
+remain pending. Profile checks without an injected BackendAccess reject managed
+selections. Protocol/compiler tests do not prove an available online API or a
+running four-backend deployment.
 
 ## Role-bound isolation (P0b1)
 

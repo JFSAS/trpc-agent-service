@@ -15,20 +15,135 @@
     "content"
   ],
   "properties": {
-    "manifest_id": {"$ref": "#/$defs/opaque_id"},
-    "tenant_id": {"$ref": "#/$defs/opaque_id"},
-    "deployment_id": {"$ref": "#/$defs/opaque_id"},
-    "deployment_revision_id": {"$ref": "#/$defs/opaque_id"},
-    "revision_number": {"type": "integer", "minimum": 1},
-    "published_at": {"type": "string", "format": "date-time"},
-    "content_digest": {"$ref": "#/$defs/digest"},
-    "content": {"$ref": "#/$defs/content"}
+    "manifest_id": {
+      "$ref": "#/$defs/opaque_id"
+    },
+    "tenant_id": {
+      "$ref": "#/$defs/opaque_id"
+    },
+    "deployment_id": {
+      "$ref": "#/$defs/opaque_id"
+    },
+    "deployment_revision_id": {
+      "$ref": "#/$defs/opaque_id"
+    },
+    "revision_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "content_digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "content": {
+      "$ref": "#/$defs/content"
+    }
   },
   "$defs": {
-"data_memory": {"type": "object", "additionalProperties": false, "properties": {"resource": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}, "tools": {"type": "array", "uniqueItems": true, "maxItems": 6, "items": {"enum": ["memory_add", "memory_update", "memory_delete", "memory_clear", "memory_search", "memory_load"]}}, "preload_limit": {"type": "integer", "minimum": -1, "maximum": 9007199254740991}}, "required": ["resource", "tools"], "anyOf": [{"properties": {"tools": {"minItems": 1}}}, {"required": ["preload_limit"], "properties": {"preload_limit": {"anyOf": [{"const": -1}, {"type": "integer", "minimum": 1}]}}}]},
-"data_artifact": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"const": true}, "resource": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}}, "required": ["enabled", "resource"]},
-"data_summary": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"const": true}, "model_resource": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}, "event_threshold": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}}, "required": ["enabled", "model_resource", "event_threshold"]},
-
+    "data_memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resource": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 6,
+          "items": {
+            "enum": [
+              "memory_add",
+              "memory_update",
+              "memory_delete",
+              "memory_clear",
+              "memory_search",
+              "memory_load"
+            ]
+          }
+        },
+        "preload_limit": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "resource",
+        "tools"
+      ],
+      "anyOf": [
+        {
+          "properties": {
+            "tools": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "preload_limit"
+          ],
+          "properties": {
+            "preload_limit": {
+              "anyOf": [
+                {
+                  "const": -1
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "data_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "const": true
+        },
+        "resource": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        }
+      },
+      "required": [
+        "enabled",
+        "resource"
+      ]
+    },
+    "data_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "const": true
+        },
+        "model_resource": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "event_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "enabled",
+        "model_resource",
+        "event_threshold"
+      ]
+    },
     "opaque_id": {
       "type": "string",
       "minLength": 1,
@@ -67,83 +182,184 @@
         "execution"
       ],
       "properties": {
-        "schema_version": {"const": "v1"},
-        "runtime": {"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"$ref":"#/$defs/data_summary"}}},
-        "compiler_version": {"const": "deployment-compiler-v1"},
-        "runtime_contract_version": {"const": "worker-manifest-v1"},
-        "platform_contract": {"$ref": "#/$defs/platform_contract"},
-        "tenant_id": {"$ref": "#/$defs/opaque_id"},
-        "sources": {"$ref": "#/$defs/sources"},
-        "agent_plan": {"$ref": "#/$defs/agent_plan"},
-        "resources": {"$ref": "#/$defs/resources"},
-        "resolved_requirements": {"$ref": "#/$defs/resolved_requirements"},
-        "storage_roles": {"$ref": "#/$defs/storage_roles"},
-        "execution": {"$ref": "#/$defs/execution"}
+        "schema_version": {
+          "const": "v1"
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "summary"
+          ],
+          "properties": {
+            "summary": {
+              "$ref": "#/$defs/data_summary"
+            }
+          }
+        },
+        "compiler_version": {
+          "const": "deployment-compiler-v1"
+        },
+        "runtime_contract_version": {
+          "const": "worker-manifest-v1"
+        },
+        "platform_contract": {
+          "$ref": "#/$defs/platform_contract"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/opaque_id"
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        },
+        "agent_plan": {
+          "$ref": "#/$defs/agent_plan"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "resolved_requirements": {
+          "$ref": "#/$defs/resolved_requirements"
+        },
+        "storage_roles": {
+          "$ref": "#/$defs/storage_roles"
+        },
+        "execution": {
+          "$ref": "#/$defs/execution"
+        }
       }
     },
     "platform_contract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "digest"],
+      "required": [
+        "version",
+        "digest"
+      ],
       "properties": {
-        "version": {"enum": ["platform-v1", "worker-v1"]},
-        "digest": {"$ref": "#/$defs/digest"}
+        "version": {
+          "enum": [
+            "platform-v1",
+            "worker-v1"
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
       }
     },
     "sources": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agent", "profile"],
+      "required": [
+        "agent",
+        "profile"
+      ],
       "properties": {
-        "agent": {"$ref": "#/$defs/agent_source"},
-        "profile": {"$ref": "#/$defs/profile_source"}
+        "agent": {
+          "$ref": "#/$defs/agent_source"
+        },
+        "profile": {
+          "$ref": "#/$defs/profile_source"
+        }
       }
     },
     "agent_source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agent_id", "version_number", "version_id", "schema_version", "digest"],
+      "required": [
+        "agent_id",
+        "version_number",
+        "version_id",
+        "schema_version",
+        "digest"
+      ],
       "properties": {
-        "agent_id": {"$ref": "#/$defs/opaque_id"},
-        "version_number": {"type": "integer", "minimum": 1},
-        "version_id": {"$ref": "#/$defs/opaque_id"},
-        "schema_version": {"const": "v1"},
-        "digest": {"$ref": "#/$defs/digest"}
+        "agent_id": {
+          "$ref": "#/$defs/opaque_id"
+        },
+        "version_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "version_id": {
+          "$ref": "#/$defs/opaque_id"
+        },
+        "schema_version": {
+          "const": "v1"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
       }
     },
     "profile_source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profile_id", "revision_number", "revision_id", "schema_version", "digest"],
+      "required": [
+        "profile_id",
+        "revision_number",
+        "revision_id",
+        "schema_version",
+        "digest"
+      ],
       "properties": {
-        "profile_id": {"$ref": "#/$defs/opaque_id"},
-        "revision_number": {"type": "integer", "minimum": 1},
-        "revision_id": {"$ref": "#/$defs/opaque_id"},
-        "schema_version": {"const": "v1"},
-        "digest": {"$ref": "#/$defs/digest"}
+        "profile_id": {
+          "$ref": "#/$defs/opaque_id"
+        },
+        "revision_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "revision_id": {
+          "$ref": "#/$defs/opaque_id"
+        },
+        "schema_version": {
+          "const": "v1"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
       }
     },
     "agent_plan": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["root", "nodes"],
+      "required": [
+        "root",
+        "nodes"
+      ],
       "properties": {
-        "root": {"$ref": "#/$defs/resource_key"},
+        "root": {
+          "$ref": "#/$defs/resource_key"
+        },
         "nodes": {
           "type": "object",
           "minProperties": 1,
           "maxProperties": 128,
-          "propertyNames": {"$ref": "#/$defs/resource_key"},
-          "additionalProperties": {"$ref": "#/$defs/node"}
+          "propertyNames": {
+            "$ref": "#/$defs/resource_key"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/node"
+          }
         }
       }
     },
     "node": {
       "oneOf": [
-        {"$ref": "#/$defs/llm_node"},
-        {"$ref": "#/$defs/sequence_node"},
-        {"$ref": "#/$defs/parallel_node"},
-        {"$ref": "#/$defs/loop_node"}
+        {
+          "$ref": "#/$defs/llm_node"
+        },
+        {
+          "$ref": "#/$defs/sequence_node"
+        },
+        {
+          "$ref": "#/$defs/parallel_node"
+        },
+        {
+          "$ref": "#/$defs/loop_node"
+        }
       ]
     },
     "llm_node": {
@@ -158,53 +374,119 @@
         "callable_entries"
       ],
       "properties": {
-        "kind": {"const": "llm"},
-        "name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "instruction": {"type": "string", "minLength": 1, "maxLength": 65536},
-        "model_resource": {"$ref": "#/$defs/resource_key"},
-        "tool_resources": {"$ref": "#/$defs/resource_key_set"},
-        "knowledge_resources": {"$ref": "#/$defs/resource_key_set"},
+        "kind": {
+          "const": "llm"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "model_resource": {
+          "$ref": "#/$defs/resource_key"
+        },
+        "tool_resources": {
+          "$ref": "#/$defs/resource_key_set"
+        },
+        "knowledge_resources": {
+          "$ref": "#/$defs/resource_key_set"
+        },
         "callable_entries": {
           "type": "array",
           "maxItems": 128,
           "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1, "maxLength": 256}
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
         },
-        "memory": {"$ref":"#/$defs/data_memory"},
-        "artifact": {"$ref":"#/$defs/data_artifact"},
-        "add_session_summary": {"const":true},
-        "generation": {"$ref": "#/$defs/generation"}
+        "memory": {
+          "$ref": "#/$defs/data_memory"
+        },
+        "artifact": {
+          "$ref": "#/$defs/data_artifact"
+        },
+        "add_session_summary": {
+          "const": true
+        },
+        "generation": {
+          "$ref": "#/$defs/generation"
+        }
       }
     },
     "sequence_node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "children"],
+      "required": [
+        "kind",
+        "children"
+      ],
       "properties": {
-        "kind": {"const": "sequence"},
-        "name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "children": {"$ref": "#/$defs/children"}
+        "kind": {
+          "const": "sequence"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "children": {
+          "$ref": "#/$defs/children"
+        }
       }
     },
     "parallel_node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "children"],
+      "required": [
+        "kind",
+        "children"
+      ],
       "properties": {
-        "kind": {"const": "parallel"},
-        "name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "children": {"$ref": "#/$defs/children"}
+        "kind": {
+          "const": "parallel"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "children": {
+          "$ref": "#/$defs/children"
+        }
       }
     },
     "loop_node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "body", "max_iterations"],
+      "required": [
+        "kind",
+        "body",
+        "max_iterations"
+      ],
       "properties": {
-        "kind": {"const": "loop"},
-        "name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "body": {"$ref": "#/$defs/resource_key"},
-        "max_iterations": {"type": "integer", "minimum": 1, "maximum": 32}
+        "kind": {
+          "const": "loop"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "body": {
+          "$ref": "#/$defs/resource_key"
+        },
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        }
       }
     },
     "children": {
@@ -212,90 +494,191 @@
       "minItems": 1,
       "maxItems": 64,
       "uniqueItems": true,
-      "items": {"$ref": "#/$defs/resource_key"}
+      "items": {
+        "$ref": "#/$defs/resource_key"
+      }
     },
     "resource_key_set": {
       "type": "array",
       "maxItems": 64,
       "uniqueItems": true,
-      "items": {"$ref": "#/$defs/resource_key"}
+      "items": {
+        "$ref": "#/$defs/resource_key"
+      }
     },
     "generation": {
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
-        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 262144}
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144
+        }
       }
     },
     "resources": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["models", "tools", "knowledge", "storage"],
+      "required": [
+        "models",
+        "tools",
+        "knowledge",
+        "storage"
+      ],
       "properties": {
-        "models": {"$ref": "#/$defs/model_resources"},
-        "tools": {"$ref": "#/$defs/tool_resources"},
-        "knowledge": {"$ref": "#/$defs/knowledge_resources"},
-        "storage": {"$ref": "#/$defs/storage_resources"}
+        "models": {
+          "$ref": "#/$defs/model_resources"
+        },
+        "tools": {
+          "$ref": "#/$defs/tool_resources"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/knowledge_resources"
+        },
+        "storage": {
+          "$ref": "#/$defs/storage_resources"
+        }
       }
     },
     "model_resources": {
       "type": "object",
       "maxProperties": 16,
-      "propertyNames": {"$ref": "#/$defs/resource_key"},
-      "additionalProperties": {"$ref": "#/$defs/model_resource"}
+      "propertyNames": {
+        "$ref": "#/$defs/resource_key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/model_resource"
+      }
     },
     "tool_resources": {
       "type": "object",
       "maxProperties": 64,
-      "propertyNames": {"$ref": "#/$defs/resource_key"},
-      "additionalProperties": {"$ref": "#/$defs/tool_resource"}
+      "propertyNames": {
+        "$ref": "#/$defs/resource_key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/tool_resource"
+      }
     },
     "knowledge_resources": {
       "type": "object",
       "maxProperties": 32,
-      "propertyNames": {"$ref": "#/$defs/resource_key"},
-      "additionalProperties": {"$ref": "#/$defs/knowledge_resource"}
+      "propertyNames": {
+        "$ref": "#/$defs/resource_key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/knowledge_resource"
+      }
     },
     "storage_resources": {
       "type": "object",
-      "required": ["session"],
-      "maxProperties": 2,
-      "propertyNames": {"enum": ["session", "memory"]},
-      "additionalProperties": {"$ref": "#/$defs/storage_resource"}
+      "required": [
+        "session"
+      ],
+      "maxProperties": 3,
+      "propertyNames": {
+        "enum": [
+          "session",
+          "memory",
+          "artifact"
+        ]
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/storage_resource"
+      }
     },
     "model_resource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["adapter_version", "kind", "model", "base_url", "credential", "capabilities"],
+      "required": [
+        "adapter_version",
+        "kind",
+        "model",
+        "base_url",
+        "credential",
+        "capabilities"
+      ],
       "properties": {
-        "adapter_version": {"const": "openai-compatible-v1"},
-        "kind": {"const": "openai_compatible"},
-        "model": {"type": "string", "minLength": 1, "maxLength": 256},
-        "base_url": {"type": "string", "minLength": 1, "maxLength": 2048},
-        "credential": {"$ref": "#/$defs/api_key_credential"},
+        "adapter_version": {
+          "const": "openai-compatible-v1"
+        },
+        "kind": {
+          "const": "openai_compatible"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "base_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "credential": {
+          "$ref": "#/$defs/api_key_credential"
+        },
         "capabilities": {
           "type": "array",
           "minItems": 1,
           "maxItems": 2,
           "uniqueItems": true,
-          "items": {"enum": ["chat", "tool_call"]}
+          "items": {
+            "enum": [
+              "chat",
+              "tool_call"
+            ]
+          }
         }
       }
     },
     "tool_resource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["adapter_version", "kind", "server_url", "toolset_name", "tool_name", "auth", "capability"],
+      "required": [
+        "adapter_version",
+        "kind",
+        "server_url",
+        "toolset_name",
+        "tool_name",
+        "auth",
+        "capability"
+      ],
       "properties": {
-        "adapter_version": {"const": "mcp-web-search-v1"},
-        "kind": {"const": "mcp_streamable_http"},
-        "server_url": {"type": "string", "minLength": 1, "maxLength": 2048},
-        "toolset_name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "tool_name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "auth": {"$ref": "#/$defs/tool_auth"},
-        "capability": {"const": "web.search"}
+        "adapter_version": {
+          "const": "mcp-web-search-v1"
+        },
+        "kind": {
+          "const": "mcp_streamable_http"
+        },
+        "server_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "toolset_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "auth": {
+          "$ref": "#/$defs/tool_auth"
+        },
+        "capability": {
+          "const": "web.search"
+        }
       }
     },
     "tool_auth": {
@@ -303,140 +686,887 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind"],
-          "properties": {"kind": {"const": "none"}}
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "none"
+            }
+          }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "credential"],
+          "required": [
+            "kind",
+            "credential"
+          ],
           "properties": {
-            "kind": {"const": "bearer"},
-            "credential": {"$ref": "#/$defs/bearer_token_credential"}
+            "kind": {
+              "const": "bearer"
+            },
+            "credential": {
+              "$ref": "#/$defs/bearer_token_credential"
+            }
           }
         }
       ]
     },
     "knowledge_resource": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["adapter_version", "kind", "host", "port", "tls", "collection", "embedding", "capability"],
-      "properties": {
-        "adapter_version": {"const": "qdrant-openai-v1"},
-        "kind": {"const": "qdrant_openai"},
-        "host": {"type": "string", "minLength": 1, "maxLength": 253},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "tls": {"type": "boolean"},
-        "collection": {"type": "string", "minLength": 1, "maxLength": 256},
-        "credential": {"$ref": "#/$defs/qdrant_api_key_credential"},
-        "embedding": {"$ref": "#/$defs/embedding_resource"},
-        "capability": {"const": "knowledge.search"}
-      }
+      "oneOf": [
+        {
+          "$ref": "#/$defs/unmanaged_knowledge_resource"
+        },
+        {
+          "$ref": "#/$defs/managed_knowledge_resource"
+        }
+      ]
     },
     "embedding_resource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["model", "base_url", "dimensions", "credential"],
+      "required": [
+        "model",
+        "base_url",
+        "dimensions",
+        "credential"
+      ],
       "properties": {
-        "model": {"type": "string", "minLength": 1, "maxLength": 256},
-        "base_url": {"type": "string", "minLength": 1, "maxLength": 2048},
-        "dimensions": {"type": "integer", "minimum": 1},
-        "credential": {"$ref": "#/$defs/embedding_api_key_credential"}
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "base_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "dimensions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "credential": {
+          "$ref": "#/$defs/embedding_api_key_credential"
+        }
       }
     },
     "storage_resource": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["adapter_version", "kind", "destination", "credential"],
-      "properties": {
-        "adapter_version": {"const": "postgres-state-v1"},
-        "kind": {"const": "postgres_state"},
-        "destination": {"$ref": "#/$defs/storage_destination"},
-        "credential": {"$ref": "#/$defs/dsn_credential"}
-      }
+      "oneOf": [
+        {
+          "$ref": "#/$defs/unmanaged_storage_resource"
+        },
+        {
+          "$ref": "#/$defs/managed_session_resource"
+        },
+        {
+          "$ref": "#/$defs/managed_memory_resource"
+        },
+        {
+          "$ref": "#/$defs/managed_artifact_resource"
+        }
+      ]
     },
     "storage_destination": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["host", "port", "database", "username", "sslmode"],
+      "required": [
+        "host",
+        "port",
+        "database",
+        "username",
+        "sslmode"
+      ],
       "properties": {
-        "host": {"type": "string", "minLength": 1, "maxLength": 253},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "database": {"type": "string", "minLength": 1, "maxLength": 128},
-        "username": {"type": "string", "minLength": 1, "maxLength": 128},
-        "sslmode": {"enum": ["disable", "require", "verify-full"]}
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "database": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sslmode": {
+          "enum": [
+            "disable",
+            "require",
+            "verify-full"
+          ]
+        }
       }
     },
     "api_key_credential": {
       "$ref": "#/$defs/credential_descriptor",
-      "properties": {"purpose": {"const": "api_key"}}
+      "properties": {
+        "purpose": {
+          "const": "api_key"
+        }
+      }
     },
     "bearer_token_credential": {
       "$ref": "#/$defs/credential_descriptor",
-      "properties": {"purpose": {"const": "bearer_token"}}
+      "properties": {
+        "purpose": {
+          "const": "bearer_token"
+        }
+      }
     },
     "qdrant_api_key_credential": {
       "$ref": "#/$defs/credential_descriptor",
-      "properties": {"purpose": {"const": "qdrant_api_key"}}
+      "properties": {
+        "purpose": {
+          "const": "qdrant_api_key"
+        }
+      }
     },
     "embedding_api_key_credential": {
       "$ref": "#/$defs/credential_descriptor",
-      "properties": {"purpose": {"const": "embedding_api_key"}}
+      "properties": {
+        "purpose": {
+          "const": "embedding_api_key"
+        }
+      }
     },
     "dsn_credential": {
       "$ref": "#/$defs/credential_descriptor",
-      "properties": {"purpose": {"const": "dsn"}}
+      "properties": {
+        "purpose": {
+          "const": "dsn"
+        }
+      }
     },
     "credential_descriptor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["credential_id", "purpose", "audience_digest"],
+      "required": [
+        "credential_id",
+        "purpose",
+        "audience_digest"
+      ],
       "properties": {
-        "credential_id": {"$ref": "#/$defs/credential_id"},
-        "purpose": {"enum": ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn"]},
-        "audience_digest": {"$ref": "#/$defs/digest"}
+        "credential_id": {
+          "$ref": "#/$defs/credential_id"
+        },
+        "purpose": {
+          "enum": [
+            "api_key",
+            "bearer_token",
+            "qdrant_api_key",
+            "embedding_api_key",
+            "dsn"
+          ]
+        },
+        "audience_digest": {
+          "$ref": "#/$defs/digest"
+        }
       }
     },
     "resolved_requirements": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["models", "tools", "knowledge"],
+      "required": [
+        "models",
+        "tools",
+        "knowledge"
+      ],
       "properties": {
-        "models": {"$ref": "#/$defs/resolved_map"},
-        "tools": {"$ref": "#/$defs/resolved_map"},
-        "knowledge": {"$ref": "#/$defs/resolved_map"}
+        "models": {
+          "$ref": "#/$defs/resolved_map"
+        },
+        "tools": {
+          "$ref": "#/$defs/resolved_map"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/resolved_map"
+        }
       }
     },
     "resolved_map": {
       "type": "object",
-      "propertyNames": {"$ref": "#/$defs/resource_key"},
-      "additionalProperties": {"$ref": "#/$defs/resource_key"}
+      "propertyNames": {
+        "$ref": "#/$defs/resource_key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/resource_key"
+      }
     },
     "storage_roles": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["session"],
+      "required": [
+        "session"
+      ],
       "properties": {
-        "session": {"const": "session"},
-        "memory": {"const": "memory"}
+        "session": {
+          "const": "session"
+        },
+        "memory": {
+          "const": "memory"
+        },
+        "artifact": {
+          "const": "artifact"
+        }
       }
     },
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["backend", "allowed_endpoint_hosts", "max_run_seconds", "max_tool_calls", "max_output_tokens"],
+      "required": [
+        "backend",
+        "allowed_endpoint_hosts",
+        "max_run_seconds",
+        "max_tool_calls",
+        "max_output_tokens"
+      ],
       "properties": {
-        "backend": {"const": "worker-process-v1"},
+        "backend": {
+          "const": "worker-process-v1"
+        },
         "allowed_endpoint_hosts": {
           "type": "array",
           "minItems": 1,
           "maxItems": 128,
           "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1, "maxLength": 253}
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          }
         },
-        "max_run_seconds": {"type": "integer", "minimum": 1},
-        "max_tool_calls": {"type": "integer", "minimum": 1},
-        "max_output_tokens": {"type": "integer", "minimum": 1}
+        "max_run_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_tool_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "managed_backend": {
+      "title": "Internal managed backend snapshot V1",
+      "description": "Closed non-secret wire shape. Consumers must also run semantic validation and current tenant authorization. Not a public DTO.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "tenant_id",
+            "backend_id",
+            "backend_revision",
+            "kind",
+            "adapter",
+            "isolation",
+            "limits",
+            "postgresql"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "v1"
+            },
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "kind": {
+              "const": "postgresql"
+            },
+            "adapter": {
+              "const": "managed-postgres-v1"
+            },
+            "isolation": {
+              "enum": [
+                "tenant-session-v1",
+                "tenant-subject-agent-v1"
+              ]
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "timeout_ms",
+                "max_concurrency",
+                "max_bytes"
+              ],
+              "properties": {
+                "timeout_ms": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60000
+                },
+                "max_concurrency": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1099511627776
+                }
+              }
+            },
+            "postgresql": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "host",
+                "port",
+                "database",
+                "username",
+                "sslmode"
+              ],
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 253
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "database": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                },
+                "sslmode": {
+                  "enum": [
+                    "disable",
+                    "require",
+                    "verify-full"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "tenant_id",
+            "backend_id",
+            "backend_revision",
+            "kind",
+            "adapter",
+            "isolation",
+            "limits",
+            "redis"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "v1"
+            },
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "kind": {
+              "const": "redis"
+            },
+            "adapter": {
+              "const": "managed-redis-v1"
+            },
+            "isolation": {
+              "enum": [
+                "tenant-session-v1",
+                "tenant-subject-agent-v1"
+              ]
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "timeout_ms",
+                "max_concurrency",
+                "max_bytes"
+              ],
+              "properties": {
+                "timeout_ms": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60000
+                },
+                "max_concurrency": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1099511627776
+                }
+              }
+            },
+            "redis": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "host",
+                "port",
+                "database",
+                "username",
+                "tls"
+              ],
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 253
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "database": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 15
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                },
+                "tls": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "tenant_id",
+            "backend_id",
+            "backend_revision",
+            "kind",
+            "adapter",
+            "isolation",
+            "limits",
+            "qdrant"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "v1"
+            },
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "kind": {
+              "const": "qdrant"
+            },
+            "adapter": {
+              "const": "managed-qdrant-v1"
+            },
+            "isolation": {
+              "const": "tenant-profile-resource-v1"
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "timeout_ms",
+                "max_concurrency",
+                "max_bytes"
+              ],
+              "properties": {
+                "timeout_ms": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60000
+                },
+                "max_concurrency": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1099511627776
+                }
+              }
+            },
+            "qdrant": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint",
+                "collection",
+                "vector_name",
+                "dimensions",
+                "distance"
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^https?://[^/?#@]+$",
+                  "maxLength": 2048
+                },
+                "collection": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                },
+                "vector_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                },
+                "dimensions": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65536
+                },
+                "distance": {
+                  "enum": [
+                    "cosine",
+                    "dot",
+                    "euclid"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "tenant_id",
+            "backend_id",
+            "backend_revision",
+            "kind",
+            "adapter",
+            "isolation",
+            "limits",
+            "s3"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "v1"
+            },
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+            },
+            "backend_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "kind": {
+              "const": "s3"
+            },
+            "adapter": {
+              "const": "managed-s3-v1"
+            },
+            "isolation": {
+              "const": "tenant-artifact-v1"
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "timeout_ms",
+                "max_concurrency",
+                "max_bytes"
+              ],
+              "properties": {
+                "timeout_ms": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60000
+                },
+                "max_concurrency": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1099511627776
+                }
+              }
+            },
+            "s3": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint",
+                "bucket",
+                "region",
+                "path_style",
+                "versioning"
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^https?://[^/?#@]+$",
+                  "maxLength": 2048
+                },
+                "bucket": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+                },
+                "region": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                },
+                "path_style": {
+                  "type": "boolean"
+                },
+                "versioning": {
+                  "const": "disabled"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "unmanaged_storage_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "kind",
+        "destination",
+        "credential"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "postgres-state-v1"
+        },
+        "kind": {
+          "const": "postgres_state"
+        },
+        "destination": {
+          "$ref": "#/$defs/storage_destination"
+        },
+        "credential": {
+          "$ref": "#/$defs/dsn_credential"
+        }
+      }
+    },
+    "unmanaged_knowledge_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "kind",
+        "host",
+        "port",
+        "tls",
+        "collection",
+        "embedding",
+        "capability"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "qdrant-openai-v1"
+        },
+        "kind": {
+          "const": "qdrant_openai"
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "tls": {
+          "type": "boolean"
+        },
+        "collection": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "credential": {
+          "$ref": "#/$defs/qdrant_api_key_credential"
+        },
+        "embedding": {
+          "$ref": "#/$defs/embedding_resource"
+        },
+        "capability": {
+          "const": "knowledge.search"
+        }
+      }
+    },
+    "managed_session_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "kind",
+        "backend"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "managed-session-v1"
+        },
+        "kind": {
+          "const": "managed_session"
+        },
+        "backend": {
+          "$ref": "#/$defs/managed_backend"
+        }
+      }
+    },
+    "managed_memory_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "kind",
+        "backend"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "managed-memory-v1"
+        },
+        "kind": {
+          "const": "managed_memory"
+        },
+        "backend": {
+          "$ref": "#/$defs/managed_backend"
+        }
+      }
+    },
+    "managed_knowledge_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "kind",
+        "backend",
+        "embedding",
+        "capability"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "managed-knowledge-v1"
+        },
+        "kind": {
+          "const": "managed_knowledge"
+        },
+        "backend": {
+          "$ref": "#/$defs/managed_backend"
+        },
+        "embedding": {
+          "$ref": "#/$defs/embedding_resource"
+        },
+        "capability": {
+          "const": "knowledge.search"
+        }
+      }
+    },
+    "managed_artifact_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "kind",
+        "backend",
+        "metadata_contract"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "managed-artifact-v1"
+        },
+        "kind": {
+          "const": "managed_artifact"
+        },
+        "backend": {
+          "$ref": "#/$defs/managed_backend"
+        },
+        "metadata_contract": {
+          "const": "worker-artifact-metadata-v1"
+        }
       }
     }
   }
