@@ -23,10 +23,10 @@ import (
 
 const authEpoch = "11111111-1111-4111-8111-111111111111"
 
-type routeAuthority func(context.Context, pgx.Tx, domain.Scope, string) error
+type routeAuthority func(context.Context, pgx.Tx, domain.Scope, string, string) error
 
-func (f routeAuthority) AuthorizeSessionRoute(c context.Context, tx pgx.Tx, s domain.Scope, a string) error {
-	return f(c, tx, s, a)
+func (f routeAuthority) AuthorizeSessionRoute(c context.Context, tx pgx.Tx, s domain.Scope, a, operation string) error {
+	return f(c, tx, s, a, operation)
 }
 
 type authRead struct {
@@ -117,7 +117,7 @@ func TestCurrentSessionAuthorizerPostgres(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	routes := routeAuthority(func(_ context.Context, tx pgx.Tx, s domain.Scope, actor string) error {
+	routes := routeAuthority(func(_ context.Context, tx pgx.Tx, s domain.Scope, actor, operation string) error {
 		if tx == nil || s.BindingID != "binding" || s.DeploymentRevisionID != "revision" {
 			return domain.ErrDenied
 		}

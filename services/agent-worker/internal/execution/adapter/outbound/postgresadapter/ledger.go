@@ -100,7 +100,11 @@ func receipt(ctx context.Context, tx pgx.Tx, eventID string) (domain.Receipt, st
 }
 
 func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain.Policy, limits domain.IntakeLimits) (domain.Receipt, error) {
-	if req.Validate() != nil || policy.Validate() != nil || limits.Validate() != nil {
+	return l.accept(ctx, req, policy, limits, false)
+}
+
+func (l *Ledger) accept(ctx context.Context, req domain.Requested, policy domain.Policy, limits domain.IntakeLimits, stageAuthorized bool) (domain.Receipt, error) {
+	if ctx == nil || req.Validate() != nil || policy.Validate() != nil || limits.Validate() != nil {
 		return domain.Receipt{}, domain.ErrInvalid
 	}
 	tx, err := l.pool.Begin(ctx)
@@ -165,6 +169,15 @@ func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.Receipt{}, err
 	}
+	if stageAuthorized && req.Authorization != nil {
+		if err = stageAuthorization(ctx, tx, req, policy, limits); err != nil {
+			return domain.Receipt{}, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return domain.Receipt{}, err
+		}
+		return domain.Receipt{}, domain.ErrNotReady
+	}
 	// Capacity admission is globally serialized, but only for new identities.
 	// Retries replay their receipt even while the queue is full.
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(731004285)`); err != nil {
@@ -185,6 +198,17 @@ func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain
 	if err != nil {
 		return domain.Receipt{}, err
 	}
+	r, err := insertRun(ctx, tx, req, policy, session, scope)
+	if err != nil {
+		return domain.Receipt{}, err
+	}
+	return r, tx.Commit(ctx)
+}
+
+// insertRun only writes into its owner's transaction. Its session identity and
+// canonical scope are supplied by the selected intake contract, not recomputed.
+func insertRun(ctx context.Context, tx pgx.Tx, req domain.Requested, policy domain.Policy, session string, scope []byte) (domain.Receipt, error) {
+	var err error
 	if _, err = tx.Exec(ctx, `INSERT INTO execution_sessions(tenant_id,session_id,scope_json) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, req.Route.TenantID, session, scope); err != nil {
 		return domain.Receipt{}, err
 	}
@@ -224,7 +248,7 @@ func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain
 		return domain.Receipt{}, err
 	}
 	r := domain.Receipt{EventID: req.EventID, RunID: req.RunID, TenantID: req.Route.TenantID, SessionID: session, Sequence: seq, Outcome: "ACCEPTED"}
-	return r, tx.Commit(ctx)
+	return r, nil
 }
 
 func (l *Ledger) Ready(ctx context.Context, limit int) ([]domain.Run, error) {

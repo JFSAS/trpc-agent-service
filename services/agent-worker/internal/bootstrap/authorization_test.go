@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	scheduler "github.com/liuzengh/trpc-agent-service/platform/channel/authorization/refresh"
 	runwire "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/inbound/wire"
 	ledger "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/postgresadapter"
+	executionapp "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/migrations"
 )
@@ -102,8 +104,34 @@ func TestAuthorizationTargetsPostgresAndLifecycle(t *testing.T) {
 	// A durable unassigned input can discover its refresh target before any Run or
 	// Session exists. Staging is not an accepted receipt and cannot select a hash.
 	limits := domain.IntakeLimits{MaxQueuedRuns: 1, MaxRetainedRuns: 1}
-	if e = store.StageAuthorization(ctx, req, policy, limits); e != nil {
+	production, e := executionapp.NewAcceptor(ledger.NewIntake(pool), policy, limits)
+	if e != nil {
 		t.Fatal(e)
+	}
+	if receipt, err := production.Accept(ctx, req); !errors.Is(err, domain.ErrNotReady) || receipt != (domain.Receipt{}) {
+		t.Fatal("production must persist pending without receipt", receipt, err)
+	}
+	// Independent intake instances share the database, not process-local state.
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, 8)
+	for n := 0; n < 8; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := ledger.NewIntake(pool).Accept(ctx, req, policy, limits)
+			errorsCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		if !errors.Is(err, domain.ErrNotReady) {
+			t.Fatal("pending duplicate must remain retryable", err)
+		}
+	}
+	var pendingCount int
+	if e = pool.QueryRow(ctx, `SELECT count(*) FROM execution_pending_intakes`).Scan(&pendingCount); e != nil || pendingCount != 1 {
+		t.Fatal("pending replay duplicated input", pendingCount, e)
 	}
 	var originalDeadline time.Time
 	if e = pool.QueryRow(ctx, `SELECT expires_at FROM execution_pending_intakes WHERE event_id=$1`, req.EventID).Scan(&originalDeadline); e != nil {
@@ -192,7 +220,17 @@ func TestAuthorizationTargetsPostgresAndLifecycle(t *testing.T) {
 		if _, e = store.Accept(ctx, r, policy, domain.IntakeLimits{MaxQueuedRuns: 100, MaxRetainedRuns: 1000}); e != nil {
 			t.Fatal(e)
 		}
+		// Existing accepted authorization facts replay even at full capacity.
+		if receipt, err := production.Accept(ctx, r); err != nil || receipt.RunID != r.RunID || receipt.Outcome != "ACCEPTED" {
+			t.Fatal("production receipt replay regressed", receipt, err)
+		}
 	}
+	legacy := next
+	legacy.Authorization = nil
+	if receipt, err := ledger.NewIntake(pool).Accept(ctx, legacy, policy, domain.IntakeLimits{MaxQueuedRuns: 100, MaxRetainedRuns: 1000}); err != nil || receipt.Outcome != "ACCEPTED" {
+		t.Fatal("non-authorized wire intake regressed", receipt, err)
+	}
+	t.Log("PRODUCTION_PENDING=PASS durable discovery before Run; eight concurrent retries; receipt replay at capacity; legacy wire preserved")
 	directory := authorizationTargets{pool: pool, scope: req.Authorization.ScopeID}
 	got, e := directory.AuthorizationTargets(ctx)
 	if e != nil || len(got) != 1 {

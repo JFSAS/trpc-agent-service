@@ -262,3 +262,22 @@ func TestSourceValidationRejectsInPlaceStreamAndDurableDrift(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingAuthorizationNAKsWithoutReceiptACK(t *testing.T) {
+	c, m, i, _, r := fixture(t, false)
+	raw, err := os.ReadFile("../../../../../api/events/execution/v1/fixtures/valid/telegram-authorized.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.raw = raw
+	i.err = execution.ErrNotReady
+	for n := 0; n < 3; n++ {
+		found, err := c.Poll(context.Background())
+		if !found || !errors.Is(err, execution.ErrNotReady) || m.acks != 0 || m.naks != n+1 || r.calls != 0 {
+			t.Fatal("pending became terminal", found, err, m.acks, m.naks, r.calls)
+		}
+	}
+	if i.last.Authorization == nil || i.calls != 3 {
+		t.Fatal("authorization input lost before intake")
+	}
+}

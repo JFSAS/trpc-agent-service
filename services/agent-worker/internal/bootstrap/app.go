@@ -110,7 +110,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	acceptor, err := execution.NewAcceptor(a.ledger, c.Policy.Domain(), domain.IntakeLimits{MaxQueuedRuns: c.Limits.MaxQueuedRuns, MaxRetainedRuns: c.Limits.MaxRetainedRuns}, a.observation)
+	acceptor, err := execution.NewAcceptor(ledgerpg.NewIntake(a.pool), c.Policy.Domain(), domain.IntakeLimits{MaxQueuedRuns: c.Limits.MaxQueuedRuns, MaxRetainedRuns: c.Limits.MaxRetainedRuns}, a.observation)
 	if err != nil {
 		return nil, err
 	}

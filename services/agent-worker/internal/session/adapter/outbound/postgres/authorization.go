@@ -22,7 +22,7 @@ var epochPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 // authenticated conversation facts to this account in the SAME transaction.
 // Principal IDs are supplied from verified ingress identity, not a UI/body claim.
 type RouteAuthority interface {
-	AuthorizeSessionRoute(context.Context, pgx.Tx, domain.Scope, string) error
+	AuthorizeSessionRoute(context.Context, pgx.Tx, domain.Scope, string, string) error
 }
 type CurrentAuthorizer struct {
 	scope, epoch string
@@ -48,7 +48,7 @@ func (a *CurrentAuthorizer) AuthorizeSession(ctx context.Context, tx pgx.Tx, s d
 	if (s.Partition == domain.PerUser && actor != s.PrincipalID) || (operation == "session.new" && s.Partition != domain.PerUser) || (operation == "session.reset_shared" && s.Partition != domain.Shared) {
 		return domain.ErrDenied
 	}
-	if e := a.routes.AuthorizeSessionRoute(ctx, tx, s, actor); e != nil {
+	if e := a.routes.AuthorizeSessionRoute(ctx, tx, s, actor, operation); e != nil {
 		return e
 	}
 	var epoch, tenant, provider, blocked, policyID, policyDigest string

@@ -24,6 +24,16 @@ func (l *Ledger) StageAuthorization(ctx context.Context, req domain.Requested, p
 		return e
 	}
 	defer rollback(tx)
+	if e = stageAuthorization(ctx, tx, req, policy, limits); e != nil {
+		return e
+	}
+	return tx.Commit(ctx)
+}
+
+// stageAuthorization is shared by explicit staging and production receipt-first
+// intake. The caller owns commit; all identity/capacity locks live in that tx.
+func stageAuthorization(ctx context.Context, tx pgx.Tx, req domain.Requested, policy domain.Policy, limits domain.IntakeLimits) error {
+	var e error
 	keys := []string{"event:" + req.EventID, "run:" + req.RunID, "admission:" + req.AdmissionID}
 	sort.Strings(keys)
 	for _, key := range keys {
@@ -41,7 +51,7 @@ func (l *Ledger) StageAuthorization(ctx context.Context, req domain.Requested, p
 		if !same {
 			return domain.ErrConflict
 		}
-		return tx.Commit(ctx)
+		return nil
 	}
 	if !errors.Is(e, pgx.ErrNoRows) {
 		return e
@@ -85,5 +95,5 @@ func (l *Ledger) StageAuthorization(ctx context.Context, req domain.Requested, p
 	if _, e = tx.Exec(ctx, `INSERT INTO execution_pending_intakes(event_id,event_digest,run_id,admission_id,run_digest,tenant_id,scope_id,source_epoch,account_id,provider,generation,request_json,policy_json,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, req.EventID, req.EventDigest, req.RunID, req.AdmissionID, req.RunDigest, req.Route.TenantID, a.ScopeID, a.SourceEpoch, req.Route.AccountID, req.Route.Provider, a.Generation, raw, p, deadline); e != nil {
 		return e
 	}
-	return tx.Commit(ctx)
+	return nil
 }

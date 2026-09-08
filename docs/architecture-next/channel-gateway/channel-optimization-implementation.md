@@ -885,3 +885,133 @@ Admission/Worker 同库授权 fence 仍待完成，全部 F01–F12 目标保持
   integration packages the dependency, Session and pending-input foundations above;
   it does not complete F01–F12, enable production authorization emission, deploy
   services, or establish a new real Telegram/WeCom acceptance result.
+
+### 2026-09-08 — Production receipt-first pending intake
+
+- Worker bootstrap now gives Acceptor the production NewIntake adapter through a
+  narrow IntakeLedger port. Existing receipts/accepted Run aliases replay before
+  capacity or current authorization acquisition. New authorized input stages in the
+  same identity-locked transaction and returns ErrNotReady without Run/Session/
+  Receipt allocation. Staging and explicit StageAuthorization share one SQL path.
+- The existing NATS consumer retries this non-terminal result with delayed NAK;
+  repeated delivery is not ACKed or reclassified as a durable conflict. Inputs
+  without AdmissionAuthorization retain their existing wire/intake behavior; new
+  policy-bearing inputs never select the old Session hash as a fallback.
+- Real PostgreSQL tests compose the production application/adapter path and prove
+  pre-Run discovery, eight concurrent duplicate deliveries across adapter instances,
+  immutable initial pending state, zero execution facts, historical receipt replay
+  at capacity and unchanged non-authorization wire intake. The broker protocol test
+  uses a message/consumer fixture, not a real NATS server or live IM account.
+- Evidence: artifacts/production-pending-20260908-0758/VERIFICATION.txt.
+  Pending-to-Run promotion, concrete RouteAuthority, expiry/conflict terminalization
+  and retention remain pending. No release/deployment/push is performed this turn;
+  F01–F12 remains active. Next is atomic registry/Run promotion with real route proof.
+
+### 2026-09-08 — Pending route and transaction-bound runtime target proof
+
+- Added a concrete per-event pending RouteAuthority over Execution-owned rows.
+  Session scope/actor cannot substitute tenant/account/binding/revision/conversation/
+  topic or historical principal provenance; pinned scope/epoch and current external
+  mapping/revision floors are checked before the separate current Session grant.
+- RouteAuthority now receives the operation. A pending message only proves
+  message.send provenance; it cannot be reused as a reset/new-session command.
+- Manifest owner provides a narrow transaction Reader which holds a shared advisory
+  identity lock against publication/conflict writes until caller transaction end.
+  Bootstrap composes it with the existing full manifest+Worker-contract verifier;
+  no cross-owner SQL, synchronous Control lookup or permissive target stub is used.
+- Real Worker-role tests compose pending intake, current policy projection, complete
+  Manifest and Session registry. Caller substitutions, missing/foreign input,
+  identity remapping/revocation, and target conflict serialization fail closed;
+  the proof creates zero Execution Run/Session/Receipt facts.
+- Initial test fixtures used a current generation below the admitted floor and a
+  non-numeric Telegram external ID; both were rejected. Corrected fixtures passed.
+  Evidence: artifacts/pending-route-20260908-0810/VERIFICATION.txt.
+- The composition helper is not yet called by a production promoter. Next: add
+  the owner transaction API to select Registry generation, create Run/Receipt and
+  consume pending only after final proof, then quota/execution and remaining F01-F12.
+  No commit/push/deployment/live IM operation this increment; full goal stays active.
+
+### 2026-09-08 — Registry joins the intake owner's transaction
+
+- Added WithCurrentInTransaction: registry selection, callback writes and both
+  authorization checks run in an owner-held transaction savepoint. Successful proof
+  releases only the savepoint, not the owner's transaction or registry/proof locks.
+  WithCurrent delegates to the same implementation for existing callers.
+- Failed callback/final authorization rolls back savepoint writes even if the owner
+  incorrectly commits its outer transaction. After successful final proof, the owner
+  may consume pending and commit without attempting to reread a deleted input.
+- Worker-role PostgreSQL tests cover outer commit/rollback, zero visibility before
+  commit, savepoint failure isolation and competing reset blocked until outer end.
+  The real pending/current-policy/Manifest proof test also exercises post-proof
+  pending deletion followed by outer rollback/restoration; it creates no fake Run.
+- Evidence: artifacts/registry-owner-tx-20260908-0820/VERIFICATION.txt.
+  Next: actual policy-bound Run writer and guarded pending consumption in this owner
+  transaction, plus required reservation and production promotion. No commit/push/
+  deployment this increment. Full F01–F12 goal and acceptance remain active.
+
+### 2026-09-08 — Policy-bound Run writer and guarded pending consumption
+
+- Added actual transaction-owned Run/Session/Receipt writes using the Registry
+  selection and exact current SessionPolicy/partition. Shared SQL insertion is
+  reused by the previous intake path without changing its Session contract.
+- Migration 0011 stores immutable historical scope/generation links and defers
+  the pending-consumed invariant until commit. ConsumeRunInTransaction verifies
+  actual Receipt/Run/request/link identities before deleting the source pending.
+  Omitting consumption fails commit, rather than double-counting retained input.
+- A mandatory reservation port participates in the SAME transaction; nil/denied
+  reservations fail. Tests use a transaction fixture, not production quota logic.
+  Production reservation/promoter assembly is still absent; no default grant exists.
+- Real Worker-role tests cover missing/denied reservation, forged selection/receipt,
+  commit without consumption, outer rollback, successful real Run/link/Receipt,
+  receipt replay at capacity, original deadlines and zero Attempt allocation.
+  A nanosecond timestamp regression was reproduced and fixed by matching the
+  stored PostgreSQL timestamp at microsecond precision, without changing JSON input.
+- Evidence: artifacts/policy-run-writer-20260908-0830/VERIFICATION.txt.
+  Next: real bounded reservation owner and receipt-first promoter composition,
+  expiry/conflict/alias handling and the rest of F01-F12. No commit/push/deployment.
+
+### 2026-09-08 — Shared tenant Run-quota reservations
+
+- Added Worker budget owner and migration 0012 for immutable stable-Run reservation
+  records. Complete quota content is independently validated; tenant-wide counts
+  span policy revisions/IDs, with explicit zero/disabled denial and retained bound.
+- Shared DB locks serialize Run identity, tenant quota and retained storage. Exact
+  retries replay the first policy/timestamp before capacity checks; owner savepoints
+  let real intake roll back quota with its other writes. No process-local counter.
+- Worker-role PostgreSQL tests race eight inputs through two independent pools at
+  concurrency1 (one succeeds), and verify identity/tenant/policy isolation, rolling
+  minute limits, full-storage replay, malformed content and transaction rollback.
+  Historical timestamp fixtures demonstrate no timeout/age-based concurrency refund.
+- This is real Run-count quota, not model/tool-cost budget. It intentionally does not
+  implement the full PendingRunReservation port or enable the production promoter.
+  Settlement/release and retention are not implemented; holds conservatively remain
+  held. Next: terminal-proof release plus bounded cost/usage reservation composition.
+- Evidence: artifacts/run-quota-20260908-0845/VERIFICATION.txt. Full F01-F12 remains
+  active; no commit/push/deployment or live IM operation this increment.
+
+### 2026-09-08 — Execution-proven Run quota release
+
+- Added migration 0013 and a mandatory terminal-proof reader composed with the real
+  Execution Ledger. Immutable settlement releases concurrency only for NO_ATTEMPT
+  or one SUCCEEDED_ATTEMPT with matching completion and session commit facts.
+- Unknown/failed attempts and terminal status without completion remain held.
+  Minute-window and retained-history counts remain charged; replay is idempotent.
+- PostgreSQL tests cover rollback isolation, concurrent settlement, forged identity,
+  immutable settlement and next-Run concurrency versus minute-rate behavior.
+- This is component-level Run-count settlement, not model/tool usage reconciliation
+  or a production settlement scheduler. Promoter, bounded cost reservation and full
+  F01-F12 acceptance remain unfinished; no live IM claim follows from these tests.
+- Evidence: artifacts/quota-terminal-20260908-0900/VERIFICATION.txt.
+
+### 2026-09-08 — Main integration review
+
+- Reviewed the accumulated pending-intake, Session owner-transaction, policy Run
+  writer and Run-count budget increment against main ae39aed. Standards review
+  identified swallowed infrastructure errors; terminal readers now preserve those
+  errors while absent facts alone produce NOT_READY. Cancellation, deadline and
+  DB-failure regressions cover that distinction. Spec review corrected the budget
+  lifecycle description to distinguish implemented components from missing wiring.
+- Submission does not enable a production promoter, cost reservation or settlement
+  scheduler. Earlier entries describe their execution-time state, not the current
+  publication status. Full design completion and live IM acceptance are not claimed.
+- Main-integration evidence: artifacts/review-main-20260908-0920/VERIFICATION.txt.

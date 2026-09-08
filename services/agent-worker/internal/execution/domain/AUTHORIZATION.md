@@ -81,5 +81,47 @@ StageAuthorization freezes its first request/policy/deadline; active pending row
 are refresh targets and count toward queue capacity, while all pending rows count
 toward retained capacity. Ordinary Accept replays existing receipts first, then
 returns ErrNotReady for any pending Event/Run/Admission identity; it cannot promote
-or acknowledge that input. Production consumer staging, transactionally coupled
-registry/Run promotion and retention cleanup are not yet wired.
+or acknowledge that input.
+
+Production bootstrap now supplies NewIntake to the application's narrow IntakeLedger
+port. It replays historical receipts/accepted runs first, and durably stages each
+new authorized input within the same identity-locked transaction before returning
+ErrNotReady. The NATS consumer delays NAK rather than ACKing pending input. New
+inputs do not select the old unpartitioned Session hash. Refresh discovery reads
+these persisted inputs before any Session or Run exists. Explicit source/epoch
+configuration is still required to run the authorization refresher; staging itself
+is not a current grant and does not synchronously call Control.
+
+Transactionally coupled registry/Run promotion, pending conflict/expiry terminal
+results and retention cleanup remain pending. Until promotion is implemented,
+authorized new inputs remain retryable and unaccepted; this is not an operational
+end-to-end authorization release. Previously accepted facts continue their existing
+replay contract, and non-authorization wire behavior is unchanged.
+
+
+The pending Session route adapter now independently anchors caller-supplied scope
+and actor to the persisted ingress input, enforces pinned scope/epoch and current
+mapping revision floors, and asks a mandatory owner-supplied verifier to validate
+the exact immutable runtime target in the same transaction. Session policy grants
+remain checked by CurrentAuthorizer; pending message provenance never authorizes a
+reset operation. Production atomic promotion is still not wired.
+
+
+Policy-bound Run writer (not production-enabled): PendingRouteAuthority now exposes
+WriteRunInTransaction and ConsumeRunInTransaction. The writer requires a non-nil
+transactional reservation owner, checks the exact current SessionPolicy/partition
+and locked registry generation, loads the ORIGINAL pending policy/deadline, and
+writes real Session/Run/Receipt plus an immutable historical registry link. It does
+not select the old request hash. A pending input's existing capacity slot is
+replaced, not counted twice. Timestamp equality uses PostgreSQL microsecond precision
+while the original request JSON preserves received_at precision.
+
+The Registry owner performs final proof before ConsumeRunInTransaction validates
+real Receipt/Run/link identities and removes pending. Migration 0011's deferred
+constraint rejects committing a partition-linked new Run while its pending source
+(or a same-Run/Admission pending alias) remains. Failed reservations/writes roll back
+through savepoints; failed outer commits leave the original pending intact.
+
+Tests use a TRANSACTION FIXTURE for reservation participation, not a real budget
+implementation. Production has no reservation implementation or promoter wiring yet.
+Authorized Claims remain zero-Attempt held; this writer is not an execution grant.

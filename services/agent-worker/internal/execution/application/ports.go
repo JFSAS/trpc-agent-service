@@ -9,8 +9,14 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 )
 
-type Ledger interface {
+// IntakeLedger owns receipt replay and new input admission. A durable pending
+// input returns ErrNotReady and must not be acknowledged as an accepted Run.
+type IntakeLedger interface {
 	Accept(context.Context, domain.Requested, domain.Policy, domain.IntakeLimits) (domain.Receipt, error)
+}
+
+type Ledger interface {
+	IntakeLedger
 	FindRun(context.Context, string, string) (domain.Run, error)
 	Ready(context.Context, int) ([]domain.Run, error)
 	Claim(context.Context, domain.ClaimRequest) (domain.Grant, error)
@@ -25,13 +31,13 @@ type Ledger interface {
 
 // Acknowledging durable intake never waits for a model or mutable configuration.
 type Acceptor struct {
-	ledger   Ledger
+	ledger   IntakeLedger
 	policy   domain.Policy
 	limits   domain.IntakeLimits
 	observer Observer
 }
 
-func NewAcceptor(ledger Ledger, policy domain.Policy, limits domain.IntakeLimits, observers ...Observer) (*Acceptor, error) {
+func NewAcceptor(ledger IntakeLedger, policy domain.Policy, limits domain.IntakeLimits, observers ...Observer) (*Acceptor, error) {
 	if ledger == nil || policy.Validate() != nil || limits.Validate() != nil || len(observers) > 1 {
 		return nil, domain.ErrInvalid
 	}

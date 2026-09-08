@@ -59,28 +59,50 @@ func (r *Registry) WithCurrent(ctx context.Context, s domain.Scope, actor string
 	if ctx == nil || s.Validate() != nil || apply == nil || !domain.ValidActor(actor) {
 		return domain.ErrInvalid
 	}
-	if s.Partition == domain.PerUser && actor != s.PrincipalID {
-		return domain.ErrDenied
-	}
 	tx, e := r.pool.Begin(ctx)
 	if e != nil {
 		return e
 	}
 	defer rollback(tx)
-	chosen, e := lock(ctx, tx, s)
-	if e != nil {
-		return e
-	}
-	if e = r.authorization.AuthorizeSession(ctx, tx, s, actor, "message.send"); e != nil {
-		return e
-	}
-	if e = apply(ctx, tx, chosen); e != nil {
-		return e
-	}
-	if e = r.authorization.AuthorizeSession(ctx, tx, s, actor, "message.send"); e != nil {
+	if e = r.WithCurrentInTransaction(ctx, tx, s, actor, apply); e != nil {
 		return e
 	}
 	return tx.Commit(ctx)
+}
+
+// WithCurrentInTransaction keeps registry selection and both authorization checks
+// inside the intake owner's transaction. Success is NOT a committed acceptance.
+// The owner may consume the pending input after success, then commit immediately;
+// it must not change the proven scope/Run or perform external I/O in between.
+// A savepoint rolls back callback writes on failure even if the caller mistakenly
+// commits its outer transaction. Successful row/proof locks survive to outer end.
+// apply must not commit, roll back or retain its supplied transaction.
+func (r *Registry) WithCurrentInTransaction(ctx context.Context, tx pgx.Tx, s domain.Scope, actor string, apply func(context.Context, pgx.Tx, domain.Selection) error) error {
+	if ctx == nil || tx == nil || s.Validate() != nil || apply == nil || !domain.ValidActor(actor) {
+		return domain.ErrInvalid
+	}
+	if s.Partition == domain.PerUser && actor != s.PrincipalID {
+		return domain.ErrDenied
+	}
+	savepoint, e := tx.Begin(ctx)
+	if e != nil {
+		return e
+	}
+	defer rollback(savepoint)
+	chosen, e := lock(ctx, savepoint, s)
+	if e != nil {
+		return e
+	}
+	if e = r.authorization.AuthorizeSession(ctx, savepoint, s, actor, "message.send"); e != nil {
+		return e
+	}
+	if e = apply(ctx, savepoint, chosen); e != nil {
+		return e
+	}
+	if e = r.authorization.AuthorizeSession(ctx, savepoint, s, actor, "message.send"); e != nil {
+		return e
+	}
+	return savepoint.Commit(ctx)
 }
 func (r *Registry) Reset(ctx context.Context, cmd domain.Reset) (domain.Selection, error) {
 	zero := domain.Selection{}

@@ -11,7 +11,7 @@ import (
 )
 
 type Reader struct {
-	Projection     projection.Projection
+	Projection     projection.Reader
 	ContractDigest string
 }
 
