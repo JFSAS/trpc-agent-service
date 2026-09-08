@@ -21,6 +21,7 @@ type attempt struct {
 	store        candidateStore
 	check        func(context.Context) error
 	modelKey     string
+	summaryKey   string
 	executor     trpcagent.Executor
 	capacity     int
 	mu           sync.Mutex
@@ -72,7 +73,11 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	}
 	p := a.plan
 	g := a.grant
-	result, err := a.executor.Execute(ctx, trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, AcceptedSnapshot: history})
+	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, AcceptedSnapshot: history}
+	if p.Summary != nil {
+		request.Summary = &trpcagent.SummaryConfig{Model: trpcagent.Model{Endpoint: p.Summary.ModelEndpoint, Name: p.Summary.ModelName, APIKey: a.summaryKey}, EventThreshold: p.Summary.EventThreshold, AddSessionSummary: p.Summary.AddSessionSummary}
+	}
+	result, err := a.executor.Execute(ctx, request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return domain.RuntimeResult{}, ctx.Err()
@@ -139,6 +144,7 @@ func (a *attempt) Close() {
 	}
 	a.closed = true
 	a.modelKey = ""
+	a.summaryKey = ""
 	a.store.Close()
 	a.store = nil
 }

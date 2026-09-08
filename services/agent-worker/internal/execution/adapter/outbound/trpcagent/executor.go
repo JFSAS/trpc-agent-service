@@ -26,6 +26,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
+	"trpc.group/trpc-go/trpc-agent-go/session/summary"
 )
 
 const SDKVersion = "v1.11.2"
@@ -43,7 +44,15 @@ type Model struct {
 	// Nil uses the published per-response MaxOutputTokens cap, never a private quota.
 	MaxOutputTokens *int64
 }
+
+// SummaryConfig contains only the fixed, authorized manifest selection.
+type SummaryConfig struct {
+	Model             Model
+	EventThreshold    int64
+	AddSessionSummary bool
+}
 type Request struct {
+	Summary                               *SummaryConfig
 	TenantID, SessionID, RunID, AttemptID string
 	NodeID, Instruction, InputText        string
 	Model                                 Model
@@ -89,6 +98,13 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	if req.Model.Temperature != nil && (*req.Model.Temperature < 0 || *req.Model.Temperature > 2) {
 		return result, errors.New("invalid temperature")
 	}
+	if req.Summary != nil {
+		sm := req.Summary.Model
+		ep, parseErr := url.Parse(sm.Endpoint)
+		if parseErr != nil || (ep.Scheme != "http" && ep.Scheme != "https") || ep.Host == "" || ep.User != nil || ep.RawQuery != "" || ep.ForceQuery || strings.Contains(sm.Endpoint, "#") || strings.TrimSpace(sm.Name) == "" || sm.MaxOutputTokens != nil || sm.Temperature != nil || req.Summary.EventThreshold <= 0 || req.Summary.EventThreshold > 9007199254740991 || int64(int(req.Summary.EventThreshold)) != req.Summary.EventThreshold {
+			return result, errors.New("invalid fixed summary configuration")
+		}
+	}
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
@@ -110,7 +126,24 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			span.End()
 		}()
 	}
-	local, err := newOverlay(req.TenantID, req.SessionID, req.AcceptedSnapshot, e.CapacityBytes)
+	// Both models own attempt-local transports and use the published per-response
+	// output limit. There is no aggregate token reservation or hidden cap.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defer transport.CloseIdleConnections()
+	httpState := &modelTransport{base: transport}
+	m := newFixedModel(req.Model, maxTokens, httpState)
+	var summaryModel *summaryUsageModel
+	var local *overlay
+	if req.Summary == nil {
+		local, err = newOverlay(req.TenantID, req.SessionID, req.AcceptedSnapshot, e.CapacityBytes)
+	} else {
+		summaryTransport := http.DefaultTransport.(*http.Transport).Clone()
+		defer summaryTransport.CloseIdleConnections()
+		summaryState := &modelTransport{base: summaryTransport}
+		summaryModel = &summaryUsageModel{Model: newFixedModel(req.Summary.Model, req.MaxOutputTokens, summaryState), transport: summaryState}
+		summarizer := summary.NewSummarizer(summaryModel, summary.WithEventThreshold(int(req.Summary.EventThreshold)))
+		local, err = newSummaryOverlay(req.TenantID, req.SessionID, req.AcceptedSnapshot, e.CapacityBytes, summarizer)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -120,26 +153,8 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		appends, bytes := local.stats()
 		trace.SpanFromContext(ctx).SetAttributes(attribute.Int64("app.session.overlay.appends", appends), attribute.Int64("app.session.overlay.bytes", bytes))
 	}()
-	// Owned transport closes in every return path; no model client carries credentials
-	// beyond this attempt. Retries are explicitly zero; Execution owns retry policy.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	defer transport.CloseIdleConnections()
-	httpState := &modelTransport{base: transport}
 	max := int(maxTokens)
-	clientOptions := []openaioption.RequestOption{openaioption.WithMaxRetries(0), openaioption.WithAPIKey(req.Model.APIKey), openaioption.WithOrganization(""), openaioption.WithProject(""), openaioption.WithHTTPClient(&http.Client{Transport: httpState})}
-	if req.Model.APIKey == "" {
-		clientOptions = append(clientOptions, openaioption.WithHeaderDel("Authorization"))
-	}
-	m := openai.New(req.Model.Name, openai.WithAPIKey(req.Model.APIKey), openai.WithVariant(openai.VariantOpenAI), openai.WithOptimizeForCache(false), openai.WithBaseURL(req.Model.Endpoint), openai.WithEnableTokenTailoring(false), openai.WithOpenAIOptions(clientOptions...),
-		openai.WithChatRequestCallback(func(_ context.Context, request *openaiapi.ChatCompletionNewParams) {
-			// SDK v1.11.2 clamps known model names even with tailoring disabled.
-			// Its public typed callback runs after conversion and before send.
-			// Preserve the validated Manifest value; the provider may reject it,
-			// but neither a private cap nor a lower-limit retry is our contract.
-			// Worker V1 sets no extra fields that could override this parameter.
-			request.MaxCompletionTokens = openaiapi.Int(maxTokens)
-		}))
-	a := llmagent.New(req.NodeID, llmagent.WithModel(m), llmagent.WithInstruction(req.Instruction), llmagent.WithGenerationConfig(model.GenerationConfig{MaxTokens: &max, Temperature: req.Model.Temperature, Stream: true}), llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithCodeExecutor(nil), llmagent.WithPreloadMemory(0), llmagent.WithAddSessionSummary(false), llmagent.WithSyncSummaryIntraRun(false), llmagent.WithMaxHistoryRuns(0), llmagent.WithPreserveSameBranch(true))
+	a := llmagent.New(req.NodeID, llmagent.WithModel(m), llmagent.WithInstruction(req.Instruction), llmagent.WithGenerationConfig(model.GenerationConfig{MaxTokens: &max, Temperature: req.Model.Temperature, Stream: true}), llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithCodeExecutor(nil), llmagent.WithPreloadMemory(0), llmagent.WithAddSessionSummary(req.Summary != nil && req.Summary.AddSessionSummary), llmagent.WithSyncSummaryIntraRun(false), llmagent.WithMaxHistoryRuns(0), llmagent.WithPreserveSameBranch(true))
 	r := runner.NewRunner(local.key.AppName, a, runner.WithSessionService(local), runner.WithMemoryService(nil))
 	defer func() {
 		if closeErr := r.Close(); err == nil && closeErr != nil {
@@ -171,6 +186,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					return Result{}, observed
 				}
 				if err = local.Err(); err != nil {
+					if summaryModel != nil && summaryModel.err() != nil {
+						return Result{}, summaryModel.err()
+					}
 					return Result{}, err
 				}
 				if !validFinalText(result.FinalText) {
@@ -179,6 +197,12 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 				result.Snapshot, err = local.Snapshot()
 				if err != nil {
 					return Result{}, err
+				}
+				if summaryModel != nil {
+					usage := summaryModel.usage()
+					result.Usage.InputTokens += usage.InputTokens
+					result.Usage.OutputTokens += usage.OutputTokens
+					result.Usage.TotalTokens += usage.TotalTokens
 				}
 				return result, nil
 			}
@@ -264,4 +288,21 @@ func validFinalText(text string) bool {
 		Sequence:  1, Kind: "final", Content: replywire.FinalTextContent{Type: "text", Text: text}, Deadline: "2000-01-01T00:00:00Z",
 	})
 	return err == nil
+}
+
+func newFixedModel(spec Model, maxTokens int64, httpState *modelTransport) model.Model {
+	clientOptions := []openaioption.RequestOption{openaioption.WithMaxRetries(0), openaioption.WithAPIKey(spec.APIKey), openaioption.WithOrganization(""), openaioption.WithProject(""), openaioption.WithHTTPClient(&http.Client{Transport: httpState})}
+	if spec.APIKey == "" {
+		clientOptions = append(clientOptions, openaioption.WithHeaderDel("Authorization"))
+	}
+	return openai.New(spec.Name, openai.WithAPIKey(spec.APIKey), openai.WithVariant(openai.VariantOpenAI), openai.WithOptimizeForCache(false), openai.WithBaseURL(spec.Endpoint), openai.WithEnableTokenTailoring(false), openai.WithOpenAIOptions(clientOptions...),
+		openai.WithChatRequestCallback(func(_ context.Context, request *openaiapi.ChatCompletionNewParams) {
+			// SDK v1.11.2 clamps known model names even with tailoring disabled.
+			// Its public typed callback runs after conversion and before send.
+			// Preserve the validated Manifest value; the provider may reject it,
+			// but neither a private cap nor a lower-limit retry is our contract.
+			// Worker V1 sets no extra fields that could override this parameter.
+			request.MaxCompletionTokens = openaiapi.Int(maxTokens)
+		}))
+
 }

@@ -162,3 +162,40 @@ LLMAgent 请求实际包含摘要。原 Head 对应字节不变、重复 Put 幂
 
 这些是真实 PostgreSQL 候选/SDK 消费证据，仍不等同于生产 accepted-head 事务、
 外部 LLM、Redis 或 IM 验收。生产 factory/gate 暂未开启 Summary。
+
+## Summary Executor / Factory 与正式接受事务（2026-09-09）
+
+在前述候选实验之后，本批补齐运行适配与正式 head 验证，仍按能力分阶段发布：
+
+- `Plan.Summary` 固定摘要 endpoint、model、credential use、event threshold 与
+  AddSessionSummary。Factory 在 resolve 前验证用途/audience/endpoint，固定批次
+  加入摘要凭据，完全相同 use 去重，同 ID 不同绑定拒绝。Prepare 私有复制 Summary
+  配置；Close 清空主模型与摘要模型的 key。没有新环境变量凭据回退。
+- `Executor.Request.Summary` 实际创建第二个固定 OpenAI-compatible 模型及 SDK
+  Summarizer，安装到原 Session overlay，并按选项装配 AddSessionSummary。
+  摘要仍是同一 Session snapshot 的数据；没有第二个摘要数据库或 migration。
+- 主模型和摘要模型各自使用 attempt-local HTTP transport；重试为零。摘要请求
+  使用发布的 `execution.max_output_tokens` 每次输出上限，不继承主节点更小的
+  generation override，也不增加累计 Token 预算。成功 Run 的 usage 包含两者。
+- 摘要 HTTP 使用非流式响应；适配器等底层 channel 关闭并完成 usage 后才交付 SDK，
+  防止 SDK 收到 Done 提前返回。取消沿原 ctx 传播；未完成摘要不产出候选。
+- 摘要 429/5xx/网络错误映射为可重试模型依赖；其他 provider 错误为模型失败，
+  不误判为 Session 损坏。错误正文不进入 overlay 错误或 SDK 日志。
+
+验收分成两个真实链路，不能将其拼成已经上线的端到端结果：
+
+1. HTTP fixture → 实际 Executor/SDK 主模型+摘要模型 → Snapshot → 下一 Run 消费；
+   检查独立凭据、发布输出上限、合计 usage、provider 失败、取消与 Done 生命周期。
+   Factory 测试使用真实 TLS credential resolver 和内存 Store 测试替身。
+2. `scripts/test-worker-summary-accepted-head.sh` 创建独立 PostgreSQL，使用部署
+   八角色 provisioner、原 Worker/Session migrations 和实际 Ledger/Session Store。
+   SDK Summary → Put 不推进 head → Complete 接受一次 → 新 Claim.Parent →
+   重开 Store/Load → SDK 消费。模型失败、FAILED 带候选、错误 parent、实际 lease
+   过期后的旧 Attempt Complete 均不提升 head。要求一主测五子测零跳过。
+
+**当前发布状态：**生产 Manifest Reader 尚未把 runtime.summary 投影为 Plan.Summary；
+默认 WorkerV1 contract/gate 继续拒绝新能力。上述 Runtime 配置入口已可测试，但
+不是用户配置 Summary 后线上自动生效。后续先补 Reader 固定资源映射与最小
+Summary capability 合同，再联合 Control 编译/凭据导出/真实 Factory/数据库验收，
+最后开放该能力。Memory 的 accepted CAS、Artifact 双存储以及 Knowledge 检索/导入
+仍按后续独立切片完成；不因 Summary 接线而隐式开放它们。

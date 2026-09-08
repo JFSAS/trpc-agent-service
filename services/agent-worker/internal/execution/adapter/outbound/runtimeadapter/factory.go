@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	protocol "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
@@ -77,6 +78,10 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
 	}
+	if p.Summary != nil {
+		fixed := *p.Summary
+		p.Summary = &fixed
+	}
 	if err := check(ctx); err != nil {
 		return nil, err
 	}
@@ -126,7 +131,11 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 		return nil, mapped
 	}
 	f.observe(ctx, "session_open", g, storeStart, nil)
-	return &attempt{tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
+	summaryKey := ""
+	if p.Summary != nil {
+		summaryKey = batch[p.Summary.ModelCredential]
+	}
+	return &attempt{summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {
@@ -166,22 +175,35 @@ func requiredUses(p domain.Plan) ([]domain.CredentialUse, error) {
 	if p.SessionCredential.CredentialID == "" || p.SessionCredential.Purpose != "dsn" {
 		return nil, application.ErrManifestInvalid
 	}
-	uses := []domain.CredentialUse{}
-	if p.ModelCredential.CredentialID != "" {
-		if p.ModelCredential.Purpose != "api_key" {
-			return nil, application.ErrManifestInvalid
+	validModelUse := func(use domain.CredentialUse) bool {
+		if use.CredentialID == "" {
+			return use.Purpose == "" && use.AudienceDigest == ""
 		}
-		uses = append(uses, p.ModelCredential)
-	} else if p.ModelCredential.Purpose != "" || p.ModelCredential.AudienceDigest != "" {
+		return use.Purpose == "api_key" && domain.DigestValid(use.AudienceDigest)
+	}
+	if !validModelUse(p.ModelCredential) {
 		return nil, application.ErrManifestInvalid
 	}
-	uses = append(uses, p.SessionCredential)
-	seen := map[domain.CredentialUse]bool{}
-	for _, use := range uses {
-		if !domain.DigestValid(use.AudienceDigest) || seen[use] {
+	if p.Summary != nil {
+		summary := p.Summary
+		endpoint, err := url.Parse(summary.ModelEndpoint)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(summary.ModelEndpoint, "#") || strings.TrimSpace(summary.ModelName) == "" || summary.EventThreshold < 1 || summary.EventThreshold > 9007199254740991 || int64(int(summary.EventThreshold)) != summary.EventThreshold || !validModelUse(summary.ModelCredential) {
 			return nil, application.ErrManifestInvalid
 		}
-		seen[use] = true
+		if summary.ModelCredential.CredentialID != "" && summary.ModelCredential.AudienceDigest != protocol.CredentialAudienceDigest("openai_compatible", summary.ModelEndpoint) {
+			return nil, application.ErrManifestInvalid
+		}
+	}
+	uses := p.Uses()
+	seen := map[string]domain.CredentialUse{}
+	for _, use := range uses {
+		if !domain.DigestValid(use.AudienceDigest) {
+			return nil, application.ErrManifestInvalid
+		}
+		if previous, ok := seen[use.CredentialID]; ok && previous != use {
+			return nil, application.ErrManifestInvalid
+		}
+		seen[use.CredentialID] = use
 	}
 	return uses, nil
 }
