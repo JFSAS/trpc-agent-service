@@ -45,3 +45,13 @@ it("writes the public managed projection and embedding action separately with CA
   const read = await runtimeProfileApi.getDraft("tenant", "profile");
   expect(read.config).toEqual(config);expect(read.credential_states?.knowledge?.docs?.embedding_api_key.configured).toBe(true);
 });
+
+it("sends PG Memory raw password as dsn_password without changing public binding", async () => {
+  const config = projection();
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ profile_id: "p", draft_revision: 3 }));
+  await runtimeProfileApi.saveDraft("t", "p", { expected_draft_revision: 2, credential_protocol_version: "v1", config, credentials: { storage: { memory: { dsn_password: { action: "replace", value: "test-raw-password" } } } } }, "memory-save");
+  const body = JSON.parse(String(fetcher.mock.calls[0][1]?.body));
+  expect(body.config.storage.memory).toEqual(config.storage.memory);
+  expect(JSON.stringify(body.config)).not.toMatch(/test-raw-password|dsn_credential_id|credential_audience_digest/);
+  expect(body.credentials.storage.memory.dsn_password).toEqual({ action: "replace", value: "test-raw-password" });
+});

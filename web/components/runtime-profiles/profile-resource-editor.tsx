@@ -124,7 +124,7 @@ export function ProfileResourceEditor({ tenantId = "", config, credentials, cred
     const resourceIndex = segments.indexOf(name, segments.indexOf(category) + 1);
     const fieldParts = resourceIndex < 0 ? [] : segments.slice(resourceIndex + 1);
     // Publication pointers refer to canonical credential fields; focus their public write-only controls.
-    const credentialFields: Record<string, string> = { api_key_credential_id: "api_key", bearer_token_credential_id: "bearer_token", qdrant_api_key_credential_id: "qdrant_api_key", dsn_credential_id: "dsn" };
+    const credentialFields: Record<string, string> = { api_key_credential_id: "api_key", bearer_token_credential_id: "bearer_token", qdrant_api_key_credential_id: "qdrant_api_key", dsn_credential_id: category === "storage" && name === "memory" && own(config.storage, name)?.kind === "managed_memory" ? "dsn_password" : "dsn" };
     let field = fieldParts.join("-");
     if (field === "auth-credential_id") field = "bearer_token";
     else if (field === "embedding-api_key_credential_id") field = "embedding_api_key";
@@ -203,8 +203,19 @@ export function ProfileResourceEditor({ tenantId = "", config, credentials, cred
     const storage = own(config.storage, name)!;
     const validRole = ["session", "memory", "artifact"].includes(name) && storage.kind === `managed_${name}`;
     form = <>
-      {validRole ? <ManagedBackendSelect tenantId={tenantId} role={name as "session" | "memory" | "artifact"} value={storage} disabled={disabled} readOnly={readOnly} onChange={(selection) => updateResource({ ...storage, ...selection })} /> : <p role="alert">Managed Storage 类型必须与固定角色名 session、memory、artifact 一致。</p>}
-      <p>平台托管资源不填写连接目标或平台凭据。跨类型替换请通过既有删除确认流程后重新创建，不自动迁移凭据。</p>
+      {validRole ? <ManagedBackendSelect tenantId={tenantId} role={name as "session" | "memory" | "artifact"} value={storage} disabled={disabled} readOnly={readOnly} onChange={(selection) => updateResource({ ...storage, ...selection })}
+        renderSelection={name === "memory" ? (selected) => {
+          const state = own(resourceStates, "dsn_password");
+          const pg = selected?.kind === "postgresql";
+          return pg || state ? <>
+            <CredentialField id={fieldID("dsn_password")} label="PostgreSQL Memory 密码" state={state} action={own(resourceActions, "dsn_password")}
+              onChange={(action) => updateCredential("dsn_password", action)} isOwner={isOwner} disabled={disabled} readOnly={readOnly || !pg}
+              hint="只填写原始密码，不是完整 DSN。现有密码不回填；更换后端或修订后必须显式替换密码。" />
+            {!pg && !readOnly && <p>当前目录未确认该绑定为可选 PostgreSQL 后端，草稿密码编辑暂停，已有状态保留；已发布版本的轮换不受当前目录影响。</p>}
+            {pg && <p>更换 backend 或 revision 后，请选择替换凭证；保持旧凭证不能重新绑定目标。</p>}
+          </> : null;
+        } : undefined} /> : <p role="alert">Managed Storage 类型必须与固定角色名 session、memory、artifact 一致。</p>}
+      <p>平台托管资源不填写连接目标；PostgreSQL Memory 密码使用独立只写操作。跨类型替换请通过既有删除确认流程后重新创建，不自动迁移凭据。</p>
     </>;
   } else if (name && category === "storage") {
     const storage = own(config.storage, name) ?? {};

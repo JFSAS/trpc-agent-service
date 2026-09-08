@@ -1,11 +1,11 @@
 "use client";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { backendDirectoryMessage, listRuntimeBackends, selectableBackend, type BackendRole, type BackendSelection, type RuntimeBackend } from "../../lib/runtime-backend-api";
 
 type DirectoryState = { tenant: string; status: "loading" | "ready" | "error"; items: RuntimeBackend[]; message?: string };
 /** Only a catalog-backed explicit selection; never implies adapter/runtime health. */
-export function ManagedBackendSelect({ tenantId, role, value, onChange, disabled = false, readOnly = false }: {
-  tenantId: string; role: BackendRole; value: Partial<BackendSelection>; onChange(value: BackendSelection): void; disabled?: boolean; readOnly?: boolean;
+export function ManagedBackendSelect({ tenantId, role, value, onChange, disabled = false, readOnly = false, renderSelection }: {
+  tenantId: string; role: BackendRole; value: Partial<BackendSelection>; onChange(value: BackendSelection): void; disabled?: boolean; readOnly?: boolean; renderSelection?(selected: RuntimeBackend | undefined): ReactNode;
 }) {
   const id = useId();
   const [retry, setRetry] = useState(0);
@@ -42,6 +42,7 @@ export function ManagedBackendSelect({ tenantId, role, value, onChange, disabled
             : value.backend_id && !selected ? <p role="alert">当前绑定不在可选目录中或修订已变化，请显式重新选择；已保存的绑定不会自动升级。</p> : null}
       <button type="button" disabled={disabled || directory.status === "loading"} onClick={() => setRetry((n) => n + 1)}>刷新后端目录</button>
     </>}
-    <small>平台连接目标与密码不进入 Profile。目录可选不等于 Worker 运行就绪；当前发布能力以服务端校验为准。</small>
+    {renderSelection?.(selected)}
+    <small>平台连接目标不进入 Profile config；凭据通过独立只写操作配置。目录可选不等于 Worker 运行就绪；当前发布能力以服务端校验为准。</small>
   </section>;
 }

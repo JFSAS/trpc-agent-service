@@ -234,3 +234,18 @@ describe("ProfileRevisionDetail", () => {
     expect(api.updateCredential).not.toHaveBeenCalled();
   });
 });
+
+it("rotates fixed-revision Memory password using token/CAS without directory lookup", async () => {
+  const memoryRevision = { ...revision, config: { ...config, storage: { memory: { kind: "managed_memory", backend_id: "retired-pg", backend_revision: 1 } } }, credential_states: { storage: { memory: { dsn_password: { configured: true, status: "active" as const, credential_revision: 2, association_token: token } } } } };
+  api.getRevision.mockResolvedValue(memoryRevision);
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  render(<ProfileRevisionDetail tenantId="tenant-1" profileId="profile-1" revisionNumber={3} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "更新 Storage / memory / dsn_password" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("新 PostgreSQL Memory 密码"), "test-raw-password");
+  await user.click(within(dialog).getByRole("button", { name: "确认更新凭证" }));
+  await waitFor(() => expect(api.updateCredential).toHaveBeenCalled());
+  expect(api.updateCredential.mock.calls[0][2]).toMatchObject({ target: { profile_revision_number: 3, category: "storage", resource_name: "memory", purpose_field: "dsn_password", association_token: token }, expected_credential_revision: 2, action: "replace", value: "test-raw-password" });
+  expect(fetcher).not.toHaveBeenCalled();fetcher.mockRestore();
+});
