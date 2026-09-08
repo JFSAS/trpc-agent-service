@@ -30,14 +30,16 @@ func (k StorageKind) Role() string {
 }
 func (r StorageResource) MarshalJSON() ([]byte, error) {
 	if r.Kind.Managed() {
-		if r.DSNCredentialID != "" || r.Destination != (StorageDestination{}) {
+		if r.Destination != (StorageDestination{}) || (r.Kind != StorageKindManagedMemory && (r.DSNCredentialID != "" || r.CredentialAudienceDigest != "")) {
 			return nil, ErrCredentialInput
 		}
 		return json.Marshal(struct {
-			Kind            StorageKind `json:"kind"`
-			BackendID       string      `json:"backend_id"`
-			BackendRevision uint64      `json:"backend_revision"`
-		}{r.Kind, r.BackendID, r.BackendRevision})
+			Kind                     StorageKind `json:"kind"`
+			BackendID                string      `json:"backend_id"`
+			BackendRevision          uint64      `json:"backend_revision"`
+			DSNCredentialID          string      `json:"dsn_credential_id,omitempty"`
+			CredentialAudienceDigest string      `json:"credential_audience_digest,omitempty"`
+		}{r.Kind, r.BackendID, r.BackendRevision, r.DSNCredentialID, r.CredentialAudienceDigest})
 	}
 	type plain StorageResource
 	return json.Marshal(plain(r))

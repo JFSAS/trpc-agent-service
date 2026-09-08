@@ -96,11 +96,6 @@ func TestWorkerSummaryRejectsUnexecutableClosure(t *testing.T) {
 			n.Memory = &agentdomain.Memory{Tools: []string{"memory_load"}}
 			in.Agent.Spec.Nodes["assistant"] = n
 		},
-		"disabled memory": func(in *CompileInput) {
-			n := in.Agent.Spec.Nodes["assistant"]
-			n.Memory = &agentdomain.Memory{Tools: []string{}}
-			in.Agent.Spec.Nodes["assistant"] = n
-		},
 		"artifact": func(in *CompileInput) {
 			n := in.Agent.Spec.Nodes["assistant"]
 			n.Artifact = &agentdomain.Artifact{Enabled: true}

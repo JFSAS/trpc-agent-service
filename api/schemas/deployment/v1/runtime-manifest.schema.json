@@ -1514,8 +1514,55 @@
         },
         "backend": {
           "$ref": "#/$defs/managed_backend"
+        },
+        "credential": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "credential_id",
+            "purpose",
+            "audience_digest"
+          ],
+          "properties": {
+            "credential_id": {
+              "$ref": "#/$defs/credential_id"
+            },
+            "purpose": {
+              "const": "dsn_password"
+            },
+            "audience_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "backend": {
+                "properties": {
+                  "kind": {
+                    "const": "postgresql"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "credential"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "credential"
+              ]
+            }
+          }
+        }
+      ]
     },
     "managed_knowledge_resource": {
       "type": "object",

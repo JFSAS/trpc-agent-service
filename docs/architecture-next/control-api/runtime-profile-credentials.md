@@ -527,3 +527,37 @@ Adapter 是消费接入基础，不代表真实执行拥有方与 Worker 已经�
 
 默认 bootstrap 不开启内部解析路由，不注入许可型 verifier。完整集成验证以实际输出
 为准，本文不把测试替身或可选 Adapter 记作生产运行面完成。
+
+## PostgreSQL Memory 最小密码契约
+
+`managed_memory` 选择平台 PostgreSQL 后端时，公开 `config.storage.memory`
+仍只有 `kind`、`backend_id`、`backend_revision`。写入实际密码使用：
+
+```json
+{"credentials":{"storage":{"memory":{"dsn_password":{"action":"replace","value":"<password>"}}}}}
+```
+
+`value` 是密码而不是完整 DSN；`keep`／`clear` 沿用既有操作语义。
+平台目标固定 host、port、database、username、TLS；本运行契约要求
+`managed-postgres-v1`、Memory 隔离及 `memory_runtime` 执行身份。
+Redis 与其他托管角色不因此获得密码输入能力。
+
+Profile 使用方端口 `ManagedCredentialTargetResolver.ResolveMemoryCredentialAudience`
+从可信目录解析租户作用域、确定 backend ID/revision 的 PG Memory 目标，返回
+`Snapshot.Digest()`。服务端将这个摘要与生成的 `dsn_credential_id` 一起保存到
+内部 canonical 的 `credential_audience_digest`，不接受用户提交或在公开 config 返回。
+密码复用现有 Profile 私有加密存储，purpose 为 `dsn_password`。
+
+Deployment 实际启用 PG Memory 时要求两项内部关联存在，并要求 Profile 保存的
+摘要与固定 Manifest Backend 的摘要完全一致。Manifest 的资源 `credential` 只保存
+`credential_id`、`purpose=dsn_password`、`audience_digest`；编译 required uses 包含它。
+Worker 复用现有受认证 `ResolveForAttempt` 取得密码，再用固定 PG 描述构造连接，
+不从环境变量补密码，不把密码写入 Manifest、Outbox 或事件。
+
+更换 backend ID/revision 后，`keep` 不会跨目标复用旧密码；必须显式 `replace`。
+未配置或已清除密码的 Draft 可保存，但实际 PG Memory 发布编译会返回凭据诊断。
+已发布 Revision 的状态和轮换使用固定关联、association token、主体授权与凭据 CAS；
+不读取当前目录，目录下架不自动清除状态或阻止既有引用轮换。轮换不改 Revision。
+公开状态键为 `credential_states.storage.memory.dsn_password`。
+
+现有凭据表对 purpose 只有非空约束，本改动不需要数据库迁移，也不修改历史迁移。

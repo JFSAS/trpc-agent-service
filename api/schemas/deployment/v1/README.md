@@ -73,3 +73,18 @@ Production `worker-v1` remains fail-closed for new declarations until the Worker
 release enables its verified adapters. Catalog loading never enables adapters or
 capabilities. Domain/application tests exercise explicit nonproduction contracts;
 they do not prove live backend execution.
+
+### PostgreSQL Memory credential use
+
+A `managed_memory` resource whose fixed backend kind is `postgresql` requires
+`credential: {credential_id, purpose: "dsn_password", audience_digest}`. Its
+audience must equal that backend's `Snapshot.Digest()` exactly, including tenant,
+role isolation and target. Profile stores this server-derived binding; compilation
+adds it to required credential uses. Shared and Control decoders reject missing,
+foreign-purpose, wrong-audience and null credentials. Redis Memory must not carry
+this field. Public views expose only `credential_present` for PG Memory.
+
+The current static Worker platform declaration preserves Summary and legacy
+Session and adds Memory. The Control publication precheck limits the new role to
+managed PostgreSQL with `memory_runtime`; the Worker-owned gate and actual SDK
+adapter must be integrated together before production Memory execution.

@@ -23,6 +23,12 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	compilerVersion := CompilerVersionV1
 	diagnostics := validateCompileInput(input)
 	diagnostics = append(diagnostics, ValidateManagedSnapshots(input)...)
+	if input.Platform.Version == deploymentv1.WorkerV1PlatformVersion && agentUsesStorageRole(input.Agent.Spec, "memory") {
+		backend, ok := input.ManagedBackends["storage/memory"]
+		if !ok || backend.Kind != datav1.PostgreSQL || backend.PostgreSQL == nil || backend.PostgreSQL.Username != "memory_runtime" || input.Profile.Spec.Storage["memory"].Kind != profiledomain.StorageKindManagedMemory {
+			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/memory", "Worker V1 Memory requires managed PostgreSQL with memory_runtime principal"))
+		}
+	}
 	diagnostics = append(diagnostics, dataContractDiagnostics(input.Agent.Spec, input.Platform)...)
 	if len(errorDiagnostics(diagnostics)) > 0 {
 		return CompiledManifest{}, NewValidationReport(
@@ -577,6 +583,17 @@ func compileResources(
 			host, _ := snapshot.EndpointHost()
 			hosts[host] = true
 			compiledResource := ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
+			if resource.Kind == profiledomain.StorageKindManagedMemory && snapshot.Kind == datav1.PostgreSQL {
+				digest, err := snapshot.Digest()
+				if err != nil || resource.CredentialAudienceDigest != digest || resource.DSNCredentialID == "" {
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name)+"/dsn_credential_id", "storage", name, "PostgreSQL Memory credential is missing or bound to a different target"))
+				} else {
+					compiledResource.Credential = credentialUse(resource.DSNCredentialID, CredentialPurposeDSNPassword, digest)
+					uses = append(uses, compiledResource.Credential)
+				}
+			} else if resource.DSNCredentialID != "" || resource.CredentialAudienceDigest != "" {
+				*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name), "storage", name, "credential purpose is unsupported for this backend"))
+			}
 			if resource.Kind == profiledomain.StorageKindManagedArtifact {
 				compiledResource.MetadataContract = ArtifactMetadataContract
 			}

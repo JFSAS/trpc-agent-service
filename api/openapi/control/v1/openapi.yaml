@@ -1762,7 +1762,7 @@ components:
               minLength: 1
               maxLength: 65536
               writeOnly: true
-              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL memory uses dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
             expected_credential_revision:
               type: "integer"
               minimum: 0
@@ -1805,6 +1805,8 @@ components:
             additionalProperties: false
             properties:
               dsn:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              dsn_password:
                 $ref: "#/components/schemas/RuntimeProfileCredentialAction"
     RuntimeProfileWrite:
       type: "object"
@@ -1893,6 +1895,8 @@ components:
             additionalProperties: false
             properties:
               dsn:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              dsn_password:
                 $ref: "#/components/schemas/RuntimeProfileCredentialState"
     RuntimeProfileDraft:
       type: "object"
@@ -2033,7 +2037,7 @@ components:
             purpose_field: {type: string, enum: [qdrant_api_key, embedding_api_key]}
         - properties:
             category: {type: string, enum: [storage]}
-            purpose_field: {type: string, enum: [dsn]}
+            purpose_field: {type: string, enum: [dsn, dsn_password]}
       properties:
         profile_revision_number:
           type: "integer"
@@ -2046,7 +2050,7 @@ components:
           pattern: "^[a-z][a-z0-9_-]{0,63}$"
         purpose_field:
           type: "string"
-          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn"]
+          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn", "dsn_password"]
         association_token:
           type: "string"
           minLength: 64
@@ -2071,7 +2075,7 @@ components:
               minLength: 1
               maxLength: 65536
               writeOnly: true
-              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL memory uses dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
         - type: "object"
           additionalProperties: false
           required: ["target", "action", "expected_credential_revision"]

@@ -64,3 +64,34 @@ func TestManagedBootstrapPortsAuthorizeRolesAndTenant(t *testing.T) {
 		t.Fatal("wrong role")
 	}
 }
+
+func TestPGMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
+	for _, username := range []string{"memory_runtime", "session_runtime", "runtime"} {
+		t.Run(username, func(t *testing.T) {
+			c, err := backend.NewCatalog([]backend.Entry{{ID: "pg", Revision: 1, Label: "PG Memory", Kind: backend.PostgreSQL, Roles: []backend.Role{backend.Memory}, Enabled: true, TenantIDs: []string{"tenant-a"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := backend.RuntimeTarget{BackendID: "pg", BackendRevision: 1, Kind: datav1.PostgreSQL, Adapter: "managed-postgres-v1", Isolation: datav1.MemoryIsolation, Limits: datav1.Limits{TimeoutMS: 1000, MaxConcurrency: 1, MaxBytes: 1024}, PostgreSQL: &datav1.PostgresTarget{Host: "pg.internal", Port: 5432, Database: "memory", Username: username, SSLMode: "verify-full"}}
+			targets, err := backend.NewRuntimeCatalog(c, []backend.RuntimeTarget{target})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := deploymentBackendAccess{targets: targets}
+			digest, err := a.ResolveMemoryCredentialAudience(context.Background(), "tenant-a", "pg", 1)
+			if (err == nil) != (username == "memory_runtime") {
+				t.Fatal("principal check", err)
+			}
+			if err == nil {
+				snapshot, _ := targets.ResolveSnapshot("tenant-a", backend.Selection{BackendID: "pg", Revision: 1, Role: backend.Memory})
+				want, _ := snapshot.Digest()
+				if digest != want {
+					t.Fatal("digest mismatch")
+				}
+			}
+			if _, err = a.ResolveMemoryCredentialAudience(context.Background(), "tenant-b", "pg", 1); err == nil {
+				t.Fatal("tenant bypass")
+			}
+		})
+	}
+}

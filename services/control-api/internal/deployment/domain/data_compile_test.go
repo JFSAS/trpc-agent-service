@@ -137,6 +137,14 @@ func TestPostgreSQLAndRedisCompileSameSessionMemoryInterfaces(t *testing.T) {
 					in.ManagedBackends["storage/"+role] = s
 				}
 			}
+			if kind == datav1.PostgreSQL {
+				s := in.ManagedBackends["storage/memory"]
+				digest, _ := s.Digest()
+				r := in.Profile.Spec.Storage["memory"]
+				r.DSNCredentialID = credentialMemory
+				r.CredentialAudienceDigest = digest
+				in.Profile.Spec.Storage["memory"] = r
+			}
 			m, r := Compile(in)
 			if !r.Valid {
 				t.Fatal(r.Diagnostics)

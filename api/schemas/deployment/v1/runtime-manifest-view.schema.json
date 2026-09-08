@@ -882,8 +882,38 @@
         },
         "backend": {
           "$ref": "#/$defs/managed_backend"
+        },
+        "credential_present": {
+          "type": "boolean"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "backend": {
+                "properties": {
+                  "kind": {
+                    "const": "postgresql"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "credential_present"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "credential_present"
+              ]
+            }
+          }
+        }
+      ]
     },
     "managed_knowledge_resource": {
       "type": "object",

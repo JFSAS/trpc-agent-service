@@ -29,10 +29,10 @@ func dataContractDiagnostics(a agentdomain.Spec, p PlatformExecutionContract) []
 	if p.Version == deploymentv1.WorkerV1PlatformVersion {
 		for _, id := range sortedKeys(a.Nodes) {
 			n := a.Nodes[id]
-			for _, field := range []string{"memory", "artifact"} {
+			for _, field := range []string{"artifact"} {
 				present := (field == "memory" && n.Memory != nil) || (field == "artifact" && n.Artifact != nil)
 				if present {
-					out = append(out, diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, "/nodes/"+escapeJSONPointer(id)+"/"+field, "Worker V1 only supports session summary data capabilities"))
+					out = append(out, diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, "/nodes/"+escapeJSONPointer(id)+"/"+field, "Worker V1 does not support artifact data capabilities"))
 				}
 			}
 		}

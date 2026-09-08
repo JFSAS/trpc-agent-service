@@ -14,6 +14,7 @@ const (
 	CredentialPurposeQdrantAPIKey    = "qdrant_api_key"
 	CredentialPurposeEmbeddingAPIKey = "embedding_api_key"
 	CredentialPurposeDSN             = "dsn"
+	CredentialPurposeDSNPassword     = "dsn_password"
 
 	StorageRoleSession = "session"
 	StorageRoleMemory  = "memory"
@@ -452,7 +453,7 @@ func NewManifestView(content ManifestContent) ManifestView {
 	}
 	for name, resource := range normalized.Resources.Storage {
 		if resource.Backend != nil {
-			view.Resources.Storage[name] = ManifestStorageResourceView{MetadataContract: resource.MetadataContract, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion}
+			view.Resources.Storage[name] = ManifestStorageResourceView{CredentialPresent: resource.Credential.CredentialID != "", MetadataContract: resource.MetadataContract, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion}
 			continue
 		}
 		view.Resources.Storage[name] = ManifestStorageResourceView{

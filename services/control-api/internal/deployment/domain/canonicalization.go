@@ -134,7 +134,11 @@ func validateManifestCredentialShape(content ManifestContent) error {
 	}
 	for _, resource := range content.Resources.Storage {
 		if resource.Kind.Managed() {
-			if resource.Credential != (CredentialUse{}) {
+			if resource.Backend != nil && resource.Backend.Kind == "postgresql" && resource.Kind == "managed_memory" {
+				if !validCredentialUse(resource.Credential, CredentialPurposeDSNPassword) {
+					return ErrInvalidManifestContent
+				}
+			} else if resource.Credential != (CredentialUse{}) {
 				return ErrInvalidManifestContent
 			}
 			continue

@@ -215,7 +215,26 @@ func validateEmbedding(value any, pointer string, diagnostics *[]Diagnostic) {
 
 func validateStorageResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
 	if k, ok := object["kind"].(string); ok && StorageKind(k).Managed() {
-		validateManagedSelection(pointer, object, []string{"kind", "backend_id", "backend_revision"}, diagnostics)
+		selection := object
+		if StorageKind(k) == StorageKindManagedMemory {
+			selection = make(map[string]any, len(object))
+			for key, v := range object {
+				selection[key] = v
+			}
+			_, hasID := object["dsn_credential_id"]
+			_, hasAudience := object["credential_audience_digest"]
+			if hasID || hasAudience {
+				requireFields(object, pointer, []string{"dsn_credential_id", "credential_audience_digest"}, diagnostics)
+				validatePatternString(object, "dsn_credential_id", pointer, "credential", diagnostics)
+				value, ok := object["credential_audience_digest"].(string)
+				if !ok || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(value) {
+					*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/credential_audience_digest", "credential audience digest is invalid"))
+				}
+			}
+			delete(selection, "dsn_credential_id")
+			delete(selection, "credential_audience_digest")
+		}
+		validateManagedSelection(pointer, selection, []string{"kind", "backend_id", "backend_revision"}, diagnostics)
 		return
 	}
 

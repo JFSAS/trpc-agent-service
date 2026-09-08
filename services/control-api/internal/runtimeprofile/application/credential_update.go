@@ -70,7 +70,7 @@ func validPublishedCredentialPurpose(category, purpose string) bool {
 	case "knowledge":
 		return purpose == "qdrant_api_key" || purpose == "embedding_api_key"
 	case "storage":
-		return purpose == "dsn"
+		return purpose == "dsn" || purpose == "dsn_password"
 	default:
 		return false
 	}
@@ -166,7 +166,7 @@ func (s *Service) UpdateUsedProfileCredential(ctx context.Context, command Updat
 		} else {
 			value := []byte(*command.Update.Value)
 			defer clear(value)
-			if selected.Category == "storage" {
+			if selected.Category == "storage" && selected.Purpose == "dsn" {
 				destination, password, err := ParseStorageCredential(*command.Update.Value)
 				if err != nil {
 					return err

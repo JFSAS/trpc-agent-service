@@ -11,6 +11,7 @@ const (
 	CredentialPurposeQdrantAPIKey    = "qdrant_api_key"
 	CredentialPurposeEmbeddingAPIKey = "embedding_api_key"
 	CredentialPurposeDSN             = "dsn"
+	CredentialPurposeDSNPassword     = "dsn_password"
 
 	StorageRoleSession = "session"
 	StorageRoleMemory  = "memory"

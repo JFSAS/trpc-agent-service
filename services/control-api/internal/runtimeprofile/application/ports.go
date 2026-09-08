@@ -41,17 +41,18 @@ type Store interface {
 }
 
 type Dependencies struct {
-	Backends          BackendAccess
-	ExecutionVerifier ExecutionAuthorizationVerifier
-	Credentials       CredentialStore
-	Cipher            CredentialCipher
-	OwnerAccess       OwnerAccess
-	NewCredentialID   func() (string, error)
-	Store             Store
-	TenantAccess      TenantAccess
-	NewProfileID      func() (string, error)
-	NewRevisionID     func() (string, error)
-	Now               func() time.Time
+	ManagedCredentialTargets ManagedCredentialTargetResolver
+	Backends                 BackendAccess
+	ExecutionVerifier        ExecutionAuthorizationVerifier
+	Credentials              CredentialStore
+	Cipher                   CredentialCipher
+	OwnerAccess              OwnerAccess
+	NewCredentialID          func() (string, error)
+	Store                    Store
+	TenantAccess             TenantAccess
+	NewProfileID             func() (string, error)
+	NewRevisionID            func() (string, error)
+	Now                      func() time.Time
 }
 
 type Service struct {

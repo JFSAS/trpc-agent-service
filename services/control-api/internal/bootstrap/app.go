@@ -154,8 +154,9 @@ func New(ctx context.Context, config Config) (*App, error) {
 		runtimeRouter.Use(gin.RecoveryWithWriter(nil))
 	}
 	runtimeProfileModule, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
-		Backends:          profileBackendAccess{catalog: backendCatalog},
-		ExecutionVerifier: executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
+		ManagedCredentialTargets: deploymentBackendAccess{targets: backendTargets, tenants: activeTenantMemberLookup{tenants: tenantModule.Service}},
+		Backends:                 profileBackendAccess{catalog: backendCatalog},
+		ExecutionVerifier:        executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
 		DB: pool, Routes: router,
 		Authenticate:  identityModule.AuthenticationMiddleware(),
 		CredentialKey: config.ProfileCredentialKey,

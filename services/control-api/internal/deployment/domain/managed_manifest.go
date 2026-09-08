@@ -30,15 +30,24 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 		return nil, ErrInvalidManifestContent
 	}
 	if r.Kind.Managed() {
-		if r.Backend == nil || r.Credential != (CredentialUse{}) || r.Destination != (profiledomain.StorageDestination{}) {
+		if r.Backend == nil || r.Destination != (profiledomain.StorageDestination{}) {
 			return nil, ErrInvalidManifestContent
 		}
+		var credential *CredentialUse
+		if r.Credential != (CredentialUse{}) {
+			if r.Kind != profiledomain.StorageKindManagedMemory || r.Backend.Kind != datav1.PostgreSQL {
+				return nil, ErrInvalidManifestContent
+			}
+			c := r.Credential
+			credential = &c
+		}
 		return json.Marshal(struct {
+			Credential       *CredentialUse            `json:"credential,omitempty"`
 			MetadataContract string                    `json:"metadata_contract,omitempty"`
 			Adapter          string                    `json:"adapter_version"`
 			Kind             profiledomain.StorageKind `json:"kind"`
 			Backend          *datav1.Snapshot          `json:"backend"`
-		}{r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
+		}{credential, r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
 	}
 	if r.Backend != nil {
 		return nil, ErrInvalidManifestContent
@@ -67,12 +76,18 @@ func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 }
 func (r ManifestStorageResourceView) MarshalJSON() ([]byte, error) {
 	if r.Backend != nil {
+		var present *bool
+		if r.Kind == profiledomain.StorageKindManagedMemory && r.Backend.Kind == datav1.PostgreSQL {
+			v := r.CredentialPresent
+			present = &v
+		}
 		return json.Marshal(struct {
-			MetadataContract string                    `json:"metadata_contract,omitempty"`
-			Adapter          string                    `json:"adapter_version"`
-			Kind             profiledomain.StorageKind `json:"kind"`
-			Backend          *ManagedBackendView       `json:"backend"`
-		}{r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
+			CredentialPresent *bool                     `json:"credential_present,omitempty"`
+			MetadataContract  string                    `json:"metadata_contract,omitempty"`
+			Adapter           string                    `json:"adapter_version"`
+			Kind              profiledomain.StorageKind `json:"kind"`
+			Backend           *ManagedBackendView       `json:"backend"`
+		}{present, r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
 	}
 	type plain ManifestStorageResourceView
 	return json.Marshal(plain(r))
@@ -145,6 +160,11 @@ func validateManagedWire(raw []byte) error {
 				continue
 			}
 			allowed := map[string]bool{"kind": true, "adapter_version": true, "backend": true}
+			if category == "storage" && kind == string(profiledomain.StorageKindManagedMemory) {
+				if _, ok := fields["credential"]; ok {
+					allowed["credential"] = true
+				}
+			}
 			if category == "storage" && kind == string(profiledomain.StorageKindManagedArtifact) {
 				allowed["metadata_contract"] = true
 			}
@@ -160,8 +180,24 @@ func validateManagedWire(raw []byte) error {
 					return ErrInvalidManifestContent
 				}
 			}
-			if _, err := datav1.Decode(fields["backend"]); err != nil {
+			snapshot, err := datav1.Decode(fields["backend"])
+			if err != nil {
 				return ErrInvalidManifestContent
+			}
+			if category == "storage" && kind == string(profiledomain.StorageKindManagedMemory) {
+				credentialRaw, present := fields["credential"]
+				if snapshot.Kind == datav1.PostgreSQL {
+					var use CredentialUse
+					if !present || strictDecodeJSON(credentialRaw, &use) != nil || !validCredentialUse(use, CredentialPurposeDSNPassword) {
+						return ErrInvalidManifestContent
+					}
+					digest, _ := snapshot.Digest()
+					if use.AudienceDigest != digest {
+						return ErrInvalidManifestContent
+					}
+				} else if present {
+					return ErrInvalidManifestContent
+				}
 			}
 		}
 	}

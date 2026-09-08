@@ -271,10 +271,21 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 			if (resource.Kind == profiledomain.StorageKindManagedArtifact && resource.MetadataContract != ArtifactMetadataContract) || (resource.Kind != profiledomain.StorageKindManagedArtifact && resource.MetadataContract != "") {
 				return profiledomain.Spec{}, ErrInvalidManifestContent
 			}
-			if name != r.Role || !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != adapter || resource.Credential != (CredentialUse{}) || resource.Destination != (profiledomain.StorageDestination{}) {
+			if name != r.Role || !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != adapter || resource.Destination != (profiledomain.StorageDestination{}) {
 				return profiledomain.Spec{}, ErrInvalidManifestContent
 			}
-			profile.Storage[name] = profiledomain.StorageResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision}
+			profileResource := profiledomain.StorageResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision}
+			if resource.Kind == profiledomain.StorageKindManagedMemory && resource.Backend.Kind == datav1.PostgreSQL {
+				digest, err := resource.Backend.Digest()
+				if err != nil || !validCredentialUse(resource.Credential, CredentialPurposeDSNPassword) || resource.Credential.AudienceDigest != digest {
+					return profiledomain.Spec{}, ErrInvalidManifestContent
+				}
+				profileResource.DSNCredentialID = resource.Credential.CredentialID
+				profileResource.CredentialAudienceDigest = digest
+			} else if resource.Credential != (CredentialUse{}) {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			profile.Storage[name] = profileResource
 			host, _ := resource.Backend.EndpointHost()
 			hosts[host] = true
 			continue

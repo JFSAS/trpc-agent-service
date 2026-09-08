@@ -109,3 +109,16 @@ standalone Sandbox Manager; this change adds no new tool kind or capability.
 See the [subdomain contract](../../../../docs/architecture-next/control-api/runtime-profile.md),
 [Canonical specification](../../../../docs/architecture-next/control-api/runtime-profile-spec.md),
 and [credential contract](../../../../docs/architecture-next/control-api/runtime-profile-credentials.md).
+
+### Managed PostgreSQL Memory password
+
+`managed_memory` may carry the server-generated paired canonical fields
+`dsn_credential_id` and `credential_audience_digest`. The latter is the exact
+role-bound PG backend Snapshot digest, obtained through a trusted platform port.
+Neither field is accepted or returned in public config. Public write actions and
+credential state use `storage.<name>.dsn_password`; the value is a password, not
+a DSN. Deployment requires a configured, matching association for active PG
+Memory. Changing backend identity/revision requires replacement, not implicit keep.
+Published credential rotation uses the immutable association without consulting
+current backend availability. Redis and other managed roles do not gain this
+credential purpose.
