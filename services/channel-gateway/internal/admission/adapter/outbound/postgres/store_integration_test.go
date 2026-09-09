@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	wire "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	admissionpg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/adapter/outbound/postgres"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/application"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
@@ -182,6 +183,37 @@ func TestIntegrationSingleWinnerAndSourceConflict(t *testing.T) {
 	}
 	if subject != wire.RunRequestedSubject || event.EventID != winner.AdmissionID || event.RunID != winner.RunID || event.Route.Generation != 1 || event.Input.Key.EventID != telegramEventID("same") {
 		t.Fatalf("incorrect immutable wire event: %+v", event)
+	}
+}
+
+func TestIntegrationUsageRateIsSharedAndAtomic(t *testing.T) {
+	store, pool, _ := setup(t)
+	first := acceptance("rate-1")
+	policy := governancev1.Policy{
+		SchemaVersion: 1, TenantID: "tenant", Revision: 1, Enabled: true,
+		IM:        governancev1.IMPolicy{AllowAll: true, Rules: []governancev1.IMRule{}},
+		Requests:  governancev1.RequestPolicy{TenantPerMinute: 2, UserPerMinute: 1},
+		Execution: governancev1.ExecutionPolicy{MaxConcurrentRuns: 2},
+		Tokens:    governancev1.TokenPolicy{PeriodSeconds: 3600, Limit: 10000, ReservationPerRun: 100},
+	}
+	first.Policy = &policy
+	if _, err := store.Commit(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := acceptance("rate-2")
+	second.Policy = &policy
+	if _, err := store.Commit(context.Background(), second); !errors.Is(err, domain.ErrRateLimited) {
+		t.Fatalf("second user request was not limited: %v", err)
+	}
+	var tenantCount, userCount int
+	if err := pool.QueryRow(context.Background(), `SELECT
+COALESCE(max(request_count) FILTER(WHERE subject_kind='tenant'),0),
+COALESCE(max(request_count) FILTER(WHERE subject_kind='user'),0)
+FROM gateway_usage_rate_windows WHERE tenant_id='tenant'`).Scan(&tenantCount, &userCount); err != nil {
+		t.Fatal(err)
+	}
+	if tenantCount != 1 || userCount != 1 {
+		t.Fatalf("rejected request leaked a partial charge: tenant=%d user=%d", tenantCount, userCount)
 	}
 }
 func TestIntegrationIgnoreAndInteractionDoNotUseRouteGuard(t *testing.T) {

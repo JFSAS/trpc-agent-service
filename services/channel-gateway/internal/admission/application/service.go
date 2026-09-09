@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,6 +27,9 @@ type RouteResolver interface {
 type cohortRouteResolver interface {
 	ResolveFor(context.Context, string, string, string, string, string) (domain.RouteSnapshot, error)
 }
+type UsagePolicySource interface {
+	UsagePolicy(context.Context, string) (governancev1.Policy, error)
+}
 
 // Options contains initial operating limits, not a throughput guarantee.
 type Options struct {
@@ -41,6 +45,14 @@ type Service struct {
 	lookups  chan struct{}
 	stopping atomic.Bool
 	timeout  time.Duration
+	policies UsagePolicySource
+}
+
+// WithUsagePolicies binds the Control-owned source before the Service is
+// exposed to ingress. A nil source keeps fixture mode permissive.
+func (s *Service) WithUsagePolicies(source UsagePolicySource) *Service {
+	s.policies = source
+	return s
 }
 
 func New(ledger Ledger, routes RouteResolver, tracers ...trace.Tracer) *Service {
@@ -139,6 +151,16 @@ func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt
 			if err = route.ValidateFor(in.Key); err != nil {
 				return s.finalReceipt(ctx, in, domain.ErrUnavailable)
 			}
+			policy := governancev1.Disabled(route.TenantID)
+			if s.policies != nil {
+				policy, err = s.policies.UsagePolicy(ctx, route.TenantID)
+				if err != nil || policy.TenantID != route.TenantID || policy.Validate() != nil {
+					return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+				}
+			}
+			if !policy.Allows(route.AccountID, route.BindingID, in.SenderID, in.ConversationID) {
+				return s.finalReceipt(ctx, in, domain.ErrUsageDenied)
+			}
 			span.SetAttributes(attribute.String("app.deployment.revision.id", route.DeploymentRevisionID))
 			if route.RolloutID != "" {
 				span.SetAttributes(attribute.String("app.rollout.id", route.RolloutID), attribute.String("app.rollout.variant", route.RolloutVariant))
@@ -152,6 +174,7 @@ func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt
 				return domain.Receipt{}, err
 			}
 			change.Route = &route
+			change.Policy = &policy
 			change.Receipt = domain.Receipt{Decision: "admit-run", AdmissionID: admissionID, RunID: runID}
 		}
 		if s.stopping.Load() {

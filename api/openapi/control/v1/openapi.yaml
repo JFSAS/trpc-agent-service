@@ -94,6 +94,66 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '503': {description: An audit source is unavailable}
+  /v1/tenants/{tenant_id}/usage-policy:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getTenantUsagePolicy
+      tags: [Operations]
+      summary: Read the current tenant usage policy
+      description: Active members may read the current policy. Absence is represented as a disabled revision-zero policy.
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Current policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UsagePolicy'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    put:
+      operationId: replaceTenantUsagePolicy
+      tags: [Operations]
+      summary: Replace the current tenant usage policy
+      description: Owner-only, CAS-protected replacement. Revision is concurrency control; V1 does not expose policy history.
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/UsagePolicyIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReplaceUsagePolicyRequest'}
+      responses:
+        '200':
+          description: Replaced policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UsagePolicy'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/tenants/{tenant_id}/usage-summary:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getTenantUsageSummary
+      tags: [Operations]
+      summary: Read Worker-owned usage accounting for the latest period
+      description: Unknown Provider usage retains its reservation and is never reported as zero. Estimated cost is not a Provider invoice.
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Current usage projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UsageSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/tenants/{tenant_id}/runtime-backends:
     parameters:
       - $ref: '#/components/parameters/TenantID'
@@ -1419,6 +1479,12 @@ components:
       required: true
       description: Stable key for one logical credential mutation; reuse with an identical payload on retry. Reusing with another payload returns 409.
       schema: {type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]+$'}
+    UsagePolicyIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable key for one logical policy replacement; identical retries return the original result and changed payloads return 409.
+      schema: {type: string, minLength: 8, maxLength: 128, pattern: '^[!-~]+$'}
     RuntimeProfileID:
       name: profile_id
       in: path
@@ -1504,6 +1570,78 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
   schemas:
+    UsagePolicy:
+      type: object
+      additionalProperties: false
+      required: [schema_version, tenant_id, revision, enabled, im, requests, execution, tokens]
+      properties:
+        schema_version: {type: integer, const: 1}
+        tenant_id: {type: string, minLength: 1, maxLength: 128}
+        revision: {type: integer, minimum: 0, maximum: 9007199254740991}
+        enabled: {type: boolean}
+        im:
+          type: object
+          additionalProperties: false
+          required: [allow_all, rules]
+          properties:
+            allow_all: {type: boolean}
+            rules:
+              type: array
+              maxItems: 256
+              items:
+                type: object
+                additionalProperties: false
+                required: [account_id, user_ids, group_ids]
+                properties:
+                  account_id: {type: string, minLength: 1, maxLength: 128}
+                  binding_id: {type: string, minLength: 1, maxLength: 128}
+                  user_ids: {type: array, maxItems: 2048, items: {type: string, minLength: 1, maxLength: 256}}
+                  group_ids: {type: array, maxItems: 2048, items: {type: string, minLength: 1, maxLength: 256}}
+        requests:
+          type: object
+          additionalProperties: false
+          required: [tenant_per_minute, user_per_minute]
+          properties:
+            tenant_per_minute: {type: integer, minimum: 0, maximum: 1000000}
+            user_per_minute: {type: integer, minimum: 0, maximum: 1000000}
+        execution:
+          type: object
+          additionalProperties: false
+          required: [max_concurrent_runs]
+          properties:
+            max_concurrent_runs: {type: integer, minimum: 0, maximum: 100000}
+        tokens:
+          type: object
+          additionalProperties: false
+          required: [period_seconds, limit, reservation_per_run, input_micros_per_million_tokens, output_micros_per_million_tokens]
+          properties:
+            period_seconds: {type: integer, minimum: 0, maximum: 31536000}
+            limit: {type: integer, minimum: 0, maximum: 9007199254740991}
+            reservation_per_run: {type: integer, minimum: 0, maximum: 9007199254740991}
+            input_micros_per_million_tokens: {type: integer, minimum: 0, maximum: 1000000000}
+            output_micros_per_million_tokens: {type: integer, minimum: 0, maximum: 1000000000}
+    ReplaceUsagePolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, policy]
+      properties:
+        expected_revision: {type: integer, minimum: 0, maximum: 9007199254740991}
+        policy: {$ref: '#/components/schemas/UsagePolicy'}
+    UsageSummary:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, policy_revision, period_seconds, token_limit, used_tokens, reserved_tokens, unknown_usage_count, pending_usage_count, estimated_cost_micros]
+      properties:
+        tenant_id: {type: string, minLength: 1, maxLength: 128}
+        policy_revision: {type: integer, minimum: 0, maximum: 9007199254740991}
+        period_start: {type: string, format: date-time}
+        period_seconds: {type: integer, minimum: 0, maximum: 31536000}
+        token_limit: {type: integer, minimum: 0, maximum: 9007199254740991}
+        used_tokens: {type: integer, minimum: 0, maximum: 9007199254740991}
+        reserved_tokens: {type: integer, minimum: 0, maximum: 9007199254740991}
+        unknown_usage_count: {type: integer, minimum: 0, maximum: 9007199254740991}
+        pending_usage_count: {type: integer, minimum: 0, maximum: 9007199254740991}
+        estimated_cost_micros: {type: integer, minimum: 0, maximum: 9007199254740991}
     CreateDeploymentRequest:
       type: object
       additionalProperties: false

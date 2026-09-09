@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 	identityapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runmanagement/application"
@@ -26,6 +27,7 @@ func (h *Handler) Register(routes gin.IRoutes) {
 	routes.GET("/v1/tenants/:tenant_id/runs", h.listRuns)
 	routes.GET("/v1/tenants/:tenant_id/runs/:run_id", h.getRun)
 	routes.GET("/v1/tenants/:tenant_id/audit-events", h.listAudit)
+	routes.GET("/v1/tenants/:tenant_id/usage-summary", h.getUsage)
 }
 
 func identity(c *gin.Context) (identityapp.IdentityContext, bool) {
@@ -131,4 +133,29 @@ func fail(c *gin.Context, err error) {
 	default:
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"code": "RUN_MANAGEMENT_UNAVAILABLE"}})
 	}
+}
+
+func (h *Handler) getUsage(c *gin.Context) {
+	id, ok := identity(c)
+	if !ok {
+		return
+	}
+	if c.Request.URL.RawQuery != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "INVALID_QUERY"}})
+		return
+	}
+	reader, ok := h.service.(interface {
+		GetUsage(context.Context, string, string) (governancev1.UsageSummary, error)
+	})
+	if !ok {
+		fail(c, application.ErrUnavailable)
+		return
+	}
+	out, err := reader.GetUsage(c.Request.Context(), c.Param("tenant_id"), id.UserID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, out)
 }

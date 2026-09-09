@@ -8,8 +8,15 @@ import (
 	"testing"
 	"time"
 
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
 )
+
+type usagePolicyFunc func(context.Context, string) (governancev1.Policy, error)
+
+func (f usagePolicyFunc) UsagePolicy(ctx context.Context, tenant string) (governancev1.Policy, error) {
+	return f(ctx, tenant)
+}
 
 type ledgerStub struct {
 	find   func(context.Context, domain.EventKey) (domain.Receipt, string, bool, error)
@@ -59,6 +66,40 @@ func noRoutes(t *testing.T) resolveFunc {
 	return func(context.Context, string, string) (domain.RouteSnapshot, error) {
 		t.Error("unexpected route resolution")
 		return domain.RouteSnapshot{}, errors.New("unexpected")
+	}
+}
+
+func usagePolicy(allowed string) governancev1.Policy {
+	return governancev1.Policy{
+		SchemaVersion: 1, TenantID: "tenant", Revision: 3, Enabled: true,
+		IM:        governancev1.IMPolicy{Rules: []governancev1.IMRule{{AccountID: "account", BindingID: "binding", UserIDs: []string{allowed}, GroupIDs: []string{}}}},
+		Requests:  governancev1.RequestPolicy{TenantPerMinute: 10, UserPerMinute: 2},
+		Execution: governancev1.ExecutionPolicy{MaxConcurrentRuns: 2},
+		Tokens:    governancev1.TokenPolicy{PeriodSeconds: 3600, Limit: 10000, ReservationPerRun: 100},
+	}
+}
+
+func TestUsagePolicyAuthorizesBeforeAdmissionAndFreezesSnapshot(t *testing.T) {
+	in := input()
+	commits := 0
+	service := New(ledgerStub{commit: func(_ context.Context, c domain.Acceptance) (domain.Receipt, error) {
+		commits++
+		if c.Policy == nil || c.Policy.Revision != 3 || c.Policy.Requests.UserPerMinute != 2 {
+			t.Fatalf("policy snapshot not fixed: %+v", c.Policy)
+		}
+		return c.Receipt, nil
+	}}, routes()).WithUsagePolicies(usagePolicyFunc(func(context.Context, string) (governancev1.Policy, error) {
+		return usagePolicy(in.SenderID), nil
+	}))
+	if _, err := service.AcceptInbound(context.Background(), in); err != nil || commits != 1 {
+		t.Fatalf("authorized admission err=%v commits=%d", err, commits)
+	}
+
+	denied := New(ledgerStub{}, routes()).WithUsagePolicies(usagePolicyFunc(func(context.Context, string) (governancev1.Policy, error) {
+		return usagePolicy("someone-else"), nil
+	}))
+	if _, err := denied.AcceptInbound(context.Background(), in); !errors.Is(err, domain.ErrUsageDenied) {
+		t.Fatalf("denied identity: %v", err)
 	}
 }
 

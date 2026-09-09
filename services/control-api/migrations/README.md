@@ -95,3 +95,7 @@ Worker Session facts or runtime quota consumption.
 fence。主体、策略 head、账户变化都会失效旧快照分页；原有 0001–0007 内容不变。
 新增 `COLLATE "C"` keyset 索引以匹配跨语言摘要顺序。generation 不是 Broker offset，
 也不代表 Gateway/Worker 已安装当前授权。迁移不会启用策略投影或运行授权开关。
+
+`0010_tenant_usage_policy.sql` stores one current, tenant-owned usage policy and
+CAS/idempotency metadata. Its revision is only an update fence: V1 does not expose
+policy history. Runtime enforcement remains in Gateway and Worker shared stores.

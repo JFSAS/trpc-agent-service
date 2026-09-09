@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 )
 
 var (
@@ -17,6 +19,8 @@ var (
 	ErrUnavailable        = errors.New("admission temporarily unavailable")
 	ErrRouteChanged       = errors.New("route changed before acceptance")
 	ErrClaimLost          = errors.New("outbox claim expired or replaced")
+	ErrUsageDenied        = errors.New("tenant usage policy denied admission")
+	ErrRateLimited        = errors.New("tenant usage rate reached")
 )
 
 type EventKey struct {
@@ -107,6 +111,7 @@ type Acceptance struct {
 	Input   Inbound
 	Receipt Receipt
 	Route   *RouteSnapshot
+	Policy  *governancev1.Policy
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
@@ -196,12 +201,12 @@ func (c Acceptance) Validate() error {
 	}
 	switch c.Receipt.Decision {
 	case "admit-run":
-		if c.Input.Kind != "text" || c.Route == nil || !identifier.MatchString(c.Receipt.AdmissionID) || !identifier.MatchString(c.Receipt.RunID) || c.Receipt.Reason != "" {
+		if c.Input.Kind != "text" || c.Route == nil || c.Policy != nil && (c.Policy.TenantID != c.Route.TenantID || c.Policy.Validate() != nil) || !identifier.MatchString(c.Receipt.AdmissionID) || !identifier.MatchString(c.Receipt.RunID) || c.Receipt.Reason != "" {
 			return ErrInvalidInput
 		}
 		return c.Route.ValidateFor(c.Input.Key)
 	case "ignore", "interaction":
-		if c.Receipt.Decision != c.Input.Kind || c.Route != nil || c.Receipt.AdmissionID != "" || c.Receipt.RunID != "" || !opaque(c.Receipt.Reason, 256, false) {
+		if c.Receipt.Decision != c.Input.Kind || c.Route != nil || c.Policy != nil || c.Receipt.AdmissionID != "" || c.Receipt.RunID != "" || !opaque(c.Receipt.Reason, 256, false) {
 			return ErrInvalidInput
 		}
 	default:

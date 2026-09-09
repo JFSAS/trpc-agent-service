@@ -159,6 +159,19 @@ export type AuditEvent = {
   outcome: string; actor_id?: string; resource_type: string; resource_id: string;
   reason?: string; occurred_at: string; attributes?: Record<string, unknown>;
 };
+export type UsagePolicy = {
+  schema_version: 1; tenant_id: string; revision: number; enabled: boolean;
+  im: { allow_all: boolean; rules: Array<{ account_id: string; binding_id?: string; user_ids: string[]; group_ids: string[] }> };
+  requests: { tenant_per_minute: number; user_per_minute: number };
+  execution: { max_concurrent_runs: number };
+  tokens: { period_seconds: number; limit: number; reservation_per_run: number; input_micros_per_million_tokens: number; output_micros_per_million_tokens: number };
+};
+export type UsageSummary = {
+  tenant_id: string; policy_revision: number; period_start?: string;
+  period_seconds: number; token_limit: number; used_tokens: number;
+  reserved_tokens: number; unknown_usage_count: number;
+  pending_usage_count: number; estimated_cost_micros: number;
+};
 
 export class ControlApiError extends Error {
   constructor(
@@ -378,5 +391,17 @@ export const controlApi = {
     return request<{ events: AuditEvent[]; offset: number; limit: number; total: number }>(
       `/v1/tenants/${encodeURIComponent(tenantId)}/audit-events?${query}`,
     );
+  },
+  getUsagePolicy(tenantId: string) {
+    return request<UsagePolicy>(`/v1/tenants/${encodeURIComponent(tenantId)}/usage-policy`);
+  },
+  replaceUsagePolicy(tenantId: string, expectedRevision: number, policy: UsagePolicy, idempotencyKey: string) {
+    return request<UsagePolicy>(`/v1/tenants/${encodeURIComponent(tenantId)}/usage-policy`, {
+      ...json("PUT", { expected_revision: expectedRevision, policy }),
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    });
+  },
+  getUsageSummary(tenantId: string) {
+    return request<UsageSummary>(`/v1/tenants/${encodeURIComponent(tenantId)}/usage-summary`);
   },
 };

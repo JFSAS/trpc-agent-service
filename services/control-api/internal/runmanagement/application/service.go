@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 )
 
@@ -118,4 +119,24 @@ func (s *Service) ListAudit(ctx context.Context, tenant, user string, offset, li
 	end := min(len(events), want)
 	start := min(offset, end)
 	return managementv1.AuditPage{Events: events[start:end], Offset: offset, Limit: limit, Total: control.Total + runtime.Total}, nil
+}
+
+func (s *Service) GetUsage(ctx context.Context, tenant, user string) (governancev1.UsageSummary, error) {
+	if err := s.authorize(ctx, tenant, user); err != nil {
+		return governancev1.UsageSummary{}, err
+	}
+	reader, ok := s.runtime.(interface {
+		Usage(context.Context, string) (governancev1.UsageSummary, error)
+	})
+	if !ok {
+		return governancev1.UsageSummary{}, ErrUnavailable
+	}
+	out, err := reader.Usage(ctx, tenant)
+	if err != nil {
+		return governancev1.UsageSummary{}, ErrUnavailable
+	}
+	if out.TenantID != tenant {
+		return governancev1.UsageSummary{}, ErrUnavailable
+	}
+	return out, nil
 }

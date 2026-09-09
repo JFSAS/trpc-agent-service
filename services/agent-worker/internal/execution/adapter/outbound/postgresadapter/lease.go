@@ -86,6 +86,30 @@ func (l *Ledger) Claim(ctx context.Context, req domain.ClaimRequest) (grant doma
 	if active >= req.MaxActive {
 		return domain.Grant{}, domain.ErrCapacity
 	}
+	if r.Request.UsagePolicy.Enabled {
+		// Claims lock different Run rows, so serialize quota decisions by tenant.
+		// Every Worker replica shares this transaction-scoped lock.
+		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,812764913))`, req.TenantID); err != nil {
+			return domain.Grant{}, err
+		}
+		var tenantActive int
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM execution_attempts WHERE tenant_id=$1 AND status IN ('PREPARING','EXECUTING') AND lease_until>clock_timestamp()`, req.TenantID).Scan(&tenantActive); err != nil {
+			return domain.Grant{}, err
+		}
+		if tenantActive >= r.Request.UsagePolicy.MaxConcurrentRuns {
+			return domain.Grant{}, domain.ErrCapacity
+		}
+		periodStart := time.Unix((now.Unix()/r.Request.UsagePolicy.TokenPeriodSeconds)*r.Request.UsagePolicy.TokenPeriodSeconds, 0).UTC()
+		var committed int64
+		if err = tx.QueryRow(ctx, `SELECT COALESCE(sum(CASE WHEN s.usage_known THEN s.total_tokens ELSE r.reserved_tokens END),0)
+FROM worker_tenant_usage_reservations_v1 r LEFT JOIN worker_tenant_usage_settlements_v1 s USING(tenant_id,attempt_id)
+WHERE r.tenant_id=$1 AND r.created_at >= $2`, req.TenantID, periodStart).Scan(&committed); err != nil {
+			return domain.Grant{}, err
+		}
+		if committed > r.Request.UsagePolicy.TokenLimit-r.Request.UsagePolicy.TokenReservationPerRun {
+			return domain.Grant{}, domain.ErrCapacity
+		}
+	}
 	if r.ExecutionDeadline == nil {
 		deadline := now.Add(time.Duration(req.MaxRunSeconds) * time.Second)
 		if r.RunDeadline.Before(deadline) {
@@ -116,6 +140,14 @@ func (l *Ledger) Claim(ctx context.Context, req domain.ClaimRequest) (grant doma
 	_, err = tx.Exec(ctx, `INSERT INTO execution_attempts(tenant_id,attempt_id,run_id,worker_id,generation,lease_epoch,token_hash,lease_until,status,parent_ref,parent_digest,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PREPARING',$9,$10,$11)`, req.TenantID, attempt, req.RunID, req.WorkerID, r.Generation, r.LeaseEpoch, domain.Digest([]byte(token)), until, head.Ref, head.Digest, now)
 	if err != nil {
 		return domain.Grant{}, err
+	}
+	if r.Request.UsagePolicy.Enabled {
+		p := r.Request.UsagePolicy
+		periodStart := time.Unix((now.Unix()/p.TokenPeriodSeconds)*p.TokenPeriodSeconds, 0).UTC()
+		_, err = tx.Exec(ctx, `INSERT INTO worker_tenant_usage_reservations_v1(tenant_id,attempt_id,run_id,policy_revision,period_start,period_seconds,reserved_tokens,token_limit,input_micros_per_million_tokens,output_micros_per_million_tokens) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.TenantID, attempt, req.RunID, p.Revision, periodStart, p.TokenPeriodSeconds, p.TokenReservationPerRun, p.TokenLimit, p.InputMicrosPerMillionTokens, p.OutputMicrosPerMillionTokens)
+		if err != nil {
+			return domain.Grant{}, err
+		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE execution_runs SET status='RUNNING',wait_reason='',retry_at=NULL,execution_deadline=$3,attempts=$4,generation=$5,lease_epoch=$6,current_attempt_id=$7 WHERE tenant_id=$1 AND run_id=$2`, req.TenantID, req.RunID, r.ExecutionDeadline, r.Attempts, r.Generation, r.LeaseEpoch, attempt)
 	if err != nil {

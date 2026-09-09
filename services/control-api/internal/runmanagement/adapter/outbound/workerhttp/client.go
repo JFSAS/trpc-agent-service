@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runmanagement/application"
 )
@@ -81,4 +82,10 @@ func (c *Client) ListAudit(ctx context.Context, tenant string, offset, limit int
 	var page managementv1.AuditPage
 	err := c.get(ctx, pagePath(tenant, "audit-events"), pageQuery(offset, limit), &page)
 	return page, err
+}
+
+func (c *Client) Usage(ctx context.Context, tenant string) (governancev1.UsageSummary, error) {
+	var summary governancev1.UsageSummary
+	err := c.get(ctx, "/internal/v1/management/tenants/"+url.PathEscape(tenant)+"/usage-summary", &summary)
+	return summary, err
 }

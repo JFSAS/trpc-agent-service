@@ -60,6 +60,28 @@ type Requested struct {
 	EventID, EventDigest, RunDigest, RunID, AdmissionID string
 	Route                                               Route
 	Input                                               Input
+	UsagePolicy                                         UsagePolicy
+}
+
+type UsagePolicy struct {
+	Revision                                                  int64
+	Enabled                                                   bool
+	MaxConcurrentRuns                                         int
+	TokenPeriodSeconds, TokenLimit, TokenReservationPerRun    int64
+	InputMicrosPerMillionTokens, OutputMicrosPerMillionTokens int64
+}
+
+func (p UsagePolicy) Validate() error {
+	if !p.Enabled {
+		if p != (UsagePolicy{}) {
+			return ErrInvalid
+		}
+		return nil
+	}
+	if p.Revision < 1 || p.Revision > 9007199254740991 || p.MaxConcurrentRuns < 1 || p.MaxConcurrentRuns > 100000 || p.TokenPeriodSeconds < 3600 || p.TokenPeriodSeconds > 31536000 || p.TokenLimit < 1 || p.TokenReservationPerRun < 1 || p.TokenReservationPerRun > p.TokenLimit || p.InputMicrosPerMillionTokens < 0 || p.InputMicrosPerMillionTokens > 1_000_000_000 || p.OutputMicrosPerMillionTokens < 0 || p.OutputMicrosPerMillionTokens > 1_000_000_000 {
+		return ErrInvalid
+	}
+	return nil
 }
 
 func (r Requested) Validate() error {
@@ -71,7 +93,7 @@ func (r Requested) Validate() error {
 	}
 	if r.Route.Generation < 1 || (r.Route.Provider != "telegram" && r.Route.Provider != "wecom") ||
 		!DigestValid(r.EventDigest) || !DigestValid(r.RunDigest) || !DigestValid(r.Route.ManifestDigest) ||
-		r.Input.ReceivedAt.IsZero() || strings.TrimSpace(r.Input.Text) == "" {
+		r.Input.ReceivedAt.IsZero() || strings.TrimSpace(r.Input.Text) == "" || r.UsagePolicy.Validate() != nil {
 		return ErrInvalid
 	}
 	return nil

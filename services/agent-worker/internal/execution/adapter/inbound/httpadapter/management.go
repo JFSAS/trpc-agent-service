@@ -100,3 +100,29 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+func (h *Handler) usageSummary(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r, h.control) {
+		return
+	}
+	if r.URL.RawQuery != "" {
+		respondError(w, http.StatusBadRequest, "INVALID_MANAGEMENT_QUERY")
+		return
+	}
+	tenant := strings.TrimSpace(r.PathValue("tenant_id"))
+	if tenant == "" || len(tenant) > 256 {
+		respondError(w, http.StatusBadRequest, "INVALID_MANAGEMENT_QUERY")
+		return
+	}
+	ctx, cancel, ok := h.bounded(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	value, err := h.usageManagement.Usage(ctx, tenant)
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, "MANAGEMENT_UNAVAILABLE")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(value)
+}
