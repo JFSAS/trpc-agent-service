@@ -29,6 +29,9 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 	if (r.Kind == profiledomain.StorageKindManagedArtifact && r.MetadataContract != ArtifactMetadataContract) || (r.Kind != profiledomain.StorageKindManagedArtifact && r.MetadataContract != "") {
 		return nil, ErrInvalidManifestContent
 	}
+	if r.Credentials != nil && (r.Kind != profiledomain.StorageKindManagedArtifact || r.Backend == nil || r.Backend.Kind != datav1.S3) {
+		return nil, ErrInvalidManifestContent
+	}
 	if r.Kind.Managed() {
 		if r.Backend == nil || r.Destination != (profiledomain.StorageDestination{}) {
 			return nil, ErrInvalidManifestContent
@@ -42,12 +45,13 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 			credential = &c
 		}
 		return json.Marshal(struct {
+			Credentials      *ArtifactCredentials      `json:"credentials,omitempty"`
 			Credential       *CredentialUse            `json:"credential,omitempty"`
 			MetadataContract string                    `json:"metadata_contract,omitempty"`
 			Adapter          string                    `json:"adapter_version"`
 			Kind             profiledomain.StorageKind `json:"kind"`
 			Backend          *datav1.Snapshot          `json:"backend"`
-		}{credential, r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
+		}{r.Credentials, credential, r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
 	}
 	if r.Backend != nil {
 		return nil, ErrInvalidManifestContent
@@ -77,7 +81,7 @@ func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 func (r ManifestStorageResourceView) MarshalJSON() ([]byte, error) {
 	if r.Backend != nil {
 		var present *bool
-		if (r.Kind == profiledomain.StorageKindManagedMemory && r.Backend.Kind == datav1.PostgreSQL) || ((r.Kind == profiledomain.StorageKindManagedMemory || r.Kind == profiledomain.StorageKindManagedSession) && r.Backend.Kind == datav1.Redis && r.CredentialPresent) {
+		if (r.Kind == profiledomain.StorageKindManagedArtifact && r.CredentialPresent) || (r.Kind == profiledomain.StorageKindManagedMemory && r.Backend.Kind == datav1.PostgreSQL) || ((r.Kind == profiledomain.StorageKindManagedMemory || r.Kind == profiledomain.StorageKindManagedSession) && r.Backend.Kind == datav1.Redis && r.CredentialPresent) {
 			v := r.CredentialPresent
 			present = &v
 		}
@@ -167,6 +171,9 @@ func validateManagedWire(raw []byte) error {
 			}
 			if category == "storage" && kind == string(profiledomain.StorageKindManagedArtifact) {
 				allowed["metadata_contract"] = true
+				if _, ok := fields["credentials"]; ok {
+					allowed["credentials"] = true
+				}
 			}
 			if category == "knowledge" {
 				allowed["embedding"] = true
@@ -183,6 +190,14 @@ func validateManagedWire(raw []byte) error {
 			snapshot, err := datav1.Decode(fields["backend"])
 			if err != nil {
 				return ErrInvalidManifestContent
+			}
+			if category == "storage" && kind == string(profiledomain.StorageKindManagedArtifact) {
+				if v, present := fields["credentials"]; present {
+					var creds ArtifactCredentials
+					if strictDecodeJSON(v, &creds) != nil || !validArtifactCredentials(&creds, snapshot) {
+						return ErrInvalidManifestContent
+					}
+				}
 			}
 			if category == "storage" && (kind == string(profiledomain.StorageKindManagedMemory) || kind == string(profiledomain.StorageKindManagedSession)) {
 				credentialRaw, present := fields["credential"]
@@ -214,4 +229,12 @@ func urlHost(raw string) string {
 
 func managedPasswordBackend(kind profiledomain.StorageKind, b datav1.Snapshot) bool {
 	return (kind == profiledomain.StorageKindManagedMemory && (b.Kind == datav1.PostgreSQL || b.Kind == datav1.Redis)) || (kind == profiledomain.StorageKindManagedSession && b.Kind == datav1.Redis)
+}
+
+func validArtifactCredentials(c *ArtifactCredentials, b datav1.Snapshot) bool {
+	if c == nil || b.Kind != datav1.S3 {
+		return false
+	}
+	digest, err := b.Digest()
+	return err == nil && validCredentialUse(c.AccessKeyID, "access_key_id") && validCredentialUse(c.SecretAccessKey, "secret_access_key") && c.AccessKeyID.AudienceDigest == digest && c.SecretAccessKey.AudienceDigest == digest
 }

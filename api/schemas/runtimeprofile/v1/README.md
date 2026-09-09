@@ -122,3 +122,9 @@ Memory. Changing backend identity/revision requires replacement, not implicit ke
 Published credential rotation uses the immutable association without consulting
 current backend availability. Managed Session only enables Redis/session_runtime; Memory retains memory_runtime. Other managed roles do not gain this
 credential purpose.
+
+Managed Artifact uses optional canonical access_key_id_credential_id and
+secret_access_key_credential_id with one fixed S3 Snapshot audience digest.
+Draft may be partial; new Worker compilation requires both associations.
+Public write/state purposes are access_key_id and secret_access_key under
+storage.artifact. Public config never accepts internal IDs or audience fields.

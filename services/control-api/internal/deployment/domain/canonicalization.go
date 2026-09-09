@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/gowebpki/jcs"
+	profiledomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
 )
 
 var ErrInvalidManifestContent = errors.New("invalid runtime manifest content")
@@ -133,6 +134,9 @@ func validateManifestCredentialShape(content ManifestContent) error {
 		}
 	}
 	for _, resource := range content.Resources.Storage {
+		if resource.Credentials != nil && (resource.Kind != profiledomain.StorageKindManagedArtifact || resource.Backend == nil || !validArtifactCredentials(resource.Credentials, *resource.Backend)) {
+			return ErrInvalidManifestContent
+		}
 		if resource.Kind.Managed() {
 			if resource.Backend != nil && managedPasswordBackend(resource.Kind, *resource.Backend) && ((resource.Kind == "managed_memory" && resource.Backend.Kind == "postgresql") || resource.Credential != (CredentialUse{})) {
 				if !validCredentialUse(resource.Credential, CredentialPurposeDSNPassword) {
@@ -330,6 +334,10 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.Resources.Knowledge[name] = resource
 	}
 	for name, resource := range content.Resources.Storage {
+		if resource.Credentials != nil {
+			c := *resource.Credentials
+			resource.Credentials = &c
+		}
 		if resource.Backend != nil {
 			b := resource.Backend.Clone()
 			resource.Backend = &b

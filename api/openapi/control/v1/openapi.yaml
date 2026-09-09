@@ -1808,6 +1808,10 @@ components:
                 $ref: "#/components/schemas/RuntimeProfileCredentialAction"
               dsn_password:
                 $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              access_key_id:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              secret_access_key:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
     RuntimeProfileWrite:
       type: "object"
       additionalProperties: false
@@ -1897,6 +1901,10 @@ components:
               dsn:
                 $ref: "#/components/schemas/RuntimeProfileCredentialState"
               dsn_password:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              access_key_id:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              secret_access_key:
                 $ref: "#/components/schemas/RuntimeProfileCredentialState"
     RuntimeProfileDraft:
       type: "object"
@@ -2037,7 +2045,7 @@ components:
             purpose_field: {type: string, enum: [qdrant_api_key, embedding_api_key]}
         - properties:
             category: {type: string, enum: [storage]}
-            purpose_field: {type: string, enum: [dsn, dsn_password]}
+            purpose_field: {type: string, enum: [dsn, dsn_password, access_key_id, secret_access_key]}
       properties:
         profile_revision_number:
           type: "integer"
@@ -2050,7 +2058,7 @@ components:
           pattern: "^[a-z][a-z0-9_-]{0,63}$"
         purpose_field:
           type: "string"
-          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn", "dsn_password"]
+          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn", "dsn_password", "access_key_id", "secret_access_key"]
         association_token:
           type: "string"
           minLength: 64

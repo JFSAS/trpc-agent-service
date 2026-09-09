@@ -422,7 +422,7 @@ func compileAgentPlan(
 					"node max_output_tokens exceeds the platform execution limit",
 				))
 			}
-			if len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) {
+			if len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil {
 				model, exists := profile.Models[source.ModelSlot]
 				requirement := agent.Requirements.Models[source.ModelSlot]
 				if exists && !containsString(model.ProvidedCapabilities(), profiledomain.CapabilityToolCall) &&
@@ -597,7 +597,18 @@ func compileResources(
 					compiledResource.Credential = credentialUse(resource.DSNCredentialID, CredentialPurposeDSNPassword, digest)
 					uses = append(uses, compiledResource.Credential)
 				}
-			} else if resource.DSNCredentialID != "" || resource.CredentialAudienceDigest != "" {
+			} else if resource.Kind == profiledomain.StorageKindManagedArtifact && snapshot.Kind == datav1.S3 {
+				if platform.Version == deploymentv1.WorkerV1PlatformVersion || resource.AccessKeyIDCredentialID != "" || resource.SecretAccessKeyCredentialID != "" || resource.CredentialAudienceDigest != "" {
+					digest, err := snapshot.Digest()
+					creds := &ArtifactCredentials{AccessKeyID: credentialUse(resource.AccessKeyIDCredentialID, "access_key_id", digest), SecretAccessKey: credentialUse(resource.SecretAccessKeyCredentialID, "secret_access_key", digest)}
+					if err != nil || resource.CredentialAudienceDigest != digest || !validArtifactCredentials(creds, snapshot) {
+						*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name), "storage", name, "Artifact credentials missing or bound to a different target"))
+					} else {
+						compiledResource.Credentials = creds
+						uses = append(uses, creds.AccessKeyID, creds.SecretAccessKey)
+					}
+				}
+			} else if resource.DSNCredentialID != "" || resource.CredentialAudienceDigest != "" || resource.AccessKeyIDCredentialID != "" || resource.SecretAccessKeyCredentialID != "" {
 				*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name), "storage", name, "credential purpose is unsupported for this backend"))
 			}
 			if resource.Kind == profiledomain.StorageKindManagedArtifact {

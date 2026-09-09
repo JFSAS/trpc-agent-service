@@ -296,6 +296,9 @@
         },
         {
           "$ref": "#/$defs/managed_storage"
+        },
+        {
+          "$ref": "#/$defs/managed_artifact"
         }
       ]
     },
@@ -372,8 +375,7 @@
         "kind": {
           "enum": [
             "managed_session",
-            "managed_memory",
-            "managed_artifact"
+            "managed_memory"
           ]
         },
         "backend_id": {
@@ -454,6 +456,68 @@
         "embedding": {
           "$ref": "#/$defs/openai_embedding"
         }
+      }
+    },
+    "managed_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "backend_id",
+        "backend_revision"
+      ],
+      "properties": {
+        "kind": {
+          "const": "managed_artifact"
+        },
+        "backend_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+        },
+        "backend_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "access_key_id_credential_id": {
+          "type": "string",
+          "pattern": "^crd_[0-9a-f]{32}$"
+        },
+        "secret_access_key_credential_id": {
+          "type": "string",
+          "pattern": "^crd_[0-9a-f]{32}$"
+        },
+        "credential_audience_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "dependentRequired": {
+        "access_key_id_credential_id": [
+          "credential_audience_digest"
+        ],
+        "secret_access_key_credential_id": [
+          "credential_audience_digest"
+        ]
+      },
+      "if": {
+        "required": [
+          "credential_audience_digest"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "access_key_id_credential_id"
+            ]
+          },
+          {
+            "required": [
+              "secret_access_key_credential_id"
+            ]
+          }
+        ]
       }
     }
   }

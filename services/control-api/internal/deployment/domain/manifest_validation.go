@@ -82,7 +82,7 @@ func validateManifestSemantics(content ManifestContent) error {
 				return ErrInvalidManifestContent
 			}
 			model, exists := profile.Models[node.ModelResource]
-			if !exists || ((len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0)) && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
+			if !exists || ((len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil) && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
 				return ErrInvalidManifestContent
 			}
 			if node.Generation != nil && node.Generation.MaxOutputTokens != nil &&
@@ -284,6 +284,14 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 				profileResource.CredentialAudienceDigest = digest
 			} else if resource.Credential != (CredentialUse{}) {
 				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			if resource.Credentials != nil {
+				if resource.Kind != profiledomain.StorageKindManagedArtifact || !validArtifactCredentials(resource.Credentials, *resource.Backend) {
+					return profiledomain.Spec{}, ErrInvalidManifestContent
+				}
+				profileResource.AccessKeyIDCredentialID = resource.Credentials.AccessKeyID.CredentialID
+				profileResource.SecretAccessKeyCredentialID = resource.Credentials.SecretAccessKey.CredentialID
+				profileResource.CredentialAudienceDigest = resource.Credentials.AccessKeyID.AudienceDigest
 			}
 			profile.Storage[name] = profileResource
 			host, _ := resource.Backend.EndpointHost()

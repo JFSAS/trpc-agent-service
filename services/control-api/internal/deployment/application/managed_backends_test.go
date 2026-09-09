@@ -140,6 +140,9 @@ func TestPublishFullDataCapabilitiesUsesResolvedBackendClosure(t *testing.T) {
 	h.profile.revisionSpec.Storage["session"] = profiledomain.StorageResource{Kind: profiledomain.StorageKindManagedSession, BackendID: "redis", BackendRevision: 1}
 	h.profile.revisionSpec.Storage["memory"] = profiledomain.StorageResource{Kind: profiledomain.StorageKindManagedMemory, BackendID: "redis", BackendRevision: 1}
 	h.profile.revisionSpec.Storage["artifact"] = profiledomain.StorageResource{Kind: profiledomain.StorageKindManagedArtifact, BackendID: "s3", BackendRevision: 1}
+	model := h.profile.revisionSpec.Models["primary"]
+	model.Capabilities = []string{"chat", "tool_call"}
+	h.profile.revisionSpec.Models["primary"] = model
 	h.profile.refresh(t)
 	p := &h.service.deps.Platform
 	p.RuntimeDataCapabilities = []string{"memory", "artifact", "summary"}

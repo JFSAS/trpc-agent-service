@@ -129,12 +129,14 @@ type EmbeddingResource struct {
 }
 
 type StorageResource struct {
-	CredentialAudienceDigest string             `json:"credential_audience_digest,omitempty"`
-	BackendID                string             `json:"backend_id,omitempty"`
-	BackendRevision          uint64             `json:"backend_revision,omitempty"`
-	Kind                     StorageKind        `json:"kind"`
-	DSNCredentialID          string             `json:"dsn_credential_id"`
-	Destination              StorageDestination `json:"destination"`
+	AccessKeyIDCredentialID     string             `json:"access_key_id_credential_id,omitempty"`
+	SecretAccessKeyCredentialID string             `json:"secret_access_key_credential_id,omitempty"`
+	CredentialAudienceDigest    string             `json:"credential_audience_digest,omitempty"`
+	BackendID                   string             `json:"backend_id,omitempty"`
+	BackendRevision             uint64             `json:"backend_revision,omitempty"`
+	Kind                        StorageKind        `json:"kind"`
+	DSNCredentialID             string             `json:"dsn_credential_id"`
+	Destination                 StorageDestination `json:"destination"`
 }
 
 // StorageDestination declares the non-secret, fixed PostgreSQL connection target.

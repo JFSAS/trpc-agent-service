@@ -298,7 +298,12 @@ type ManifestEmbeddingResource struct {
 	Credential CredentialUse `json:"credential"`
 }
 
+type ArtifactCredentials struct {
+	AccessKeyID     CredentialUse `json:"access_key_id"`
+	SecretAccessKey CredentialUse `json:"secret_access_key"`
+}
 type ManifestStorageResource struct {
+	Credentials      *ArtifactCredentials             `json:"credentials,omitempty"`
 	MetadataContract string                           `json:"metadata_contract,omitempty"`
 	Backend          *datav1.Snapshot                 `json:"backend,omitempty"`
 	AdapterVersion   string                           `json:"adapter_version"`
@@ -453,7 +458,7 @@ func NewManifestView(content ManifestContent) ManifestView {
 	}
 	for name, resource := range normalized.Resources.Storage {
 		if resource.Backend != nil {
-			view.Resources.Storage[name] = ManifestStorageResourceView{CredentialPresent: resource.Credential.CredentialID != "", MetadataContract: resource.MetadataContract, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion}
+			view.Resources.Storage[name] = ManifestStorageResourceView{CredentialPresent: resource.Credential.CredentialID != "" || resource.Credentials != nil, MetadataContract: resource.MetadataContract, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion}
 			continue
 		}
 		view.Resources.Storage[name] = ManifestStorageResourceView{

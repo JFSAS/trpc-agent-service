@@ -80,6 +80,7 @@ func (a deploymentBackendAccess) ResolveStorageCredentialAudience(ctx context.Co
 	}
 	principalOK := role == "memory" && ((snapshot.Kind == datav1.PostgreSQL && snapshot.PostgreSQL != nil && snapshot.PostgreSQL.Username == "memory_runtime") || (snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "memory_runtime"))
 	principalOK = principalOK || (role == "session" && snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "session_runtime")
+	principalOK = principalOK || (role == "artifact" && snapshot.Kind == datav1.S3 && snapshot.S3 != nil)
 	if !principalOK || snapshot.ValidateForRole(role) != nil {
 		return "", backend.ErrCapability
 	}

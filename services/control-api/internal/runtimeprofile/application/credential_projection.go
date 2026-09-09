@@ -40,6 +40,10 @@ func credentialSlots(spec domain.Spec) []credentialSlot {
 		slots = append(slots, credentialSlot{"knowledge", n, "embedding_api_key", r.Embedding.APIKeyCredentialID, audience(r.Kind, r.Embedding.BaseURL)})
 	}
 	for n, r := range spec.Storage {
+		if r.Kind == domain.StorageKindManagedArtifact {
+			slots = append(slots, credentialSlot{"storage", n, "access_key_id", r.AccessKeyIDCredentialID, r.CredentialAudienceDigest}, credentialSlot{"storage", n, "secret_access_key", r.SecretAccessKeyCredentialID, r.CredentialAudienceDigest})
+			continue
+		}
 		if r.Kind == domain.StorageKindManagedMemory || r.Kind == domain.StorageKindManagedSession {
 			slots = append(slots, credentialSlot{"storage", n, "dsn_password", r.DSNCredentialID, r.CredentialAudienceDigest})
 			continue
@@ -72,7 +76,14 @@ func setCredentialID(spec *domain.Spec, slot credentialSlot, id string) {
 		spec.Knowledge[slot.Name] = r
 	case "storage":
 		r := spec.Storage[slot.Name]
-		r.DSNCredentialID = id
+		switch slot.Purpose {
+		case "access_key_id":
+			r.AccessKeyIDCredentialID = id
+		case "secret_access_key":
+			r.SecretAccessKeyCredentialID = id
+		default:
+			r.DSNCredentialID = id
+		}
 		spec.Storage[slot.Name] = r
 	}
 }

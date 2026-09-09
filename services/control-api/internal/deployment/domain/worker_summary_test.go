@@ -101,11 +101,7 @@ func TestWorkerSummaryRejectsUnexecutableClosure(t *testing.T) {
 			n.Artifact = &agentdomain.Artifact{Enabled: true}
 			in.Agent.Spec.Nodes["assistant"] = n
 		},
-		"disabled artifact": func(in *CompileInput) {
-			n := in.Agent.Spec.Nodes["assistant"]
-			n.Artifact = &agentdomain.Artifact{}
-			in.Agent.Spec.Nodes["assistant"] = n
-		},
+
 		"knowledge": func(in *CompileInput) {
 			n := in.Agent.Spec.Nodes["assistant"]
 			n.KnowledgeSlots = []string{"docs"}

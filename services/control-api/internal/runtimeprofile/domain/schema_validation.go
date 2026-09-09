@@ -216,6 +216,35 @@ func validateEmbedding(value any, pointer string, diagnostics *[]Diagnostic) {
 func validateStorageResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
 	if k, ok := object["kind"].(string); ok && StorageKind(k).Managed() {
 		selection := object
+		if StorageKind(k) == StorageKindManagedArtifact {
+			selection = make(map[string]any, len(object))
+			for key, v := range object {
+				selection[key] = v
+			}
+			_, a := object["access_key_id_credential_id"]
+			_, z := object["secret_access_key_credential_id"]
+			_, d := object["credential_audience_digest"]
+			if a || z || d {
+				if a || z {
+					requireFields(object, pointer, []string{"credential_audience_digest"}, diagnostics)
+				} else {
+					*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer, "artifact credential association is empty"))
+				}
+				for _, key := range []string{"access_key_id_credential_id", "secret_access_key_credential_id"} {
+					if _, ok := object[key]; ok {
+						validatePatternString(object, key, pointer, "credential", diagnostics)
+					}
+				}
+				value, ok := object["credential_audience_digest"].(string)
+				if !ok || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(value) {
+					*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/credential_audience_digest", "credential audience digest is invalid"))
+				}
+			}
+			delete(selection, "access_key_id_credential_id")
+			delete(selection, "secret_access_key_credential_id")
+			delete(selection, "credential_audience_digest")
+		}
+
 		if StorageKind(k) == StorageKindManagedMemory || StorageKind(k) == StorageKindManagedSession {
 			selection = make(map[string]any, len(object))
 			for key, v := range object {

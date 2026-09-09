@@ -587,3 +587,23 @@ Worker 发布托管 Redis Session 必须携带匹配的密码引用；历史无�
 Summary 与消息和状态共用同一 Session 后端快照。Session 身份仍包含
 DeploymentRevisionID，不跨 Revision 迁移 Session，也不引入新的 identity。
 本批仍协调同批发布，不将新 Session Manifest 交给旧 Worker。
+
+## Artifact S3 双凭据
+
+`managed_artifact` 选择固定平台 S3 Snapshot，公开配置仍是
+kind/backend_id/backend_revision。写入使用
+`credentials.storage.artifact.access_key_id` 与 `secret_access_key`，
+分别复用 keep/replace/clear 与现有已发布凭据轮换协议。
+两项均加密保存，内部字段为 access_key_id_credential_id、
+secret_access_key_credential_id 和 credential_audience_digest=Snapshot.Digest()。
+Draft 可暂存部分配置；新 Worker 发布必须两项齐全且匹配目标摘要。
+更换目标时所有保留的旧关联都会拒绝 keep，必须 replace 或 clear；
+发布后逐字段轮换独立于目录且不改 Revision，不宣称两个独立请求原子换对。
+
+Manifest 使用 credentials.access_key_id / credentials.secret_access_key，
+每项仅含 credential_id/purpose/audience_digest，purpose 与字段同名。
+endpoint、bucket、region、path_style、versioning 都来自固定 Snapshot；
+密码不得覆盖目标。公开 Manifest 只显示 credential_present。
+历史无 credentials 描述保持可读，但不通过新 Worker 执行门禁。
+Artifact 元数据继续沿用既有 Worker PostgreSQL metadata_contract，
+不增加用户数据库配置；需要 Artifact 的节点必须选择支持 tool_call 的模型。

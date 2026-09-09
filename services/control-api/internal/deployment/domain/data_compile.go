@@ -26,17 +26,6 @@ func dataContractDiagnostics(a agentdomain.Spec, p PlatformExecutionContract) []
 		return []Diagnostic{diagnostic(DiagnosticInputInvalid, SeverityError, DiagnosticSourceAgent, "", "invalid agent data declaration")}
 	}
 	var out []Diagnostic
-	if p.Version == deploymentv1.WorkerV1PlatformVersion {
-		for _, id := range sortedKeys(a.Nodes) {
-			n := a.Nodes[id]
-			for _, field := range []string{"artifact"} {
-				present := (field == "memory" && n.Memory != nil) || (field == "artifact" && n.Artifact != nil)
-				if present {
-					out = append(out, diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, "/nodes/"+escapeJSONPointer(id)+"/"+field, "Worker V1 does not support artifact data capabilities"))
-				}
-			}
-		}
-	}
 	check := func(enabled bool, capability, path string) {
 		if enabled && !containsString(p.RuntimeDataCapabilities, capability) {
 			out = append(out, diagnostic(DiagnosticEntrypointUnsupported, SeverityError, DiagnosticSourcePlatform, path, "runtime data capability is not part of the fixed platform contract"))

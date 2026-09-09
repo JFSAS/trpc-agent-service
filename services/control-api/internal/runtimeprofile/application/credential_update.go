@@ -70,7 +70,7 @@ func validPublishedCredentialPurpose(category, purpose string) bool {
 	case "knowledge":
 		return purpose == "qdrant_api_key" || purpose == "embedding_api_key"
 	case "storage":
-		return purpose == "dsn" || purpose == "dsn_password"
+		return purpose == "dsn" || purpose == "dsn_password" || purpose == "access_key_id" || purpose == "secret_access_key"
 	default:
 		return false
 	}
