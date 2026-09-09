@@ -30,6 +30,8 @@ type Dependencies struct {
 	AgentVersions        application.AgentVersionReader
 	ProfileRevisions     application.ProfileRevisionReader
 	ProfileCredentials   application.ProfileCredentialChecker
+	StorageCredentials   application.StorageCredentialResolver
+	BackendMigrations    application.BackendMigrator
 	Platform             domain.PlatformExecutionContract
 }
 
@@ -61,6 +63,8 @@ func NewModule(deps Dependencies) (*Module, error) {
 		AgentVersions:      deps.AgentVersions,
 		ProfileRevisions:   deps.ProfileRevisions,
 		ProfileCredentials: deps.ProfileCredentials,
+		StorageCredentials: deps.StorageCredentials,
+		BackendMigrations:  deps.BackendMigrations,
 		Platform:           deps.Platform,
 		NewDeploymentID:    func() (string, error) { return generateID("dpl") },
 		NewRevisionID:      func() (string, error) { return generateID("dpr") },

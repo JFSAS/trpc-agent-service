@@ -212,6 +212,30 @@ func TestMemoryPostgresAcceptedContract(t *testing.T) {
 		t.Fatal("write capacity", err)
 	}
 	small.Close()
+	migrationScope := Scope{TenantID: "tenant", ID: "migration"}
+	if err = sdk.AddMemory(ctx, migrationScope.Key(), "migrated postgres head", []string{"migration"}); err != nil {
+		t.Fatal(err)
+	}
+	migrationEntries, err := sdk.ReadMemories(ctx, migrationScope.Key(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationSnapshot := Snapshot{Revision: 7, Entries: migrationEntries}
+	if err = store.ImportSnapshot(ctx, migrationScope, migrationSnapshot); err != nil {
+		t.Fatal("snapshot import", err)
+	}
+	if err = store.ImportSnapshot(ctx, migrationScope, migrationSnapshot); err != nil {
+		t.Fatal("snapshot import replay", err)
+	}
+	migrated, err := store.Load(ctx, migrationScope)
+	if err != nil || migrated.Revision != 7 || len(migrated.Entries) != 1 || migrated.Entries[0].Memory.Memory != "migrated postgres head" {
+		t.Fatal("snapshot import roundtrip", migrated, err)
+	}
+	changedMigration := migrationSnapshot
+	changedMigration.Revision++
+	if err = store.ImportSnapshot(ctx, migrationScope, changedMigration); !errors.Is(err, ErrConflict) {
+		t.Fatal("snapshot import overwrite", err)
+	}
 	var receipts int
 	if err = admin.QueryRow(ctx, `SELECT count(*) FROM runtime_memory.memory_receipts`).Scan(&receipts); err != nil || receipts != 3 {
 		t.Fatal("failed calls left receipts", receipts, err)

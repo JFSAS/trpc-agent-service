@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/inbound/httpadapter"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/backendmigration"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/finalartifacthttp"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/manifestadapter"
 	ledgerpg "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/postgresadapter"
@@ -203,7 +204,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	replyArtifacts := replyArtifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader, credentials: replyArtifactCredentialResolver{projection: a.projection, client: finalArtifactCredentials}}
 	queries := proofQueries{ledger: a.ledger, manifests: reader}
-	handler, err := httpadapter.New(queries, queries, httpadapter.Options{ReplyArtifacts: replyArtifacts, Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
+	handler, err := httpadapter.New(queries, queries, httpadapter.Options{ReplyArtifacts: replyArtifacts, Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, BackendMigrations: backendmigration.MemoryExecutor{Scopes: a.ledger}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
 	if err != nil {
 		return nil, err
 	}

@@ -41,6 +41,12 @@ type publishDeploymentRequest struct {
 	Input                        domain.DeploymentInput
 }
 
+type migrateAndPublishRequest struct {
+	SourceRevisionNumber         int64
+	ExpectedLatestRevisionNumber *int64
+	Input                        domain.DeploymentInput
+}
+
 func decodeCreateDeploymentRequest(c *gin.Context) (createDeploymentRequest, error) {
 	object, err := readStrictJSONObject(c)
 	if err != nil {
@@ -145,6 +151,37 @@ func decodePublishDeploymentRequest(c *gin.Context) (publishDeploymentRequest, e
 		ExpectedLatestRevisionNumber: expected,
 		Input:                        input,
 	}, nil
+}
+
+func decodeMigrateAndPublishRequest(c *gin.Context) (migrateAndPublishRequest, error) {
+	object, err := readStrictJSONObject(c)
+	if err != nil {
+		return migrateAndPublishRequest{}, err
+	}
+	if err := validateObjectFields(object, []string{"source_revision_number", "expected_latest_revision_number", "input"}, nil, map[string]bool{"expected_latest_revision_number": true}); err != nil {
+		return migrateAndPublishRequest{}, err
+	}
+	source, err := decodePositiveInt64(object["source_revision_number"])
+	if err != nil {
+		return migrateAndPublishRequest{}, errInvalidRequestBody
+	}
+	var expected *int64
+	if raw := object["expected_latest_revision_number"]; !isJSONNull(raw) {
+		value, err := decodePositiveInt64(raw)
+		if err != nil {
+			return migrateAndPublishRequest{}, errInvalidRequestBody
+		}
+		expected = &value
+	}
+	inputObject, err := decodeJSONObject(object["input"])
+	if err != nil {
+		return migrateAndPublishRequest{}, errInvalidRequestBody
+	}
+	input, err := decodeDeploymentInputObject(inputObject)
+	if err != nil {
+		return migrateAndPublishRequest{}, err
+	}
+	return migrateAndPublishRequest{SourceRevisionNumber: source, ExpectedLatestRevisionNumber: expected, Input: input}, nil
 }
 
 func readStrictJSONObject(c *gin.Context) (map[string]json.RawMessage, error) {

@@ -56,7 +56,8 @@ Final，不报写入成功，不把 Redis 错误文本/连接密码写入日志�
   取决于实际 Redis 配置、磁盘和故障模型，不承诺进程返回成功即跨机器零丢失。
 - 从 PostgreSQL 切换到 Redis，不自动迁移旧 Memory。新 Run 只读取所选固定后端中与
   当前 tenant/subject/agent scope 匹配的数据；切回原后端可再次读取其原有同 scope 数据。
-  数据复制/历史迁移需要独立显式操作，本包不实现。
+  当前 head 的显式复制由 [多后端迁移 V1](backend-migration-v1.md) 实现；旧 revision、
+  接受收据、在线双写和隐式切换仍不迁移。
 - Redis 与 PG ledger 之间不原子。Complete 后 Apply/Finalize 前崩溃仍可能留下 PENDING；
   自动恢复、补偿、调度保留后续计划，不隐式重放未确认的业务运行。
 - 旧无密码 Redis Manifest 描述仍可读取；新的 active Memory 发布与 Worker 执行要求完整

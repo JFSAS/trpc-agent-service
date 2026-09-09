@@ -76,8 +76,9 @@ Session 与 Memory 可使用同一 Redis 实例，但固定前缀和独立 ACL �
   启用可使用已接受 metadata。这是原 SDK/候选层行为。
 - 通过正式发布修改 Summary 或 Session backend 会产生新 Deployment revision；它使用
   新 Session，不自动继承旧版本摘要和历史。原版本的 accepted Session 不被删除。
-- 选定后端已有数据的使用范围仅为精确 tenant/session/ref/digest。没有跨后端扫描、
-  迁移、回退或将旧 snapshot 解释为新 Session 的逻辑。
+- 选定后端已有数据的使用范围仅为精确 tenant/session/ref/digest。当前已有
+  [多后端迁移 V1](backend-migration-v1.md) 可显式复制同一正式 Session 的 accepted
+  candidate，但没有跨后端扫描，也不会把旧 Deployment snapshot 自动解释为新 Session。
 
 ## 持久性与后续计划
 

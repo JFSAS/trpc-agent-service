@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	executionv1 "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
 	agentapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/application"
 	agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
@@ -46,6 +47,14 @@ type ProfileRevisionReader interface {
 
 type ProfileCredentialChecker interface {
 	CheckUsable(context.Context, profileapp.CheckProfileCredentialsCommand) error
+}
+
+type StorageCredentialResolver interface {
+	ResolveStorageForOwner(context.Context, profileapp.CheckProfileCredentialsCommand) (profileapp.CredentialBatch, error)
+}
+
+type BackendMigrator interface {
+	Execute(context.Context, executionv1.BackendMigrationRequest) (executionv1.BackendMigrationResponse, error)
 }
 
 type CommandReceiptKey struct {
@@ -104,6 +113,8 @@ type Dependencies struct {
 	AgentVersions        AgentVersionReader
 	ProfileRevisions     ProfileRevisionReader
 	ProfileCredentials   ProfileCredentialChecker
+	StorageCredentials   StorageCredentialResolver
+	BackendMigrations    BackendMigrator
 	Platform             domain.PlatformExecutionContract
 	NewDeploymentID      func() (string, error)
 	NewRevisionID        func() (string, error)

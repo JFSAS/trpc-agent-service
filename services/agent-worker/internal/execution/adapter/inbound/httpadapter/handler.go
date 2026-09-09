@@ -30,10 +30,14 @@ type AttemptVerifier interface {
 type FinalVerifier interface {
 	VerifyFinal(context.Context, proof.FinalRequest) (proof.FinalResponse, error)
 }
+type BackendMigrator interface {
+	Execute(context.Context, proof.BackendMigrationRequest) (proof.BackendMigrationResponse, error)
+}
 type Options struct {
 	ReplyArtifacts                       ReplyArtifactReader
 	Knowledge                            KnowledgeImporter
 	Artifacts                            ArtifactOperator
+	BackendMigrations                    BackendMigrator
 	Tracer                               trace.Tracer
 	ControlPrincipals, GatewayPrincipals []string
 	Timeout                              time.Duration
@@ -46,6 +50,7 @@ type Handler struct {
 	replyArtifacts    ReplyArtifactReader
 	knowledgeImporter KnowledgeImporter
 	artifacts         ArtifactOperator
+	backendMigrations BackendMigrator
 	tracer            trace.Tracer
 	attempts          AttemptVerifier
 	finals            FinalVerifier
@@ -88,7 +93,7 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 	for id := range gateway {
 		finalCallers[id] = true
 	}
-	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
+	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, backendMigrations: o.BackendMigrations, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST "+proof.AttemptVerifyPath, h.attempt)
 	h.mux.HandleFunc("POST "+proof.FinalVerifyPath, h.final)
 	if o.ReplyArtifacts != nil {
@@ -99,6 +104,9 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 	}
 	if o.Knowledge != nil {
 		h.mux.HandleFunc("POST "+proof.KnowledgePath, h.knowledge)
+	}
+	if o.BackendMigrations != nil {
+		h.mux.HandleFunc("POST "+proof.BackendMigrationPath, h.backendMigration)
 	}
 	return h, nil
 }

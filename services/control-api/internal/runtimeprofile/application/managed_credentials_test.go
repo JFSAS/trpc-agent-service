@@ -98,6 +98,14 @@ func TestManagedPasswordSaveResolveAndDirectoryIndependentRotation(t *testing.T)
 			if err = h.service.CheckUsable(context.Background(), application.CheckProfileCredentialsCommand{TenantID: "tnt_a", ProfileID: "rpf_a", ActorUserID: "usr_owner", ProfileRevisionNumber: 1, Uses: []application.CredentialUse{use}}); err != nil {
 				t.Fatal(err)
 			}
+			ownerBatch, err := h.service.ResolveStorageForOwner(context.Background(), application.CheckProfileCredentialsCommand{TenantID: "tnt_a", ProfileID: "rpf_a", ActorUserID: "usr_owner", ProfileRevisionNumber: 1, Uses: []application.CredentialUse{use}})
+			if err != nil || len(ownerBatch.Credentials) != 1 || string(ownerBatch.Credentials[0].Value) != "memory-private-password" {
+				t.Fatal("owner storage resolve", err)
+			}
+			ownerBatch.Clear()
+			if denied, err := h.service.ResolveStorageForOwner(context.Background(), application.CheckProfileCredentialsCommand{TenantID: "tnt_a", ProfileID: "rpf_a", ActorUserID: "usr_member", ProfileRevisionNumber: 1, Uses: []application.CredentialUse{use}}); err == nil || len(denied.Credentials) != 0 {
+				t.Fatal("member resolved storage credential")
+			}
 			request, verifier := executionForHarness(h, []application.CredentialUse{use})
 			consumer := credentialConsumerService(h, verifier, h.cipher)
 			batch, err := consumer.ResolveForAttempt(context.Background(), request)

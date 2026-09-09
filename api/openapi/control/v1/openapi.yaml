@@ -968,6 +968,48 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/backend-migrations:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+    post:
+      operationId: migrateDeploymentBackendAndPublish
+      summary: Migrate current Memory snapshots and publish a new Deployment Revision
+      description: >-
+        Owner-only synchronous V1 operation. Control compiles the target input,
+        asks the mTLS Worker migration endpoint to copy and verify current Memory
+        snapshots, and only then commits the existing immutable publication and
+        Outbox transaction. ChannelBinding traffic is switched separately with
+        its own CAS after this call succeeds.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/DeploymentIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BackendMigrationRequest'}
+      responses:
+        '200':
+          description: Migration and publication were already completed and the publication receipt was replayed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackendMigrationResponse'}
+        '201':
+          description: Memory was verified and a new Deployment Revision was published.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackendMigrationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/DeploymentRevisionInvalid'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}:
     parameters:
       - $ref: '#/components/parameters/TenantID'
@@ -1454,6 +1496,19 @@ components:
           nullable: true
           description: null for the first publication; otherwise the exact current latest revision number.
         input: {$ref: '#/components/schemas/DeploymentInput'}
+    BackendMigrationRequest:
+      type: object
+      additionalProperties: false
+      required: [source_revision_number, expected_latest_revision_number, input]
+      properties:
+        source_revision_number:
+          type: integer
+          minimum: 1
+        expected_latest_revision_number:
+          type: integer
+          minimum: 1
+          nullable: true
+        input: {$ref: '#/components/schemas/DeploymentInput'}
     DeploymentValidationDiagnostic:
       type: object
       additionalProperties: false
@@ -1561,6 +1616,13 @@ components:
       properties:
         revision: {$ref: '#/components/schemas/DeploymentRevision'}
         validation: {$ref: '#/components/schemas/DeploymentValidationReport'}
+    BackendMigrationResponse:
+      type: object
+      additionalProperties: false
+      required: [memory_scopes_copied, publication]
+      properties:
+        memory_scopes_copied: {type: integer, minimum: 0}
+        publication: {$ref: '#/components/schemas/PublishDeploymentRevisionResponse'}
     DeploymentValidationErrorResponse:
       type: object
       additionalProperties: false

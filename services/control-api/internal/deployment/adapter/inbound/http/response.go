@@ -195,6 +195,11 @@ type publishDeploymentRevisionResponse struct {
 	Validation deploymentValidationReportResponse `json:"validation"`
 }
 
+type backendMigrationResponse struct {
+	MemoryScopesCopied int                               `json:"memory_scopes_copied"`
+	Publication        publishDeploymentRevisionResponse `json:"publication"`
+}
+
 type errorResponse struct {
 	Error      errorBody                           `json:"error"`
 	Validation *deploymentValidationReportResponse `json:"validation,omitempty"`
@@ -263,6 +268,14 @@ func handleApplicationError(c *gin.Context, err error) {
 		writeError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "idempotency key was used for a different request")
 	case errors.Is(err, application.ErrCredentialDependencyUnavailable):
 		writeError(c, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "required credential metadata is unavailable")
+	case errors.Is(err, application.ErrBackendMigrationBusy):
+		writeError(c, http.StatusConflict, "BACKEND_MIGRATION_BUSY", "source deployment still has active work")
+	case errors.Is(err, application.ErrBackendMigrationInvalid):
+		writeError(c, http.StatusBadRequest, "BACKEND_MIGRATION_INVALID", "backend migration request is invalid")
+	case errors.Is(err, application.ErrBackendMigrationUnavailable):
+		writeError(c, http.StatusServiceUnavailable, "BACKEND_MIGRATION_UNAVAILABLE", "backend migration worker is unavailable")
+	case errors.Is(err, application.ErrBackendMigrationFailed):
+		writeError(c, http.StatusConflict, "BACKEND_MIGRATION_FAILED", "backend migration could not be verified")
 	default:
 		writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "request could not be completed")
 	}
