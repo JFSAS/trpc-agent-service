@@ -1,0 +1,161 @@
+"""Three normal Runs through the existing four capability implementations.
+
+Only provider fixtures are synthetic. Catalog merger is fixture composition,
+not a new runtime platform. Live mode reuses the unchanged-byte LiveRelay.
+"""
+import base64
+import copy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import signal
+import threading
+
+from harness import Harness, _http_status
+from artifact_joint_fixture import ArtifactHarness, BACKEND_ID as ARTIFACT_BACKEND, BUCKET, TOOLS as ARTIFACT_TOOLS, assert_artifact
+from knowledge_joint_fixture import KnowledgeHarness, KnowledgeModelFixture, BACKEND_ID as KNOWLEDGE_BACKEND, COLLECTION, VECTOR_NAME, DIMENSIONS, CALLABLE_NAME, DOCUMENT_TEXT
+from memory_joint_fixture import MemoryHarness, TOOLS as MEMORY_TOOLS
+from redis_session_joint_fixture import _summary
+
+_live_path=Path(__file__).resolve().parents[1]/'test-worker-summary-live.py'
+_spec=importlib.util.spec_from_file_location('worker_existing_summary_live',_live_path)
+_live=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(_live)
+LiveRelay,read_key=_live.LiveRelay,_live.read_key
+MEMORY_TEXT='COMBINED_MEMORY_CANARY: the selected tea is jasmine.'
+FILE_NAME='combined-report.txt'
+FILE_TEXT='COMBINED_ARTIFACT_CANARY: orchid report bytes.\n'
+FILE_BYTES=FILE_TEXT.encode()
+TOOLS=MEMORY_TOOLS+ARTIFACT_TOOLS+[CALLABLE_NAME]
+FINAL_TEXT='Combined verified: '+MEMORY_TEXT+' '+FILE_TEXT.strip()+' '+DOCUMENT_TEXT
+
+
+def round_inputs():
+    return [
+        '组合验收第一轮。必须实际调用工具完成：1) memory_add 将完整字符串 '+MEMORY_TEXT+' 保存一次；2) memory_load 读回；3) artifact_save 保存 name='+FILE_NAME+'，mime_type=text/plain，content_base64='+base64.b64encode(FILE_BYTES).decode()+'，只保存一次；4) artifact_load 读取该文件 version=0；5) 调用知识检索工具查询 orchid canary 与 service window。依据实际工具结果给简短最终确认，包含知识中的 canary。不要声称未调用的操作成功。',
+        '组合验收第二轮。请读取已接受的摘要上下文，并实际调用 memory_load、artifact_load(name='+FILE_NAME+',version=0) 和知识检索工具。不要新增或修改Memory/文件，依据真实返回确认记忆、文件和知识内容。',
+        '组合验收第三轮。请继续消费正式Session摘要，实际调用 memory_load、artifact_load(name='+FILE_NAME+',version=0) 和知识检索工具交叉核验。不要新增或修改Memory/文件，依据真实返回给最终确认。',
+    ]
+
+
+class _CombinedLeaf(Harness):
+    """Runs after the existing public-input hooks, immediately before HTTP."""
+    def api(self,method,path,body=None,status=200,idem=None):
+        if method=='PUT' and '/agents/' in path and path.endswith('/draft'):
+            body=copy.deepcopy(body)
+            body['spec']['nodes']['assistant']['instruction']='Execute the user requested verification using the available tools. Never invent tool outputs. Preserve exact file bytes and remembered content. Use the supplied Session summary as historical context, not as evidence that this Run called a tool.'
+        if method=='PUT' and '/runtime-profiles/' in path and path.endswith('/draft'):
+            body=copy.deepcopy(body)
+            body['config']['knowledge']['docs']['embedding']['base_url']=self.embedding_provider.url+'/v1'
+            body['config']['models']['summarizer']['base_url']=self.summary_provider.url+'/v1'
+            body['config']['models']['summarizer']['model']=self.model_name if self.live else 'joint-summary'
+        return super().api(method,path,body,status,idem)
+
+
+class CombinedHarness(ArtifactHarness,KnowledgeHarness,MemoryHarness,_summary.SummaryHarness,_CombinedLeaf):
+    def __init__(self,*args,live=False,**kwargs):
+        self.live=live;self.catalog_restarts=0
+        super().__init__(*args,**kwargs)
+    # Existing seeding hooks call these on the way back from owner Tenant HTTP.
+    # The outermost API method merges all descriptors exactly once instead.
+    def bind_artifact_catalog(self,tenant_id):pass
+    def bind_knowledge_catalog(self,tenant_id):pass
+    def bind_memory_catalog(self,tenant_id):pass
+    def api(self,method,path,body=None,status=200,idem=None):
+        result=super().api(method,path,body,status,idem)
+        if method=='POST' and path=='/v1/admin/tenants':self.bind_combined_catalog(result['id'])
+        return result
+    def bind_combined_catalog(self,tenant):
+        assert self.catalog_restarts==0,'combined fixture must publish one merged catalog'
+        catalog={'version':'v1','backends':[{'id':id,'revision':1,'label':label,'kind':kind,'roles':[role],'enabled':True,'tenant_ids':[tenant]} for id,label,kind,role in [('joint-memory-pg','Combined PostgreSQL Memory','postgresql','memory'),(ARTIFACT_BACKEND,'Combined S3 Artifact','s3','artifact'),(KNOWLEDGE_BACKEND,'Combined Qdrant Knowledge','qdrant','knowledge')]]}
+        targets={'version':'v1','backends':[
+            {'backend_id':'joint-memory-pg','backend_revision':1,'kind':'postgresql','adapter':'managed-postgres-v1','isolation':'tenant-subject-agent-v1','limits':{'timeout_ms':5000,'max_concurrency':4,'max_bytes':1048576},'postgresql':{'host':'127.0.0.1','port':self.pg_port,'database':'agent_platform','username':'memory_runtime','sslmode':'disable'}},
+            {'backend_id':ARTIFACT_BACKEND,'backend_revision':1,'kind':'s3','adapter':'managed-s3-v1','isolation':'tenant-artifact-v1','limits':{'timeout_ms':3000,'max_concurrency':4,'max_bytes':1048576},'s3':{'endpoint':self.s3_endpoint,'bucket':BUCKET,'region':'us-east-1','path_style':True,'versioning':'disabled'}},
+            {'backend_id':KNOWLEDGE_BACKEND,'backend_revision':1,'kind':'qdrant','adapter':'managed-qdrant-v1','isolation':'tenant-profile-resource-v1','limits':{'timeout_ms':5000,'max_concurrency':4,'max_bytes':65536},'qdrant':{'endpoint':self.qdrant_endpoint,'collection':COLLECTION,'vector_name':VECTOR_NAME,'dimensions':DIMENSIONS,'distance':'cosine'}},
+        ]}
+        env=dict(self.control_env)
+        for suffix,value in [('CATALOG',catalog),('TARGETS',targets)]:
+            path=Path(self.write('combined-'+suffix.lower()+'.json',value));env['CONTROL_PLATFORM_BACKEND_'+suffix+'_FILE']=str(path);env['CONTROL_PLATFORM_BACKEND_'+suffix+'_SHA256']=hashlib.sha256(path.read_bytes()).hexdigest()
+        env.pop('CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST',None)
+        self.contract_digest=self.command([self.binaries['control-api'],'--print-deployment-contract-digest'],env=env).strip();env['CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST']=self.contract_digest
+        self.control.send_signal(signal.SIGTERM);self.control.wait(timeout=25);assert self.control.returncode==0
+        self.control=self.spawn('control-api',[self.binaries['control-api']],env)
+        self.wait(lambda:_http_status(self.urls['control']+'/healthz',timeout=1)==204,'one merged four-capability Control catalog')
+        self.catalog_restarts+=1;self.record('combined-backend-config.json',{'catalog':catalog,'targets':targets,'contract_digest':self.contract_digest,'catalog_restarts':self.catalog_restarts})
+    def configure_providers(self,*,env_file=None):
+        self.model.close()
+        self.embedding_provider=KnowledgeModelFixture(self)
+        if self.live:
+            key=read_key(env_file,'DEEPSEEK_API_KEY');base=read_key(env_file,'DEEPSEEK_BASE_URL')
+            self.secrets.append(key);self.provider_base=base
+            self.model=LiveRelay(self,key,base,self.model_name);self.summary_provider=self.model;self.model.summary_key=key
+        else:
+            self.summary_provider=_summary.SummaryModelFixture(self)
+            self.model=CombinedModelFixture(self);self.model.summary_key=self.summary_provider.summary_key
+        self.model.embedding_key=self.embedding_provider.embedding_key
+        self.model.embedding_model=self.embedding_provider.embedding_model
+        self.model.dimensions=self.embedding_provider.dimensions
+        self.urls['model']=self.model.url
+    def close(self):
+        errors=[]
+        try:super().close()
+        except BaseException as exc:errors.append(exc)
+        finally:
+            for name in ('summary_provider','embedding_provider'):
+                provider=getattr(self,name,None)
+                if provider is not None and provider is not getattr(self,'model',None):
+                    try:provider.close()
+                    except BaseException as exc:errors.append(exc)
+            self.record('combined-provider-cleanup.json',{'result':'FAIL' if errors else 'PASS','additional_providers_closed':True})
+        if errors:raise RuntimeError('; '.join(self.redact(str(e)) for e in errors))
+
+
+class CombinedModelFixture:
+    """Synthetic LLM only. Calls existing Memory/Artifact/SDK Knowledge tools."""
+    def __init__(self,h):
+        self.key=h.secret();self.requests=[];self.outputs=[];self.errors=[];self.lock=threading.Lock();owner=self
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*_):pass
+            def do_POST(self):
+                if self.path!='/v1/chat/completions':self.send_error(404);return
+                if self.headers.get('Authorization')!='Bearer '+owner.key:self.send_error(401);return
+                try:self.respond()
+                except (AssertionError,KeyError,ValueError,TypeError) as exc:
+                    owner.errors.append(type(exc).__name__+': combined fixture mismatch');self.send_error(400,'combined fixture mismatch')
+                except (BrokenPipeError,ConnectionResetError):pass
+            def respond(self):
+                req=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                with owner.lock:owner.requests.append(copy.deepcopy(req));number=len(owner.requests)
+                assert req['model']==h.model_name and sorted(t['function']['name'] for t in req['tools'])==sorted(TOOLS)
+                messages=req['messages'];start=max(i for i,m in enumerate(messages) if m.get('role')=='user');text=messages[start]['content'];round_index=round_inputs().index(text)
+                results=[]
+                for m in messages[start+1:]:
+                    if m.get('role')=='tool':results.append(json.loads(m['content']))
+                plan=[]
+                if round_index==0:plan.append(('memory_add',{'memory':MEMORY_TEXT}))
+                plan.append(('memory_load',{}))
+                if round_index==0:plan.append(('artifact_save',{'name':FILE_NAME,'content_base64':base64.b64encode(FILE_BYTES).decode(),'mime_type':'text/plain'}))
+                plan.extend([('artifact_load',{'name':FILE_NAME,'version':0}),(CALLABLE_NAME,{'query':'What is the orchid knowledge canary and service window?'})])
+                step=len(results)
+                if step<len(plan):
+                    name,args=plan[step];delta={'role':'assistant','tool_calls':[{'index':0,'id':'combined-call-'+str(number),'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};finish='tool_calls'
+                else:
+                    by_name={name:value for (name,_),value in zip(plan,results)}
+                    assert any(r['memory']==MEMORY_TEXT for r in by_name['memory_load']['results'])
+                    assert_artifact(by_name['artifact_load'],FILE_NAME,0,FILE_BYTES,loaded=True,mime_type='text/plain')
+                    assert DOCUMENT_TEXT in [r['text'] for r in by_name[CALLABLE_NAME]['documents']]
+                    delta={'role':'assistant','content':FINAL_TEXT};finish='stop'
+                    with owner.lock:owner.outputs.append({'round':round_index+1,'tool_results':results,'plan':[name for name,_ in plan],'text':FINAL_TEXT})
+                def chunk(delta,finish,usage=None):
+                    event={'id':'combined-response-'+str(number),'object':'chat.completion.chunk','created':1,'model':req['model'],'choices':[{'index':0,'delta':delta,'finish_reason':finish}]}
+                    if usage:event['usage']=usage
+                    return 'data: '+json.dumps(event)+'\n\n'
+                payload=(chunk(delta,None)+chunk({},finish,{'prompt_tokens':7,'completion_tokens':3,'total_tokens':10})+'data: [DONE]\n\n').encode()
+                self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+        self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.url='http://127.0.0.1:'+str(self.server.server_port);self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
+    def snapshot(self):
+        with self.lock:return copy.deepcopy(self.requests)
+    def close(self):
+        self.server.shutdown();self.server.server_close();self.thread.join(timeout=5)
+        assert not self.thread.is_alive();assert not self.errors,self.errors
