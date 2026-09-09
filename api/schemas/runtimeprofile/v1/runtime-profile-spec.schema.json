@@ -455,7 +455,23 @@
         },
         "embedding": {
           "$ref": "#/$defs/openai_embedding"
+        },
+        "qdrant_api_key_credential_id": {
+          "type": "string",
+          "pattern": "^crd_[0-9a-f]{32}$"
+        },
+        "credential_audience_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
         }
+      },
+      "dependentRequired": {
+        "qdrant_api_key_credential_id": [
+          "credential_audience_digest"
+        ],
+        "credential_audience_digest": [
+          "qdrant_api_key_credential_id"
+        ]
       }
     },
     "managed_artifact": {

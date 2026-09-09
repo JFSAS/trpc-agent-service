@@ -67,7 +67,7 @@ func (a profileBackendAccess) CheckBackend(ctx context.Context, tenant, id strin
 
 // Only role-scoped Memory (PostgreSQL/Redis) or Session (Redis) identities receive passwords.
 // Catalog availability alone never grants a runtime principal access.
-func (a deploymentBackendAccess) ResolveStorageCredentialAudience(ctx context.Context, tenant, id string, revision uint64, role string) (string, error) {
+func (a deploymentBackendAccess) ResolveManagedCredentialAudience(ctx context.Context, tenant, id string, revision uint64, role string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -81,6 +81,7 @@ func (a deploymentBackendAccess) ResolveStorageCredentialAudience(ctx context.Co
 	principalOK := role == "memory" && ((snapshot.Kind == datav1.PostgreSQL && snapshot.PostgreSQL != nil && snapshot.PostgreSQL.Username == "memory_runtime") || (snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "memory_runtime"))
 	principalOK = principalOK || (role == "session" && snapshot.Kind == datav1.Redis && snapshot.Redis != nil && snapshot.Redis.Username == "session_runtime")
 	principalOK = principalOK || (role == "artifact" && snapshot.Kind == datav1.S3 && snapshot.S3 != nil)
+	principalOK = principalOK || (role == "knowledge" && snapshot.Kind == datav1.Qdrant && snapshot.Qdrant != nil)
 	if !principalOK || snapshot.ValidateForRole(role) != nil {
 		return "", backend.ErrCapability
 	}

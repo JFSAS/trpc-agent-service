@@ -166,7 +166,23 @@ func validateToolAuth(value any, pointer string, diagnostics *[]Diagnostic) {
 
 func validateKnowledgeResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
 	if object["kind"] == string(KnowledgeKindManaged) {
-		validateManagedSelection(pointer, object, []string{"kind", "backend_id", "backend_revision", "embedding"}, diagnostics)
+		selection := make(map[string]any, len(object))
+		for k, v := range object {
+			selection[k] = v
+		}
+		_, id := object["qdrant_api_key_credential_id"]
+		_, digest := object["credential_audience_digest"]
+		if id || digest {
+			requireFields(object, pointer, []string{"qdrant_api_key_credential_id", "credential_audience_digest"}, diagnostics)
+			validatePatternString(object, "qdrant_api_key_credential_id", pointer, "credential", diagnostics)
+			v, ok := object["credential_audience_digest"].(string)
+			if !ok || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(v) {
+				*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/credential_audience_digest", "invalid credential audience"))
+			}
+		}
+		delete(selection, "qdrant_api_key_credential_id")
+		delete(selection, "credential_audience_digest")
+		validateManagedSelection(pointer, selection, []string{"kind", "backend_id", "backend_revision", "embedding"}, diagnostics)
 		if v, ok := object["embedding"]; ok {
 			validateEmbedding(v, pointer+"/embedding", diagnostics)
 		}

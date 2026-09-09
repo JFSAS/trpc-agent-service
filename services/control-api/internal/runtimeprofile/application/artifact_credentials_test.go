@@ -14,7 +14,7 @@ type artifactTargets struct{ offline bool }
 func (*artifactTargets) CheckBackend(context.Context, string, string, uint64, string) error {
 	return nil
 }
-func (a *artifactTargets) ResolveStorageCredentialAudience(_ context.Context, tenant, id string, revision uint64, role string) (string, error) {
+func (a *artifactTargets) ResolveManagedCredentialAudience(_ context.Context, tenant, id string, revision uint64, role string) (string, error) {
 	if a.offline || tenant != "tnt_a" || id != "artifacts" || role != "artifact" {
 		return "", errors.New("target unavailable")
 	}

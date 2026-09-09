@@ -317,8 +317,8 @@ func (c ProfileConfig) acceptsPurpose(category, name, purpose string, clearing b
 		r, ok := c.Tools[name]
 		return ok && purpose == "bearer_token" && (r.Auth.Kind == domain.AuthKindBearer || clearing)
 	case "knowledge":
-		r, ok := c.Knowledge[name]
-		return ok && (purpose == "embedding_api_key" || (purpose == "qdrant_api_key" && r.Kind != domain.KnowledgeKindManaged))
+		_, ok := c.Knowledge[name]
+		return ok && (purpose == "embedding_api_key" || purpose == "qdrant_api_key")
 	case "storage":
 		r, ok := c.Storage[name]
 		return ok && ((r.Kind == domain.StorageKindManagedArtifact && (purpose == "access_key_id" || purpose == "secret_access_key")) || (!r.Kind.Managed() && purpose == "dsn") || ((r.Kind == domain.StorageKindManagedMemory || r.Kind == domain.StorageKindManagedSession) && purpose == "dsn_password"))

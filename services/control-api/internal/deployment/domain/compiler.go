@@ -545,7 +545,18 @@ func compileResources(
 			checkURLHost(resource.Embedding.BaseURL, "/knowledge/"+escapeJSONPointer(name)+"/embedding/base_url", "knowledge", name, allowedHosts, hosts, diagnostics)
 			credential := credentialUse(resource.Embedding.APIKeyCredentialID, CredentialPurposeEmbeddingAPIKey, audienceDigest(resource.Kind, resource.Embedding.BaseURL))
 			uses = append(uses, credential)
-			resources.Knowledge[name] = ManifestKnowledgeResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind, Embedding: ManifestEmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, Credential: credential}, Capability: profiledomain.CapabilityKnowledgeSearch}
+			var qdrantUse *CredentialUse
+			if platform.Version == deploymentv1.WorkerV1PlatformVersion || resource.QdrantAPIKeyCredentialID != "" || resource.CredentialAudienceDigest != "" {
+				digest, err := snapshot.Digest()
+				u := credentialUse(resource.QdrantAPIKeyCredentialID, CredentialPurposeQdrantAPIKey, digest)
+				if err != nil || resource.CredentialAudienceDigest != digest || !validCredentialUse(u, CredentialPurposeQdrantAPIKey) {
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/knowledge/"+escapeJSONPointer(name), "knowledge", name, "Qdrant credential missing or bound to different target"))
+				} else {
+					qdrantUse = &u
+					uses = append(uses, u)
+				}
+			}
+			resources.Knowledge[name] = ManifestKnowledgeResource{Credential: qdrantUse, Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind, Embedding: ManifestEmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, Credential: credential}, Capability: profiledomain.CapabilityKnowledgeSearch}
 			continue
 		}
 		checkHost(resource.Host, "/knowledge/"+escapeJSONPointer(name)+"/host",

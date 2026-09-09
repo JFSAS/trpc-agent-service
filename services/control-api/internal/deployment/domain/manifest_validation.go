@@ -222,10 +222,21 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 			}
 			r.BackendID = resource.Backend.BackendID
 			r.Revision = resource.Backend.BackendRevision
-			if !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != KnowledgeAdapterManagedV1 || resource.Credential != nil || resource.Host != "" || resource.Port != 0 || resource.TLS || resource.Collection != "" || resource.Capability != profiledomain.CapabilityKnowledgeSearch || resource.Embedding.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Embedding.BaseURL) {
+			if !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != KnowledgeAdapterManagedV1 || resource.Host != "" || resource.Port != 0 || resource.TLS || resource.Collection != "" || resource.Capability != profiledomain.CapabilityKnowledgeSearch || resource.Embedding.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Embedding.BaseURL) {
 				return profiledomain.Spec{}, ErrInvalidManifestContent
 			}
 			profile.Knowledge[name] = profiledomain.KnowledgeResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision, Embedding: profiledomain.EmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, APIKeyCredentialID: resource.Embedding.Credential.CredentialID}}
+			if resource.Credential != nil {
+				digest, _ := resource.Backend.Digest()
+				if !validCredentialUse(*resource.Credential, CredentialPurposeQdrantAPIKey) || resource.Credential.AudienceDigest != digest {
+					return profiledomain.Spec{}, ErrInvalidManifestContent
+				}
+				p := profile.Knowledge[name]
+				p.QdrantAPIKeyCredentialID = resource.Credential.CredentialID
+				p.CredentialAudienceDigest = digest
+				profile.Knowledge[name] = p
+			}
+
 			host, _ := resource.Backend.EndpointHost()
 			hosts[host] = true
 			addURLHost(resource.Embedding.BaseURL)

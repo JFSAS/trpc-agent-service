@@ -61,16 +61,17 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 }
 func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 	if r.Kind == profiledomain.KnowledgeKindManaged {
-		if r.Backend == nil || r.Credential != nil || r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" {
+		if r.Backend == nil || r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" {
 			return nil, ErrInvalidManifestContent
 		}
 		return json.Marshal(struct {
+			Credential *CredentialUse              `json:"credential,omitempty"`
 			Adapter    string                      `json:"adapter_version"`
 			Kind       profiledomain.KnowledgeKind `json:"kind"`
 			Backend    *datav1.Snapshot            `json:"backend"`
 			Embedding  ManifestEmbeddingResource   `json:"embedding"`
 			Capability string                      `json:"capability"`
-		}{r.AdapterVersion, r.Kind, r.Backend, r.Embedding, r.Capability})
+		}{r.Credential, r.AdapterVersion, r.Kind, r.Backend, r.Embedding, r.Capability})
 	}
 	if r.Backend != nil {
 		return nil, ErrInvalidManifestContent
@@ -98,13 +99,19 @@ func (r ManifestStorageResourceView) MarshalJSON() ([]byte, error) {
 }
 func (r ManifestKnowledgeResourceView) MarshalJSON() ([]byte, error) {
 	if r.Backend != nil {
+		var present *bool
+		if r.CredentialPresent {
+			v := true
+			present = &v
+		}
 		return json.Marshal(struct {
-			Adapter    string                      `json:"adapter_version"`
-			Kind       profiledomain.KnowledgeKind `json:"kind"`
-			Backend    *ManagedBackendView         `json:"backend"`
-			Embedding  ManifestEmbeddingView       `json:"embedding"`
-			Capability string                      `json:"capability"`
-		}{r.AdapterVersion, r.Kind, r.Backend, r.Embedding, r.Capability})
+			CredentialPresent *bool                       `json:"credential_present,omitempty"`
+			Adapter           string                      `json:"adapter_version"`
+			Kind              profiledomain.KnowledgeKind `json:"kind"`
+			Backend           *ManagedBackendView         `json:"backend"`
+			Embedding         ManifestEmbeddingView       `json:"embedding"`
+			Capability        string                      `json:"capability"`
+		}{present, r.AdapterVersion, r.Kind, r.Backend, r.Embedding, r.Capability})
 	}
 	type plain ManifestKnowledgeResourceView
 	return json.Marshal(plain(r))
@@ -178,6 +185,9 @@ func validateManagedWire(raw []byte) error {
 			if category == "knowledge" {
 				allowed["embedding"] = true
 				allowed["capability"] = true
+				if _, ok := fields["credential"]; ok {
+					allowed["credential"] = true
+				}
 			}
 			if len(fields) != len(allowed) {
 				return ErrInvalidManifestContent
@@ -190,6 +200,15 @@ func validateManagedWire(raw []byte) error {
 			snapshot, err := datav1.Decode(fields["backend"])
 			if err != nil {
 				return ErrInvalidManifestContent
+			}
+			if category == "knowledge" {
+				if v, ok := fields["credential"]; ok {
+					var use CredentialUse
+					digest, _ := snapshot.Digest()
+					if strictDecodeJSON(v, &use) != nil || snapshot.Kind != datav1.Qdrant || !validCredentialUse(use, CredentialPurposeQdrantAPIKey) || use.AudienceDigest != digest {
+						return ErrInvalidManifestContent
+					}
+				}
 			}
 			if category == "storage" && kind == string(profiledomain.StorageKindManagedArtifact) {
 				if v, present := fields["credentials"]; present {

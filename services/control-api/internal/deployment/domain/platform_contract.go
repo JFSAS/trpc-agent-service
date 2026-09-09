@@ -358,7 +358,7 @@ func WorkerV1PlatformExecutionContract() PlatformExecutionContract {
 	c.StorageAdapters[profiledomain.StorageKindManagedSession] = AdapterContract{Version: StorageAdapterManagedSessionV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedMemory] = AdapterContract{Version: StorageAdapterManagedMemoryV1}
 	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{}
-	c.KnowledgeAdapters = map[profiledomain.KnowledgeKind]KnowledgeAdapterContract{}
+	c.KnowledgeAdapters = map[profiledomain.KnowledgeKind]KnowledgeAdapterContract{profiledomain.KnowledgeKindManaged: {Version: KnowledgeAdapterManagedV1, CreatesCallable: true}}
 	digest, err := c.CalculateDigest()
 	if err != nil {
 		panic(err)

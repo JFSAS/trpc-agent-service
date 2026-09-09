@@ -63,6 +63,7 @@ func TestControlOpenAPIContainsDeploymentV1Routes(t *testing.T) {
 		"PATCH /v1/tenants/{tenant_id}/deployments/{deployment_id}",
 		"POST /v1/tenants/{tenant_id}/deployments",
 		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions",
+		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/knowledge/{resource}/import",
 		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/validate",
 		"PUT /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/artifacts/{filename}",
 	})

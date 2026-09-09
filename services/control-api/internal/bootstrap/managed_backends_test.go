@@ -78,7 +78,7 @@ func TestPGMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := deploymentBackendAccess{targets: targets}
-			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "memory")
+			digest, err := a.ResolveManagedCredentialAudience(context.Background(), "tenant-a", "pg", 1, "memory")
 			if (err == nil) != (username == "memory_runtime") {
 				t.Fatal("principal check", err)
 			}
@@ -89,7 +89,7 @@ func TestPGMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 					t.Fatal("digest mismatch")
 				}
 			}
-			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "memory"); err == nil {
+			if _, err = a.ResolveManagedCredentialAudience(context.Background(), "tenant-b", "pg", 1, "memory"); err == nil {
 				t.Fatal("tenant bypass")
 			}
 		})
@@ -109,7 +109,7 @@ func TestRedisMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := deploymentBackendAccess{targets: targets}
-			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "memory")
+			digest, err := a.ResolveManagedCredentialAudience(context.Background(), "tenant-a", "pg", 1, "memory")
 			if (err == nil) != (username == "memory_runtime") {
 				t.Fatal("principal check", err)
 			}
@@ -120,7 +120,7 @@ func TestRedisMemoryPasswordTargetRequiresMemoryRuntimePrincipal(t *testing.T) {
 					t.Fatal("digest mismatch")
 				}
 			}
-			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "memory"); err == nil {
+			if _, err = a.ResolveManagedCredentialAudience(context.Background(), "tenant-b", "pg", 1, "memory"); err == nil {
 				t.Fatal("tenant bypass")
 			}
 		})
@@ -140,7 +140,7 @@ func TestRedisSessionPasswordTargetRequiresSessionRuntimePrincipal(t *testing.T)
 				t.Fatal(err)
 			}
 			a := deploymentBackendAccess{targets: targets}
-			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "session")
+			digest, err := a.ResolveManagedCredentialAudience(context.Background(), "tenant-a", "pg", 1, "session")
 			if (err == nil) != (username == "session_runtime") {
 				t.Fatal("principal check", err)
 			}
@@ -151,7 +151,7 @@ func TestRedisSessionPasswordTargetRequiresSessionRuntimePrincipal(t *testing.T)
 					t.Fatal("digest mismatch")
 				}
 			}
-			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "session"); err == nil {
+			if _, err = a.ResolveManagedCredentialAudience(context.Background(), "tenant-b", "pg", 1, "session"); err == nil {
 				t.Fatal("tenant bypass")
 			}
 		})
@@ -171,7 +171,7 @@ func TestManagedPostgresSessionPasswordTargetRemainsDisabled(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := deploymentBackendAccess{targets: targets}
-			digest, err := a.ResolveStorageCredentialAudience(context.Background(), "tenant-a", "pg", 1, "session")
+			digest, err := a.ResolveManagedCredentialAudience(context.Background(), "tenant-a", "pg", 1, "session")
 			if err == nil {
 				t.Fatal("principal check", err)
 			}
@@ -182,7 +182,7 @@ func TestManagedPostgresSessionPasswordTargetRemainsDisabled(t *testing.T) {
 					t.Fatal("digest mismatch")
 				}
 			}
-			if _, err = a.ResolveStorageCredentialAudience(context.Background(), "tenant-b", "pg", 1, "session"); err == nil {
+			if _, err = a.ResolveManagedCredentialAudience(context.Background(), "tenant-b", "pg", 1, "session"); err == nil {
 				t.Fatal("tenant bypass")
 			}
 		})

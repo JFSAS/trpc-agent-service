@@ -167,6 +167,14 @@ func New(ctx context.Context, config Config) (*App, error) {
 		pool.Close()
 		return nil, fmt.Errorf("assemble runtime profile: %w", err)
 	}
+	var knowledgeBackend deploymentapp.KnowledgeBackend
+	if config.Runtime != nil {
+		knowledgeBackend, err = config.Runtime.knowledgeClient()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+	}
 	var artifactBackend deploymentapp.ArtifactBackend
 	if config.Runtime != nil {
 		artifactBackend, err = config.Runtime.artifactClient()
@@ -178,6 +186,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 	deploymentModule, err := deployment.NewModule(deployment.Dependencies{
 		ManagedBackends: deploymentBackendAccess{targets: backendTargets, tenants: activeTenantMemberLookup{tenants: tenantModule.Service}},
 		ArtifactBackend: artifactBackend, ArtifactCredentials: runtimeProfileModule.Service,
+		KnowledgeBackend: knowledgeBackend, KnowledgeCredentials: runtimeProfileModule.Service,
 		DB: pool, Routes: router,
 		Authenticate:       identityModule.AuthenticationMiddleware(),
 		TenantAccess:       activeTenantMemberLookup{tenants: tenantModule.Service},

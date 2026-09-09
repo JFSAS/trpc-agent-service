@@ -543,7 +543,7 @@ Adapter 是消费接入基础，不代表真实执行拥有方与 Worker 已经�
 其他托管角色不因此获得密码输入能力。Redis 是正式持久 Memory 后端，不配置隐式 TTL；
 密码仅用于认证，不能改变 Snapshot 固定的 Host/Port/Username/Database/TLS。
 
-Profile 使用方端口 `ManagedCredentialTargetResolver.ResolveStorageCredentialAudience`
+Profile 使用方端口 `ManagedCredentialTargetResolver.ResolveManagedCredentialAudience`
 从可信目录解析租户作用域、确定 backend ID/revision 的 PostgreSQL／Redis Memory 目标，返回
 `Snapshot.Digest()`。服务端将这个摘要与生成的 `dsn_credential_id` 一起保存到
 内部 canonical 的 `credential_audience_digest`，不接受用户提交或在公开 config 返回。
@@ -575,7 +575,7 @@ Redis Memory 的历史无凭据 Manifest descriptor 保持 Canonical／详情读
 公开配置仍为 kind/backend_id/backend_revision，内部同样成对保存
 `dsn_credential_id` 与 `credential_audience_digest=Snapshot.Digest()`。
 
-`ResolveStorageCredentialAudience(ctx, tenant, backendID, revision, role)` 按角色验证：
+`ResolveManagedCredentialAudience(ctx, tenant, backendID, revision, role)` 按角色验证：
 Memory 允许 PostgreSQL／Redis 的 `memory_runtime`；Session 仅允许 Redis 的
 `session_runtime`。托管 PostgreSQL Session 暂不启用，旧 `postgres_state` 不受影响。
 保存／发布使用固定 Snapshot 的 Host/Port/Username/Database/TLS 与租户、角色范围。
@@ -607,3 +607,18 @@ endpoint、bucket、region、path_style、versioning 都来自固定 Snapshot；
 历史无 credentials 描述保持可读，但不通过新 Worker 执行门禁。
 Artifact 元数据继续沿用既有 Worker PostgreSQL metadata_contract，
 不增加用户数据库配置；需要 Artifact 的节点必须选择支持 tool_call 的模型。
+
+## 托管 Knowledge 的固定凭据
+
+目标解析接口泛化为 `ResolveManagedCredentialAudience`，存储角色语义不变；
+knowledge 角色只解析租户获准使用的固定 Qdrant Snapshot。
+`managed_knowledge` 复用 qdrant_api_key 输入、状态及轮换，内部成对保存
+qdrant_api_key_credential_id 与 credential_audience_digest=Snapshot.Digest()。
+Manifest.Credential 使用 qdrant_api_key 与该摘要，Embedding.Credential 继续使用
+既有 embedding_api_key 和 kind/BaseURL audience 算法，不改已有身份绑定。
+新 Worker 发布必须显式 Qdrant Key；历史无 Key 描述保持可读但不可执行。
+
+Knowledge 的 Worker scope 包含 tenant/profile/resource/backendDigest 与固定
+embedding model/baseURL/dimensions，不包含 DeploymentRevisionID；同配置重复发布可复用。
+导入绑定固定发布Revision与被Agent选择的resource，不接受用户提供scope或后端目标。
+不新增 chunk 配置、知识任务平台或后台导入调度。

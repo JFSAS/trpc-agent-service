@@ -32,6 +32,7 @@ func NewHandler(service DeploymentService) *Handler {
 
 // Register adds the complete eight-route Deployment V1 management surface.
 func (h *Handler) Register(routes gin.IRoutes) {
+	routes.POST("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/knowledge/:resource/import", h.importKnowledge)
 	routes.PUT("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/artifacts/:filename", h.artifact)
 	routes.GET("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/artifacts/:filename", h.artifact)
 	routes.POST("/v1/tenants/:tenant_id/deployments", h.createDeployment)

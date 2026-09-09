@@ -34,7 +34,9 @@ func credentialSlots(spec domain.Spec) []credentialSlot {
 		}
 	}
 	for n, r := range spec.Knowledge {
-		if r.Kind != domain.KnowledgeKindManaged {
+		if r.Kind == domain.KnowledgeKindManaged {
+			slots = append(slots, credentialSlot{"knowledge", n, "qdrant_api_key", r.QdrantAPIKeyCredentialID, r.CredentialAudienceDigest})
+		} else {
 			slots = append(slots, credentialSlot{"knowledge", n, "qdrant_api_key", r.QdrantAPIKeyCredentialID, audience(r.Kind, r.Host, r.Port, r.TLS)})
 		}
 		slots = append(slots, credentialSlot{"knowledge", n, "embedding_api_key", r.Embedding.APIKeyCredentialID, audience(r.Kind, r.Embedding.BaseURL)})

@@ -106,6 +106,7 @@ func (a ToolAuth) MarshalJSON() ([]byte, error) {
 }
 
 type KnowledgeResource struct {
+	CredentialAudienceDigest string            `json:"credential_audience_digest,omitempty"`
 	BackendID                string            `json:"backend_id,omitempty"`
 	BackendRevision          uint64            `json:"backend_revision,omitempty"`
 	Kind                     KnowledgeKind     `json:"kind"`

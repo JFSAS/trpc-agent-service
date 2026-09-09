@@ -442,7 +442,7 @@ func NewManifestView(content ManifestContent) ManifestView {
 	}
 	for name, resource := range normalized.Resources.Knowledge {
 		if resource.Backend != nil {
-			view.Resources.Knowledge[name] = ManifestKnowledgeResourceView{Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion, Embedding: ManifestEmbeddingView{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, CredentialPresent: true}, Capability: resource.Capability}
+			view.Resources.Knowledge[name] = ManifestKnowledgeResourceView{CredentialPresent: resource.Credential != nil, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion, Embedding: ManifestEmbeddingView{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, CredentialPresent: true}, Capability: resource.Capability}
 			continue
 		}
 		view.Resources.Knowledge[name] = ManifestKnowledgeResourceView{

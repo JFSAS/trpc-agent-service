@@ -65,15 +65,17 @@ func (r StorageResource) MarshalJSON() ([]byte, error) {
 }
 func (r KnowledgeResource) MarshalJSON() ([]byte, error) {
 	if r.Kind == KnowledgeKindManaged {
-		if r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" || r.QdrantAPIKeyCredentialID != "" {
+		if r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" || ((r.QdrantAPIKeyCredentialID == "") != (r.CredentialAudienceDigest == "")) {
 			return nil, ErrCredentialInput
 		}
 		return json.Marshal(struct {
+			QdrantID        string            `json:"qdrant_api_key_credential_id,omitempty"`
+			Audience        string            `json:"credential_audience_digest,omitempty"`
 			Kind            KnowledgeKind     `json:"kind"`
 			BackendID       string            `json:"backend_id"`
 			BackendRevision uint64            `json:"backend_revision"`
 			Embedding       EmbeddingResource `json:"embedding"`
-		}{r.Kind, r.BackendID, r.BackendRevision, r.Embedding})
+		}{r.QdrantAPIKeyCredentialID, r.CredentialAudienceDigest, r.Kind, r.BackendID, r.BackendRevision, r.Embedding})
 	}
 	type plain KnowledgeResource
 	return json.Marshal(plain(r))

@@ -128,3 +128,10 @@ secret_access_key_credential_id with one fixed S3 Snapshot audience digest.
 Draft may be partial; new Worker compilation requires both associations.
 Public write/state purposes are access_key_id and secret_access_key under
 storage.artifact. Public config never accepts internal IDs or audience fields.
+
+Managed Knowledge now accepts optional paired canonical
+qdrant_api_key_credential_id and credential_audience_digest from the trusted
+Qdrant Snapshot resolver. Public config remains unchanged; write/state use
+qdrant_api_key. Embedding credential audience retains its existing kind/BaseURL
+algorithm. New Worker publications require the explicit Qdrant association;
+historical descriptors without it remain readable, not executable.

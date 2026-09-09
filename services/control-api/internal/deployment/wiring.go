@@ -18,17 +18,19 @@ import (
 // module. Agent and Runtime Profile are consumed through their published owner
 // queries; the module never reads either owner's tables directly.
 type Dependencies struct {
-	ArtifactBackend     application.ArtifactBackend
-	ArtifactCredentials application.ArtifactCredentialResolver
-	ManagedBackends     application.ManagedBackendResolver
-	DB                  postgresadapter.DB
-	Routes              gin.IRouter
-	Authenticate        gin.HandlerFunc
-	TenantAccess        application.TenantAccess
-	AgentVersions       application.AgentVersionReader
-	ProfileRevisions    application.ProfileRevisionReader
-	ProfileCredentials  application.ProfileCredentialChecker
-	Platform            domain.PlatformExecutionContract
+	KnowledgeBackend     application.KnowledgeBackend
+	KnowledgeCredentials application.KnowledgeCredentialResolver
+	ArtifactBackend      application.ArtifactBackend
+	ArtifactCredentials  application.ArtifactCredentialResolver
+	ManagedBackends      application.ManagedBackendResolver
+	DB                   postgresadapter.DB
+	Routes               gin.IRouter
+	Authenticate         gin.HandlerFunc
+	TenantAccess         application.TenantAccess
+	AgentVersions        application.AgentVersionReader
+	ProfileRevisions     application.ProfileRevisionReader
+	ProfileCredentials   application.ProfileCredentialChecker
+	Platform             domain.PlatformExecutionContract
 }
 
 // Module is the assembled Deployment module.
@@ -52,6 +54,7 @@ func NewModule(deps Dependencies) (*Module, error) {
 	service := application.NewService(application.Dependencies{
 		ManagedBackends: deps.ManagedBackends,
 		ArtifactBackend: deps.ArtifactBackend, ArtifactCredentials: deps.ArtifactCredentials,
+		KnowledgeBackend: deps.KnowledgeBackend, KnowledgeCredentials: deps.KnowledgeCredentials,
 		Publications:       store,
 		Queries:            store,
 		TenantAccess:       deps.TenantAccess,

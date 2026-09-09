@@ -17,7 +17,7 @@ type memoryCredentialTargets struct{ offline bool }
 func (*memoryCredentialTargets) CheckBackend(context.Context, string, string, uint64, string) error {
 	return nil
 }
-func (r *memoryCredentialTargets) ResolveStorageCredentialAudience(_ context.Context, tenant, id string, revision uint64, role string) (string, error) {
+func (r *memoryCredentialTargets) ResolveManagedCredentialAudience(_ context.Context, tenant, id string, revision uint64, role string) (string, error) {
 	if r.offline || tenant != "tnt_a" || !((role == "memory" && (id == "memory-pg" || id == "memory-redis")) || (role == "session" && id == "session-redis")) {
 		return "", errors.New("target unavailable")
 	}

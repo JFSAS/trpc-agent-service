@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	artifactclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workerartifact"
+	knowledgeclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workerknowledge"
 	profilehttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/inbound/runtimehttp"
 	executionhttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/outbound/executionhttp"
 	"github.com/nats-io/nats.go"
@@ -154,4 +155,13 @@ func (c *RuntimeConfig) artifactClient() (*artifactclient.Client, error) {
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tc, MaxIdleConns: 8, IdleConnTimeout: 30 * time.Second}, Timeout: 30 * time.Second}
 	return artifactclient.New(client, c.ExecutionURL)
+}
+
+func (c *RuntimeConfig) knowledgeClient() (*knowledgeclient.Client, error) {
+	tc, err := runtimeTLS(c.ExecutionCertFile, c.ExecutionKeyFile, c.ExecutionCAFile)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tc, MaxIdleConns: 8, IdleConnTimeout: 30 * time.Second}, Timeout: 60 * time.Second}
+	return knowledgeclient.New(client, c.ExecutionURL)
 }
