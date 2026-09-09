@@ -153,3 +153,16 @@ revision，绑定切换到新 revision 后才会生成匹配的新 Run；历史�
 结束，再协调 Control/Worker release pin、新发布物及绑定的切换，最后恢复接收。不要
 仅升级 Worker 的 pin 后继续向它投递旧发布物。本批验收运行在独立环境，不自动替换
 用户正在使用的共享服务、Bot 或数据库。
+
+## 四能力组合补验（2026-09-09）
+
+同一发布 Manifest 下，Memory + Summary + Artifact + Knowledge 连续 3 个正式 Run
+通过。每轮单 Attempt；摘要原文与 SDK boundary 随同正式 Session 接受，后两轮首个
+真实 DeepSeek 请求逐字包含前轮 accepted Summary。7 次主模型与 6 次摘要 HTTP
+调用均成功，3 条 Final 的 Worker outbox、Gateway receipt/Delivery 与 Channel Lab
+正文逐字对应；Memory 每轮 APPLIED，文件保持原版本，知识点只读不变。
+
+本组合使用 PostgreSQL Session/Memory、真实 S3/Qdrant，Embedding 单独明确为
+HTTP fixture。Redis Session/Memory 的真实后端验收由各自独立门禁记录，不把本次
+PostgreSQL 组合宣称为全部后端组合矩阵。未切换共享部署，也未新增真实 Telegram
+验收。

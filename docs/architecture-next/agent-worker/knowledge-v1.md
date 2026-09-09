@@ -99,5 +99,11 @@ python3 -B scripts/test-worker-knowledge-joint.py --race --artifacts /tmp/knowle
 从真实 Qdrant 取回 `GUI imported canary LILY-526.`，正式 Session 成功接受并由
 Channel Lab 收到 Final。该 GUI 的模型和 embedding 均为 HTTP fixture。
 
-后续：真实 embedding 验收；总包 Memory/Summary/Artifact/Knowledge 组合回归。
+四能力组合回归已完成：同一正式 Manifest 与 Session 连续 3 个 Run，Memory 正式
+APPLIED、Artifact 版本 0 读回、Knowledge 检索与 Summary 接受/下轮消费同时通过。
+实际 DeepSeek 主模型 7 次、摘要模型 6 次 HTTP 200，最终 Gateway transport 与
+Delivery 均 ACCEPTED，Lab 正文逐字等于真实模型 Final。组合的 4 次 embedding
+调用仍为 fixture；这证明真实模型工具选择和回答装配，不替代真实向量语义验收。
+
+后续：提供真实 embedding 配置后完成外部 embedding 与检索语义验收。
 文档替换/删除、多个知识资源组合、定制分块、混合检索、多格式与后台导入不在本版实现。
