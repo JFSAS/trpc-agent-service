@@ -68,6 +68,17 @@ class CombinedFixtureTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'parent failed'):h.close()
         h.summary_provider.close.assert_called_once();h.embedding_provider.close.assert_called_once();self.assertEqual(records[0]['result'],'FAIL')
 
+    def test_minio_bootstrap_retries_only_bucket_503(self):
+        h=self.harness();h._initializing_dependencies=True;h._s3_bootstrap_retries=0
+        with patch.object(f.ArtifactHarness,'s3_request',side_effect=[RuntimeError('fixture S3 HTTP status 503 expected 200'),b'ready']) as request,patch.object(f.time,'sleep'):
+            self.assertEqual(h.s3_request('PUT'),b'ready')
+        self.assertEqual(request.call_count,2);self.assertEqual(h._s3_bootstrap_retries,1)
+        for initializing,key,error in ((False,None,'fixture S3 HTTP status 503 expected 200'),(True,'actual-object','fixture S3 HTTP status 503 expected 200'),(True,None,'fixture S3 HTTP status 403 expected 200')):
+            h._initializing_dependencies=initializing
+            with patch.object(f.ArtifactHarness,'s3_request',side_effect=RuntimeError(error)) as request:
+                with self.assertRaisesRegex(RuntimeError,error):h.s3_request('GET',key)
+            self.assertEqual(request.call_count,1)
+
     def test_fixture_assertions_are_raised_after_parent_cleanup(self):
         h=self.harness();h.redact=lambda s:s;events=[];h.record=lambda n,v:events.append(v['result'])
         h.model.errors=['observed fixture mismatch']

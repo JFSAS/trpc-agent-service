@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import signal
 import threading
+import time
 
 from harness import Harness, _http_status
 from artifact_joint_fixture import ArtifactHarness, BACKEND_ID as ARTIFACT_BACKEND, BUCKET, TOOLS as ARTIFACT_TOOLS, assert_artifact
@@ -57,6 +58,22 @@ class CombinedHarness(ArtifactHarness,KnowledgeHarness,MemoryHarness,_summary.Su
     def __init__(self,*args,live=False,**kwargs):
         self.live=live;self.catalog_restarts=0
         super().__init__(*args,**kwargs)
+    def provision(self):
+        self._initializing_dependencies=True;self._s3_bootstrap_retries=0
+        try:
+            super().provision()
+            self.record('combined-dependency-readiness.json',{'bucket_bootstrap_503_retries':self._s3_bootstrap_retries,'worker_save_load_retry_changed':False})
+        finally:self._initializing_dependencies=False
+    def s3_request(self,method,key=None,**kwargs):
+        # MinIO's health endpoint can turn ready before its bucket API. This is
+        # owned empty-fixture provisioning only, never Worker Save/Load policy.
+        bootstrap=getattr(self,'_initializing_dependencies',False) and key is None and method in ('PUT','GET')
+        deadline=time.monotonic()+30
+        while True:
+            try:return super().s3_request(method,key,**kwargs)
+            except RuntimeError as exc:
+                if not bootstrap or not str(exc).startswith('fixture S3 HTTP status 503 ') or time.monotonic()>=deadline:raise
+                self._s3_bootstrap_retries+=1;time.sleep(.1)
     # Existing seeding hooks call these on the way back from owner Tenant HTTP.
     # The outermost API method merges all descriptors exactly once instead.
     def bind_artifact_catalog(self,tenant_id):pass
