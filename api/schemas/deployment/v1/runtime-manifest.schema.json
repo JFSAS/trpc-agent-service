@@ -1646,6 +1646,9 @@
         },
         "capability": {
           "const": "knowledge.search"
+        },
+        "credential": {
+          "$ref": "#/$defs/qdrant_api_key_credential"
         }
       }
     },

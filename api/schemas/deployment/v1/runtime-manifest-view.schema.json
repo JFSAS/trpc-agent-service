@@ -980,6 +980,9 @@
         },
         "capability": {
           "const": "knowledge.search"
+        },
+        "credential_present": {
+          "type": "boolean"
         }
       }
     },

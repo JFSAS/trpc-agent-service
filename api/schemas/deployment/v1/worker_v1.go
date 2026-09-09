@@ -47,9 +47,26 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if !ok || len(c.AgentPlan.Nodes) != 1 || node.Kind != "llm" || len(node.Children) > 0 || node.Body != "" || node.MaxIterations != 0 {
 		return reject("exactly one llm root is required")
 	}
-	if len(node.ToolResources)+len(node.KnowledgeResources)+len(node.CallableEntries) > 0 || len(c.Resources.Tools)+len(c.Resources.Knowledge)+len(c.ResolvedRequirements.Tools)+len(c.ResolvedRequirements.Knowledge) > 0 {
-		return reject("tools, knowledge and callable entries are deferred")
+	if len(node.ToolResources) > 0 || len(c.Resources.Tools) > 0 || len(c.ResolvedRequirements.Tools) > 0 {
+		return reject("external tools are deferred")
 	}
+	// V1 binds one SDK Knowledge service. Reject multiple references explicitly;
+	// never silently pick the first resource or search an undeclared namespace.
+	if len(node.KnowledgeResources) > 1 || len(c.Resources.Knowledge) != len(node.KnowledgeResources) || len(c.ResolvedRequirements.Knowledge) != len(node.KnowledgeResources) || len(node.CallableEntries) != len(node.KnowledgeResources) {
+		return reject("single explicit knowledge resource closure")
+	}
+	if len(node.KnowledgeResources) == 1 {
+		key := node.KnowledgeResources[0]
+		if node.CallableEntries[0] != "knowledge/"+key {
+			return reject("knowledge callable authority")
+		}
+		for _, bound := range c.ResolvedRequirements.Knowledge {
+			if bound != key {
+				return reject("knowledge requirement binding")
+			}
+		}
+	}
+
 	selectedModels := map[string]bool{node.ModelResource: true}
 	if c.Runtime != nil {
 		selectedModels[c.Runtime.Summary.ModelResource] = true
@@ -171,12 +188,46 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
+	if len(node.KnowledgeResources) == 1 {
+		key := node.KnowledgeResources[0]
+		r, exists := c.Resources.Knowledge[key]
+		if !exists || r.Kind != "managed_knowledge" || r.AdapterVersion != "managed-knowledge-v1" || r.Capability != "knowledge.search" || r.Backend == nil || r.Credential == nil || c.Execution.MaxToolCalls < 1 {
+			return reject("knowledge adapter")
+		}
+		b := r.Backend
+		d, err := b.Digest()
+		if err != nil || b.TenantID != c.TenantID || b.ValidateForRole("knowledge") != nil || r.Embedding.Dimensions != b.Qdrant.Dimensions || strings.TrimSpace(r.Embedding.Model) == "" {
+			return reject("fixed knowledge backend")
+		}
+		u := *r.Credential
+		if u.CredentialID == "" || u.Purpose != "qdrant_api_key" || u.AudienceDigest != d {
+			return reject("knowledge credential audience")
+		}
+		if prior, ok := credentials[u.CredentialID]; ok && prior != u {
+			return reject("credential closure")
+		}
+		credentials[u.CredentialID] = u
+		e := r.Embedding
+		ep, err := url.Parse(e.BaseURL)
+		if err != nil || (ep.Scheme != "http" && ep.Scheme != "https") || ep.Hostname() == "" || ep.User != nil || ep.RawQuery != "" || ep.ForceQuery || strings.Contains(e.BaseURL, "#") || e.Credential.CredentialID == "" || e.Credential.Purpose != "embedding_api_key" || e.Credential.AudienceDigest != CredentialAudienceDigest(r.Kind, e.BaseURL) {
+			return reject("fixed embedding resource")
+		}
+		if prior, ok := credentials[e.Credential.CredentialID]; ok && prior != e.Credential {
+			return reject("credential closure")
+		}
+		credentials[e.Credential.CredentialID] = e.Credential
+		host, err := b.EndpointHost()
+		if err != nil {
+			return reject("knowledge endpoint")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(host), strings.ToLower(ep.Hostname()))
+	}
 	for key := range selectedModels {
 		model, exists := c.Resources.Models[key]
 		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
 			return reject("model adapter")
 		}
-		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil) && !slices.Contains(model.Capabilities, "tool_call") {
+		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(node.KnowledgeResources) > 0) && !slices.Contains(model.Capabilities, "tool_call") {
 			return reject("data tools require model tool_call capability")
 		}
 		endpoint, err := url.Parse(model.BaseURL)

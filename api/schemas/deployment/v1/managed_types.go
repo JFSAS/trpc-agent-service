@@ -42,16 +42,17 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 }
 func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 	if r.Kind == "managed_knowledge" {
-		if r.Backend == nil || r.Credential != nil || r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" {
+		if r.Backend == nil || r.Host != "" || r.Port != 0 || r.TLS || r.Collection != "" {
 			return nil, ErrInvalidManifest
 		}
 		return json.Marshal(struct {
+			Credential *CredentialUse            `json:"credential,omitempty"`
 			Adapter    string                    `json:"adapter_version"`
 			Kind       string                    `json:"kind"`
 			Backend    *datav1.Snapshot          `json:"backend"`
 			Embedding  ManifestEmbeddingResource `json:"embedding"`
 			Capability string                    `json:"capability"`
-		}{r.AdapterVersion, r.Kind, r.Backend, r.Embedding, r.Capability})
+		}{r.Credential, r.AdapterVersion, r.Kind, r.Backend, r.Embedding, r.Capability})
 	}
 	if r.Backend != nil {
 		return nil, ErrInvalidManifest
@@ -104,6 +105,16 @@ func validateManagedResourceRoles(c ManifestContent) error {
 	for _, r := range c.Resources.Knowledge {
 		if r.Kind != "managed_knowledge" {
 			continue
+		}
+		if r.Credential != nil {
+			if r.Backend == nil {
+				return ErrInvalidManifest
+			}
+			d, err := r.Backend.Digest()
+			u := r.Credential
+			if err != nil || u.Purpose != "qdrant_api_key" || u.AudienceDigest != d || !regexp.MustCompile(`^crd_[0-9a-f]{32}$`).MatchString(u.CredentialID) {
+				return ErrInvalidManifest
+			}
 		}
 		if r.Backend == nil || r.Backend.TenantID != c.TenantID || r.Backend.ValidateForRole("knowledge") != nil || r.Backend.Qdrant.Dimensions != r.Embedding.Dimensions {
 			return ErrInvalidManifest
