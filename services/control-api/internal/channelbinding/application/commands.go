@@ -406,6 +406,7 @@ func (s *Service) SetAccountEnabled(ctx context.Context, actor Actor, id, key st
 	}
 	return s.execute(ctx, actor, "SetChannelAccountEnabled", id, key, input, func(ctx context.Context) (mutation, error) {
 		var prepared *domain.PublishedTarget
+		var preparedCanary *domain.PublishedTarget
 		if input.Enabled {
 			a, err := s.deps.Queries.GetAccount(ctx, actor.TenantID, id)
 			if err != nil {
@@ -420,6 +421,16 @@ func (s *Service) SetAccountEnabled(ctx context.Context, actor Actor, id, key st
 					return nil, &domain.Error{Code: domain.TargetIntegrity}
 				}
 				prepared = &target
+				if a.Binding.Traffic != nil {
+					canary, err := s.readTarget(ctx, actor, a.Binding.Traffic.Target.Selector())
+					if err != nil {
+						return nil, err
+					}
+					if canary != a.Binding.Traffic.Target {
+						return nil, &domain.Error{Code: domain.TargetIntegrity}
+					}
+					preparedCanary = &canary
+				}
 			}
 		}
 		return func(ctx context.Context, tx Transaction) (CommandResult, error) {
@@ -429,6 +440,12 @@ func (s *Service) SetAccountEnabled(ctx context.Context, actor Actor, id, key st
 			}
 			if input.Enabled && a.Binding != nil && a.Binding.Enabled {
 				if prepared == nil || *prepared != a.Binding.Target {
+					return CommandResult{}, errPreparationChanged
+				}
+				if (a.Binding.Traffic == nil) != (preparedCanary == nil) {
+					return CommandResult{}, errPreparationChanged
+				}
+				if a.Binding.Traffic != nil && *preparedCanary != a.Binding.Traffic.Target {
 					return CommandResult{}, errPreparationChanged
 				}
 			}
@@ -486,6 +503,44 @@ type BindingTargetInput struct {
 	Target                  domain.TargetSelector `json:"target"`
 }
 
+type BindingTrafficInput struct {
+	ExpectedBindingRevision int64                 `json:"expected_binding_revision"`
+	Target                  domain.TargetSelector `json:"target"`
+	PercentageBasisPoints   int64                 `json:"percentage_basis_points"`
+	CanarySubjects          []string              `json:"canary_subjects"`
+}
+
+func (s *Service) SetBindingTraffic(ctx context.Context, actor Actor, id, key string, input BindingTrafficInput) (CommandResult, error) {
+	if !domain.ValidID(id) {
+		return CommandResult{}, invalid("/binding_id")
+	}
+	return s.execute(ctx, actor, "SetChannelBindingTraffic", id, key, input, func(ctx context.Context) (mutation, error) {
+		target, err := s.readTarget(ctx, actor, input.Target)
+		if err != nil {
+			return nil, err
+		}
+		rolloutID, err := s.deps.NewID("rol")
+		if err != nil {
+			return nil, ErrDependencyUnavailable
+		}
+		return func(ctx context.Context, tx Transaction) (CommandResult, error) {
+			a, err := tx.LoadBinding(ctx, id)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			binding, changed, err := a.Binding.SetTraffic(input.ExpectedBindingRevision, rolloutID, target, input.PercentageBasisPoints, input.CanarySubjects, s.deps.Now())
+			if err != nil {
+				return CommandResult{}, err
+			}
+			if !changed {
+				return result(a), nil
+			}
+			a.Binding = &binding
+			return s.project(ctx, tx, a)
+		}, nil
+	})
+}
+
 func (s *Service) SetBindingTarget(ctx context.Context, actor Actor, id, key string, input BindingTargetInput) (CommandResult, error) {
 	if !domain.ValidID(id) {
 		return CommandResult{}, invalid("/binding_id")
@@ -524,6 +579,7 @@ func (s *Service) SetBindingEnabled(ctx context.Context, actor Actor, id, key st
 	}
 	return s.execute(ctx, actor, "SetChannelBindingEnabled", id, key, input, func(ctx context.Context) (mutation, error) {
 		var prepared *domain.PublishedTarget
+		var preparedCanary *domain.PublishedTarget
 		if input.Enabled {
 			a, err := s.deps.Queries.GetBinding(ctx, actor.TenantID, id)
 			if err != nil {
@@ -540,6 +596,16 @@ func (s *Service) SetBindingEnabled(ctx context.Context, actor Actor, id, key st
 				return nil, &domain.Error{Code: domain.TargetIntegrity}
 			}
 			prepared = &target
+			if a.Binding.Traffic != nil {
+				canary, err := s.readTarget(ctx, actor, a.Binding.Traffic.Target.Selector())
+				if err != nil {
+					return nil, err
+				}
+				if canary != a.Binding.Traffic.Target {
+					return nil, &domain.Error{Code: domain.TargetIntegrity}
+				}
+				preparedCanary = &canary
+			}
 		}
 		return func(ctx context.Context, tx Transaction) (CommandResult, error) {
 			a, err := tx.LoadBinding(ctx, id)
@@ -547,6 +613,12 @@ func (s *Service) SetBindingEnabled(ctx context.Context, actor Actor, id, key st
 				return CommandResult{}, err
 			}
 			if input.Enabled && (prepared == nil || *prepared != a.Binding.Target) {
+				return CommandResult{}, errPreparationChanged
+			}
+			if input.Enabled && (a.Binding.Traffic == nil) != (preparedCanary == nil) {
+				return CommandResult{}, errPreparationChanged
+			}
+			if input.Enabled && a.Binding.Traffic != nil && *preparedCanary != a.Binding.Traffic.Target {
 				return CommandResult{}, errPreparationChanged
 			}
 			binding, changed, err := a.Binding.SetEnabled(input.ExpectedBindingRevision, input.Enabled, a.Account, a.CredentialMetadata(), s.deps.Now())

@@ -23,6 +23,9 @@ type Ledger interface {
 type RouteResolver interface {
 	Resolve(context.Context, string, string) (domain.RouteSnapshot, error)
 }
+type cohortRouteResolver interface {
+	ResolveFor(context.Context, string, string, string, string, string) (domain.RouteSnapshot, error)
+}
 
 // Options contains initial operating limits, not a throughput guarantee.
 type Options struct {
@@ -123,12 +126,22 @@ func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt
 		case "interaction":
 			change.Receipt = domain.Receipt{Decision: "interaction", Reason: "interaction_contract_pending"}
 		case "text":
-			route, err := s.routes.Resolve(ctx, in.Key.Provider, in.Key.AccountID)
+			var route domain.RouteSnapshot
+			var err error
+			if resolver, ok := s.routes.(cohortRouteResolver); ok {
+				route, err = resolver.ResolveFor(ctx, in.Key.Provider, in.Key.AccountID, in.ConversationID, in.ThreadID, in.SenderID)
+			} else {
+				route, err = s.routes.Resolve(ctx, in.Key.Provider, in.Key.AccountID)
+			}
 			if err != nil {
 				return s.finalReceipt(ctx, in, domain.ErrUnavailable)
 			}
 			if err = route.ValidateFor(in.Key); err != nil {
 				return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+			}
+			span.SetAttributes(attribute.String("app.deployment.revision.id", route.DeploymentRevisionID))
+			if route.RolloutID != "" {
+				span.SetAttributes(attribute.String("app.rollout.id", route.RolloutID), attribute.String("app.rollout.variant", route.RolloutVariant))
 			}
 			admissionID, err := newID()
 			if err != nil {

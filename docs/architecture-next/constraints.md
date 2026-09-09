@@ -403,6 +403,13 @@ Runtime Profile V1 不创建 DeploymentRevision 或 RuntimeManifest，不发布 
 - Channel Binding 管理外部 Bot/Channel 与 DeploymentRevision 的绑定，并发布
   Gateway 所需的运行路由投影。
 
+Channel Binding 的单目标 CAS 支持把后续新流量整体切换或指回仍有效的旧
+DeploymentRevision；这是版本路由回退。独立灰度命令支持一个 stable 与一个 canary
+目标、0–10000基点及显式 sender ID；完整策略进入 Control 路由事件，Gateway 基于可信
+sender 做确定性选择，Admission 固定所选 Revision/Manifest。0基点只停止之后的 canary
+接纳，整体回退仍发布更高 RouteGeneration，均不改写旧 Run。正式结果指标窗口、阈值决策、
+自动停止和自动回退仍未实现，不得把人工停止/回退标记为自动治理能力。
+
 V1 不引入 Environment 实体、表、管理 API、`environment_id` 或隐藏的 `default`，
 也不引入 Overlay、环境继承或多层配置合并。测试与生产使用不同 RuntimeProfile。
 凭据由 Profile 在 Tenant/Profile 作用域内管理，固定 CredentialID、类别、资源名、

@@ -39,6 +39,7 @@ import (
 	routeconsumer "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/inbound/nats"
 	routepg "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/adapter/outbound/postgres"
 	routeapp "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/application"
+	routedomain "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/routing/domain"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -410,4 +411,9 @@ type routeBridge struct{ service *routeapp.Service }
 func (b routeBridge) Resolve(ctx context.Context, provider, account string) (admissiondomain.RouteSnapshot, error) {
 	r, err := b.service.Resolve(ctx, provider, account)
 	return admissiondomain.RouteSnapshot{Provider: r.Provider, AccountID: r.AccountID, TenantID: r.TenantID, BindingID: r.BindingID, Generation: r.Generation, DeploymentRevisionID: r.DeploymentRevisionID, ManifestRef: r.ManifestRef, ManifestDigest: r.ManifestDigest}, err
+}
+
+func (b routeBridge) ResolveFor(ctx context.Context, provider, account, conversation, thread, sender string) (admissiondomain.RouteSnapshot, error) {
+	r, _, err := b.service.ResolveFor(ctx, provider, account, routedomain.Cohort{ConversationID: conversation, ThreadID: thread, SenderID: sender})
+	return admissiondomain.RouteSnapshot{Provider: r.Provider, AccountID: r.AccountID, TenantID: r.TenantID, BindingID: r.BindingID, Generation: r.Generation, DeploymentRevisionID: r.DeploymentRevisionID, ManifestRef: r.ManifestRef, ManifestDigest: r.ManifestDigest, RolloutID: r.RolloutID, RolloutVariant: r.RolloutVariant}, err
 }

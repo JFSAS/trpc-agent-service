@@ -51,7 +51,8 @@ per_user_in_conversation、共享 PG 额度、初始授权投影新鲜度评估�
 | F08 状态/诊断 | 未实现 | ObservationOutbox、mTLS/epoch/sequence、期望实例集聚合、分页/隐私，O01 |
 | F09 观测/审计 | 未实现 | 有界 OTLP/trace carrier、事务审计 outbox、HMAC/脱敏、usage 幂等，O02 |
 | F10 多节点/真实 IM | 未验收 | 同一最终 build、双 Gateway/Worker、恢复/失租/原 Origin、N01/N02/L01/L02 |
-| F11 灰度/回滚 | 未实现 | cohort assignment、单调新 revision 回滚、不恢复撤权、原目标不变，R01 |
+| F11a 不可变版本/路由回退 | 已实现基础能力 | Binding CAS 指回仍有效旧 Revision、RouteGeneration 单调、原 Admission/Run/Reply 目标不变；这不是流量灰度 |
+| F11b 双目标流量灰度 | 已实现核心链路 | Control stable+canary/基点/显式 sender 策略、Route事件、Gateway确定性用户分桶、Admission固定目标与trace维度；正式结果指标窗口和自动停止/回退仍未实现，R01仅部分验收 |
 | F12 容量/归档/部署 | 未实现 | 热点与恢复压测、保留 tombstone/UNKNOWN、可重建归档、C01；Helm 后置 |
 | 数据 owner 协作 | 契约待收敛 | Session/Memory/Summary/Artifact/Knowledge/Audit 独立 Port；正式后端切换与回灌 B01 |
 | Worker 治理/预算 | 待所属能力落地 | 原子预留、未知不退款、当前工具授权与审批复查，Q01 |

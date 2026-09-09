@@ -130,7 +130,7 @@
 | F08 | 应用确认/业务诊断 | READY、PUBLISHED 不能证明业务链可用 | 减少反复试发；定位消息究竟卡在哪里 | Routing + Control + Web | A |
 | F09 | 全链观测/审计/脱敏 | Gateway 尚缺完整 OTel 接线 | 量化延迟和成功率，定位且追责，不泄漏内容 | 全 Workload | A |
 | F10 | 多节点和真实 IM 门禁 | 有机制，但跨 Provider 组合证据不完整 | 将水平扩展和故障恢复变为可验证承诺 | Gateway + Worker + 运维 | A 起持续 |
-| F11 | 租户灰度/配置回滚 | 当前单 Binding 固定目标，不是百分比流量路由 | 发布有边界、回滚不打断既有执行或串会话 | Control + Routing + Worker | C |
+| F11 | 租户灰度/配置回滚 | 双目标用户分桶已接通；结果指标窗口和自动治理未完成 | 发布有边界、回滚不打断既有执行或串会话 | Control + Routing + Worker | C |
 | F12 | 容量/归档/生产部署 | 有上限和基本 Compose，缺长期运营模型 | 防止无界累积、错误扩容和不可恢复满额 | Gateway + 数据所有者 + 运维 | A 量测 / C 生产化 |
 
 A = 两种渠道可交付闭环；B = 聊天能力增强；C = 后续生产优化。Helm 只进入全部 Workload 完成后的 FINAL-INTEGRATION，不放入 A/B。
@@ -637,14 +637,31 @@ Telegram 提供两种互斥接收方式且待收更新存在保留期限，系�
 
 ### 14.1 为什么新增
 
-当前单 Binding 指向固定版本适合确定性执行，但不是百分比灰度系统。若直接在每条消息上随机挑版本，会导致同一会话来回变更模型/工具/Session 历史，难以解释和回滚。
+单 Binding 只指向固定版本时适合确定性执行，但不是百分比灰度系统。当前实现增加受限的
+stable+canary 策略；Gateway 不在每条消息上随机挑版本，而是按可信 sender 做确定性选择，
+避免同一用户来回变更模型/工具/Session 历史。
+
+当前状态须按能力拆开，不得将二者合并为“灰度/回滚已支持”：
+
+| 能力 | 状态 | 当前或目标行为 |
+| --- | --- | --- |
+| 不可变版本与路由回退 | 已实现 | Binding 可用新的 CAS 与更高 RouteGeneration 精确指回仍有效旧 DeploymentRevision；旧 Admission/Run/Reply 不变。 |
+| 按比例灰度 | 已实现核心链路 | stable+canary 双目标与0–10000基点进入路由事件；Gateway 对非显式用户确定性分桶。 |
+| 按用户分组 | 已实现核心链路 | 最多100个显式 sender ID；其余使用可信 sender ID、rollout ID、Provider、Account 计算稳定 cohort，不按请求随机。 |
+| 选择观测维度 | 已实现 | Admission span 记录 rollout ID、stable/canary variant 与最终 DeploymentRevision。 |
+| 结果指标窗口 | 未实现 | 尚无按策略代次和所选 DeploymentRevision 汇总的最小样本、错误率、延迟窗口。 |
+| 自动停止/回退 | 未实现 | 尚无基于上述正式指标、带迟滞和最小样本的单调新策略发布。 |
+
+“发布了多个不可变 Revision”只表示存在多个候选版本；只有 Owner 显式提交灰度命令并且
+新 RouteGeneration 被 Gateway 应用后才会拆分新接纳流量。Binding 指回旧 Revision 仍只是
+人工整体切换，不能作为自动回退验收证据。
 
 ### 14.2 分两步实现
 
 1. **先做租户/账户级切换**：复用现有固定 Binding target。一次切换只影响首次新接纳；旧 Admission/Run/Reply 保留原目标。先完善预览、应用确认和回滚 UI。
-2. **后做会话 cohort 灰度**：Control 发布受限 RouteTargetSet，包含 allowed revisions、权重、稳定 salt、assignment epoch 与生效策略；Routing 根据稳定 external conversation/partition key 确定 cohort，并持久固定 assignment。不是新增两个同时生效的冲突 Binding。
+2. **双目标用户 cohort 灰度**：Control 在同一 Binding 发布 stable target、一个 canary PublishedTarget、基点比例、rollout ID 和显式 sender ID；Routing 使用可信 sender ID 做无状态确定性选择。不是新增两个同时生效的冲突 Binding。
 
-cohort key 不包含瞬时 instance 或选择结果 DeploymentRevision，避免版本选择的循环依赖。已存在 cohort assignment 不因单次请求重试改变；权重更新默认只影响新的 cohort，重新分配需显式操作。
+cohort key 不包含瞬时 instance、conversation/thread 或选择结果 DeploymentRevision，避免版本选择的循环依赖，并让同一用户跨 Gateway 副本、重试和会话稳定。候选不变时比例更新保留 rollout ID，因此阈值扩大/缩小时哈希桶单调变化；更换候选会生成新 rollout ID。V1 不保存逐用户 assignment 表。
 
 ### 14.3 回滚语义
 
@@ -662,7 +679,11 @@ ARC-000 下，新增必填 actor/policy 字段可以同步修改现有 v1。这�
 
 ### 14.5 验收
 
-同会话重复输入不抖动、权重更新不改变既有 assignment、旧 Run 在回滚后完成仍发原目标、回滚不恢复已撤销权限、两个不同契约二进制被部署门禁阻止。
+同一 sender 跨会话/重试不抖动、相同候选的权重更新保持同一哈希顺序、显式 sender 优先、0基点停止新 canary 接纳、旧 Run 在回滚后完成仍发原目标、回滚不恢复已撤销权限、两个不同契约二进制被部署门禁阻止。
+
+当前代码已覆盖 Control→Route event→Gateway 选择→Admission 固定目标的核心链路；完整
+R01 仍需真实 Worker 结果、分版本指标窗口和自动停止/回退证据。单目标 Binding 的切换与
+回退测试只能验收版本回退子项，不能填补这些剩余门禁。
 
 ## 15. F12 容量、归档和部署
 
@@ -1003,7 +1024,7 @@ helm/agent-platform/                    # [FINAL-INTEGRATION] 全 Workload 完�
 
 ### 19.3 阶段 C：生产优化
 
-实施 F11 cohort 灰度、长期归档、正式多后端迁移、生产 HA/容灾。Helm 归 FINAL-INTEGRATION，不作为本优化设计阶段的实际交付。
+完成 F11 的正式结果指标窗口和自动停止/回退，并继续长期归档、正式多后端迁移、生产 HA/容灾。Helm 归 FINAL-INTEGRATION，不作为本优化设计阶段的实际交付。
 
 ### 19.4 可执行验收场景
 

@@ -73,10 +73,11 @@ DenyDelete/DenyPurge。建议dedup窗口2分钟，业务永久幂等仍由Gatewa
 
 ## 2. API和执行边界
 
-公开11个操作见[OpenAPI](../../api/openapi/control/v1/channel-public.yaml)：OWNER写、成员读，
+公开12个操作见[OpenAPI](../../api/openapi/control/v1/channel-public.yaml)：OWNER写、成员读，
 写入要求真实非restricted Session并在提交事务下重查Identity/租户授权。
-创建默认disabled；保存凭据不触发Provider探测。Binding选择精确deployment_id/revision_number，
-读取拥有方校验的Published Revision/Manifest，不读取Draft/latest。
+创建默认disabled；保存凭据不触发Provider探测。Binding stable与可选canary均选择精确
+deployment_id/revision_number，读取拥有方校验的Published Revision/Manifest，不读取
+Draft/latest。灰度命令发布0–10000基点与最多100个显式sender ID；0基点停止之后的canary接纳。
 
 内部监听保留以下三个运行工作负载API（均no-store）；独立预检API见§5：
 

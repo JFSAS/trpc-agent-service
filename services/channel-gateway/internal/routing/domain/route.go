@@ -4,11 +4,13 @@ package domain
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 )
 
 var (
@@ -27,14 +29,39 @@ var manifestDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // RouteSnapshot fixes the exact published target. Generation is scoped to
 // (Provider, AccountID), never to a socket or Gateway process.
 type RouteSnapshot struct {
-	Provider             string `json:"provider"`
-	AccountID            string `json:"account_id"`
-	TenantID             string `json:"tenant_id,omitempty"`
-	BindingID            string `json:"binding_id,omitempty"`
-	Generation           int64  `json:"generation"`
-	DeploymentRevisionID string `json:"deployment_revision_id,omitempty"`
-	ManifestRef          string `json:"manifest_ref,omitempty"`
-	ManifestDigest       string `json:"manifest_digest,omitempty"`
+	Provider             string          `json:"provider"`
+	AccountID            string          `json:"account_id"`
+	TenantID             string          `json:"tenant_id,omitempty"`
+	BindingID            string          `json:"binding_id,omitempty"`
+	Generation           int64           `json:"generation"`
+	DeploymentRevisionID string          `json:"deployment_revision_id,omitempty"`
+	ManifestRef          string          `json:"manifest_ref,omitempty"`
+	ManifestDigest       string          `json:"manifest_digest,omitempty"`
+	Traffic              *TrafficRollout `json:"traffic,omitempty"`
+	RolloutID            string          `json:"-"`
+	RolloutVariant       string          `json:"-"`
+}
+
+type PublishedTarget struct {
+	TenantID             string `json:"tenant_id"`
+	DeploymentID         string `json:"deployment_id"`
+	RevisionNumber       int64  `json:"revision_number"`
+	DeploymentRevisionID string `json:"deployment_revision_id"`
+	ManifestRef          string `json:"manifest_ref"`
+	ManifestDigest       string `json:"manifest_digest"`
+}
+
+type TrafficRollout struct {
+	RolloutID             string          `json:"rollout_id"`
+	Target                PublishedTarget `json:"target"`
+	PercentageBasisPoints int64           `json:"percentage_basis_points"`
+	CanarySubjects        []string        `json:"canary_subjects"`
+}
+
+type Cohort struct {
+	ConversationID string
+	ThreadID       string
+	SenderID       string
 }
 
 // RouteEvent contains a complete replacement, or a disabled tombstone. EventID
@@ -68,7 +95,7 @@ func (route RouteSnapshot) Validate(enabled bool) error {
 		return fmt.Errorf("%w: generation", ErrInvalidEvent)
 	}
 	if !enabled {
-		if route.TenantID != "" || route.BindingID != "" || route.DeploymentRevisionID != "" || route.ManifestRef != "" || route.ManifestDigest != "" {
+		if route.TenantID != "" || route.BindingID != "" || route.DeploymentRevisionID != "" || route.ManifestRef != "" || route.ManifestDigest != "" || route.Traffic != nil {
 			return fmt.Errorf("%w: tombstone includes target", ErrInvalidEvent)
 		}
 		return nil
@@ -76,7 +103,56 @@ func (route RouteSnapshot) Validate(enabled bool) error {
 	if !identifier.MatchString(route.TenantID) || !identifier.MatchString(route.BindingID) || !identifier.MatchString(route.DeploymentRevisionID) || len(route.ManifestRef) > 2048 || !manifestReference.MatchString(route.ManifestRef) || !manifestDigest.MatchString(route.ManifestDigest) {
 		return fmt.Errorf("%w: published target", ErrInvalidEvent)
 	}
+	if route.Traffic != nil {
+		r := route.Traffic
+		t := r.Target
+		if !identifier.MatchString(r.RolloutID) || t.TenantID != route.TenantID || !identifier.MatchString(t.DeploymentID) || t.RevisionNumber < 1 || t.RevisionNumber > MaxGeneration || !identifier.MatchString(t.DeploymentRevisionID) || len(t.ManifestRef) > 2048 || !manifestReference.MatchString(t.ManifestRef) || !manifestDigest.MatchString(t.ManifestDigest) || t.DeploymentRevisionID == route.DeploymentRevisionID || r.PercentageBasisPoints < 0 || r.PercentageBasisPoints > 10000 || r.CanarySubjects == nil || len(r.CanarySubjects) > 100 {
+			return fmt.Errorf("%w: traffic policy", ErrInvalidEvent)
+		}
+		for i, subject := range r.CanarySubjects {
+			if !identifier.MatchString(subject) || i > 0 && r.CanarySubjects[i-1] >= subject {
+				return fmt.Errorf("%w: traffic subjects", ErrInvalidEvent)
+			}
+		}
+	}
 	return nil
+}
+
+// Select fixes one target for a trusted inbound cohort. It is deterministic
+// across Gateway replicas and retries; Admission persists the selected result.
+func (route RouteSnapshot) Select(cohort Cohort) (RouteSnapshot, bool, error) {
+	if err := route.Validate(true); err != nil || cohort.SenderID == "" || cohort.ConversationID == "" {
+		return RouteSnapshot{}, false, ErrInvalidEvent
+	}
+	rollout := route.Traffic
+	if rollout == nil {
+		route.Traffic = nil
+		route.RolloutVariant = "stable"
+		return route, false, nil
+	}
+	if rollout.PercentageBasisPoints == 0 {
+		route.Traffic = nil
+		route.RolloutID = rollout.RolloutID
+		route.RolloutVariant = "stable"
+		return route, false, nil
+	}
+	_, canary := slices.BinarySearch(rollout.CanarySubjects, cohort.SenderID)
+	selected := canary
+	if !selected {
+		body, _ := json.Marshal([]string{"gateway.rollout.v1", rollout.RolloutID, route.Provider, route.AccountID, cohort.SenderID})
+		hash := sha256.Sum256(body)
+		selected = int64(binary.BigEndian.Uint64(hash[:8])%10000) < rollout.PercentageBasisPoints
+	}
+	route.Traffic = nil
+	route.RolloutID = rollout.RolloutID
+	route.RolloutVariant = "stable"
+	if selected {
+		route.DeploymentRevisionID = rollout.Target.DeploymentRevisionID
+		route.ManifestRef = rollout.Target.ManifestRef
+		route.ManifestDigest = rollout.Target.ManifestDigest
+		route.RolloutVariant = "canary"
+	}
+	return route, selected, nil
 }
 
 // ProjectionDigest compares semantic content across event IDs. The immutable

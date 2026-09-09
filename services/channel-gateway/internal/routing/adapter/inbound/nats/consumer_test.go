@@ -101,6 +101,45 @@ func TestConsumerUsesTrustedStreamPositionAndACKsAfterApply(t *testing.T) {
 		t.Fatalf("acks=%d observations=%d", msg.acks, a.observeCalls)
 	}
 }
+
+func TestConsumerMapsCompleteTrafficPolicy(t *testing.T) {
+	c, a, msg, source := consumerFixture()
+	event := domain.RouteEvent{
+		EventID:       "evt-traffic",
+		SchemaVersion: 1,
+		Enabled:       true,
+		Route: domain.RouteSnapshot{
+			Provider:             "telegram",
+			AccountID:            "account-1",
+			TenantID:             "tenant-1",
+			BindingID:            "binding-1",
+			Generation:           3,
+			DeploymentRevisionID: "revision-stable",
+			ManifestRef:          "manifest/revision-stable",
+			ManifestDigest:       "sha256:" + strings.Repeat("a", 64),
+			Traffic: &domain.TrafficRollout{
+				RolloutID: "rollout-1",
+				Target: domain.PublishedTarget{
+					TenantID:             "tenant-1",
+					DeploymentID:         "deployment-canary",
+					RevisionNumber:       2,
+					DeploymentRevisionID: "revision-canary",
+					ManifestRef:          "manifest/revision-canary",
+					ManifestDigest:       "sha256:" + strings.Repeat("b", 64),
+				},
+				PercentageBasisPoints: 1200,
+				CanarySubjects:        []string{},
+			},
+		},
+	}
+	msg.data, _ = json.Marshal(event)
+	if err := c.process(context.Background(), msg, source, true); err != nil {
+		t.Fatal(err)
+	}
+	if a.event.Route.Traffic == nil || a.event.Route.Traffic.Target.DeploymentRevisionID != "revision-canary" || a.event.Route.Traffic.PercentageBasisPoints != 1200 || a.event.Route.Traffic.CanarySubjects == nil || len(a.event.Route.Traffic.CanarySubjects) != 0 {
+		t.Fatalf("traffic policy was not mapped: %+v", a.event.Route.Traffic)
+	}
+}
 func TestConsumerTransientDatabaseOrStreamFailureDoesNotACK(t *testing.T) {
 	for _, kind := range []string{"database", "stream"} {
 		t.Run(kind, func(t *testing.T) {

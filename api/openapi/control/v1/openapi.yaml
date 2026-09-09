@@ -150,6 +150,8 @@ paths:
     $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}"
   /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target:
     $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}~1target"
+  /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/traffic:
+    $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}~1traffic"
   /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled:
     $ref: "./channel-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-bindings~1{binding_id}~1enabled"
   /healthz:

@@ -1492,6 +1492,80 @@
         }
       }
     },
+    "/v1/tenants/{tenant_id}/channel-bindings/{binding_id}/traffic": {
+      "parameters": [
+        {
+          "name": "tenant_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "binding_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      ],
+      "post": {
+        "operationId": "setChannelBindingTraffic",
+        "tags": ["Channel"],
+        "summary": "setChannelBindingTraffic",
+        "security": [{"cookieAuth": []}],
+        "description": "Publishes one exact canary target beside the stable target. Explicit sender IDs are selected first; all other senders use deterministic basis-point assignment. Zero basis points pauses all canary traffic. Requires tenant OWNER, binding CAS, and an Idempotency-Key.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../../../schemas/channel/v1/binding-traffic.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Traffic policy accepted and projected; no-store.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ChannelCommandResult"}
+              }
+            }
+          },
+          "400": {"description": "Invalid closed request or policy."},
+          "401": {"description": "Authentication required."},
+          "403": {"description": "Tenant OWNER required."},
+          "404": {"description": "Binding or exact canary target not found."},
+          "409": {"description": "Binding CAS or idempotency conflict."},
+          "413": {"description": "Request body exceeds 64 KiB."},
+          "500": {"description": "Stored integrity failure."},
+          "503": {"description": "Authorization or exact-target dependency unavailable."}
+        }
+      }
+    },
     "/v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled": {
       "parameters": [
         {
@@ -1851,6 +1925,36 @@
           "manifest_digest"
         ]
       },
+      "ChannelTrafficRollout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rollout_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "target": {"$ref": "#/components/schemas/ChannelPublishedTarget"},
+          "percentage_basis_points": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "canary_subjects": {
+            "type": "array",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": ["rollout_id", "target", "percentage_basis_points", "canary_subjects"]
+      },
       "ChannelBinding": {
         "type": "object",
         "additionalProperties": false,
@@ -1883,6 +1987,9 @@
           },
           "target": {
             "$ref": "#/components/schemas/ChannelPublishedTarget"
+          },
+          "traffic": {
+            "$ref": "#/components/schemas/ChannelTrafficRollout"
           },
           "created_by": {
             "type": "string",

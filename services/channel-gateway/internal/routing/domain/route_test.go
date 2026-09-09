@@ -94,3 +94,76 @@ func TestMonotonicProjectionAndStableDigests(t *testing.T) {
 		t.Fatalf("reenable: %v %v", change, err)
 	}
 }
+
+func rolloutRoute(percentage int64, subjects ...string) domain.RouteSnapshot {
+	route := enabled().Route
+	route.Traffic = &domain.TrafficRollout{
+		RolloutID: "rollout-1",
+		Target: domain.PublishedTarget{
+			TenantID:             route.TenantID,
+			DeploymentID:         "deployment-canary",
+			RevisionNumber:       2,
+			DeploymentRevisionID: "revision-canary",
+			ManifestRef:          "manifest/revision-canary",
+			ManifestDigest:       "sha256:" + strings.Repeat("c", 64),
+		},
+		PercentageBasisPoints: percentage,
+		CanarySubjects:        append([]string{}, subjects...),
+	}
+	return route
+}
+
+func TestTrafficSelectionHonorsExplicitAndPercentageCohorts(t *testing.T) {
+	cohort := domain.Cohort{ConversationID: "conversation-1", SenderID: "user-1"}
+
+	stable, selected, err := rolloutRoute(0, "user-1").Select(cohort)
+	if err != nil || selected || stable.DeploymentRevisionID != "revision-1" || stable.RolloutID != "rollout-1" || stable.RolloutVariant != "stable" || stable.Traffic != nil {
+		t.Fatalf("paused rollout: %+v selected=%v err=%v", stable, selected, err)
+	}
+
+	explicit, selected, err := rolloutRoute(1, "user-1").Select(cohort)
+	if err != nil || !selected || explicit.DeploymentRevisionID != "revision-canary" || explicit.ManifestRef != "manifest/revision-canary" || explicit.RolloutVariant != "canary" || explicit.Traffic != nil {
+		t.Fatalf("explicit canary: %+v selected=%v err=%v", explicit, selected, err)
+	}
+
+	all, selected, err := rolloutRoute(10000).Select(domain.Cohort{ConversationID: "conversation-2", SenderID: "other-user"})
+	if err != nil || !selected || all.DeploymentRevisionID != "revision-canary" {
+		t.Fatalf("full rollout: %+v selected=%v err=%v", all, selected, err)
+	}
+}
+
+func TestTrafficSelectionIsDeterministicAcrossRetriesAndConversations(t *testing.T) {
+	route := rolloutRoute(3750)
+	first, firstCanary, err := route.Select(domain.Cohort{ConversationID: "conversation-a", SenderID: "user-42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		conversation := "conversation-a"
+		if i%2 == 1 {
+			conversation = "conversation-b"
+		}
+		got, canary, err := route.Select(domain.Cohort{ConversationID: conversation, SenderID: "user-42"})
+		if err != nil || canary != firstCanary || got.DeploymentRevisionID != first.DeploymentRevisionID || got.ManifestRef != first.ManifestRef {
+			t.Fatalf("selection moved at iteration %d: first=%+v/%v got=%+v/%v err=%v", i, first, firstCanary, got, canary, err)
+		}
+	}
+}
+
+func TestTrafficPolicyValidationRejectsAmbiguousInput(t *testing.T) {
+	for name, change := range map[string]func(*domain.RouteSnapshot){
+		"same revision": func(r *domain.RouteSnapshot) { r.Traffic.Target.DeploymentRevisionID = r.DeploymentRevisionID },
+		"unsorted":      func(r *domain.RouteSnapshot) { r.Traffic.CanarySubjects = []string{"user-b", "user-a"} },
+		"duplicate":     func(r *domain.RouteSnapshot) { r.Traffic.CanarySubjects = []string{"user-a", "user-a"} },
+		"too high":      func(r *domain.RouteSnapshot) { r.Traffic.PercentageBasisPoints = 10001 },
+		"other tenant":  func(r *domain.RouteSnapshot) { r.Traffic.Target.TenantID = "tenant-2" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			route := rolloutRoute(100, "user-a", "user-b")
+			change(&route)
+			if err := route.Validate(true); !errors.Is(err, domain.ErrInvalidEvent) {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}

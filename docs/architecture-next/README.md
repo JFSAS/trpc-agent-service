@@ -114,7 +114,7 @@ Deployment 的 Control Publication 已经落地并覆盖以下阶段：
 5. Worker：W1 贯通固定 Manifest、凭据、单 LLM 与正式 Session；W2 完成 Telegram Final 回复。
    组合、Memory、累计 Token 账本为后续计划；代码/fixture 与真实渠道验收分别记录。
 
-上面1～4的Control代码与真实PG/mTLS/NATS回归已接通，公开11个操作列入OpenAPI；
+上面1～4的Control代码与真实PG/mTLS/NATS回归已接通，公开12个操作列入OpenAPI；
 Gateway 的账户门禁、动态 Telegram 和运行观测已接线。联合真实 Telegram 收信已通过，
 见[Control 联合验收](control-api/channel-acceptance.md)与[Gateway 入站证据](channel-gateway/telegram-real-inbound-20260906.md)；
 模型/Storage/Worker 执行与完整回复仍不属于本次收信验收，当前服务在线状态另行检查。
