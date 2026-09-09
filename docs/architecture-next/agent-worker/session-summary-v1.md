@@ -10,8 +10,9 @@ PostgreSQL `runtime_session.session_candidates`，后续也支持 managed Redis 
 
 本节记录最初开放 `summary` 的独立交付边界。当时未同时开放其他数据能力；后续已完成
 PostgreSQL/Redis Memory，以及 managed Redis Session + 同后端 Summary，分别见
-`memory-postgres-v1.md`、`memory-redis-v1.md`、`session-redis-v1.md`。Artifact/Knowledge
-仍为后续工作包。
+`memory-postgres-v1.md`、`memory-redis-v1.md`、`session-redis-v1.md`。后续 Artifact 与
+Knowledge 的装配、正式 HTTP/Web 和独立真实存储验证也已完成，见 `artifact-v1.md` 与
+`knowledge-v1.md`；Knowledge 的真实外部 Embedding 验收仍待明确可用配置。
 没有增加跨库事务、CAS 平台、恢复队列、补偿任务、后台调度或累计 Token 预算。
 
 ## 从配置到执行

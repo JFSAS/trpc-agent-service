@@ -5,6 +5,27 @@
 - 当前结论：首版纵向切片已取得真实 DeepSeek 与 Telegram 同次关联证据，Worker 重启与事件重投已验证；实际运行发现 Telegram 准备阶段失败，排查确认的错误分类缺陷已修复并重部署。保留第三轮修复前 `NOT_SENT` 事实，不将所有尝试都记为成功。
 - 本文不把管理面发布、入站成功、readiness、单个 Adapter 测试或测试模型输出互相替代。
 
+## 2026-09-09 数据能力增量（历史首版记录不覆盖此状态）
+
+本文件后文的“首版没有 Memory/Knowledge”“继续后置”描述 2026-09-07 的历史基线，
+不代表当前 `worker` 分支能力。当前按显式 AgentSpec → Profile → immutable Manifest →
+Worker 装配逐包完成：
+
+- [正式 Session Summary](session-summary-v1.md)：摘要与 boundary 随同 Session snapshot
+  接受，下轮加载和消费；不新增摘要数据库。
+- [PostgreSQL Memory](memory-postgres-v1.md) 与 [Redis Memory](memory-redis-v1.md)：
+  SDK 六工具、正式接受后写入与隔离；真实后端及 Web 分别验收。
+- [Redis Session + Summary](session-redis-v1.md)：同 Redis snapshot 保存原事件与摘要，
+  PostgreSQL accepted head 仍是正式接受依据。
+- [Artifact](artifact-v1.md)：S3 内容与既有 Worker PostgreSQL 元数据，四个 Worker
+  薄工具及正式 Owner 上传/下载；不是 SDK 自带工具或跨存储原子事务。
+- [Knowledge](knowledge-v1.md)：SDK 文本导入/Embedding/检索链与固定 Qdrant named
+  vector，正式 HTTP/Web 同 Manifest 导入和检索。真实 Qdrant 已验；外部 Embedding
+  尚缺可达 endpoint、model、dimensions 和独立凭据，fixture 不替代语义检索验收。
+
+各包的实际模型、存储、GUI 和失败语义以对应文档为准；不把旧 Telegram 证据延伸为
+新能力 Telegram 验收。各包功能完成也不自动等于四能力组合已通过。
+
 ## 1. 本轮交付
 
 | 位置 | 新增的实现 |
