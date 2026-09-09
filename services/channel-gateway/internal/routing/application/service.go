@@ -62,6 +62,14 @@ func (s *Service) Resolve(ctx context.Context, provider, account string) (domain
 	return s.store.Resolve(ctx, provider, account)
 }
 
+func (s *Service) ResolveFor(ctx context.Context, provider, account string, cohort domain.Cohort) (domain.RouteSnapshot, bool, error) {
+	route, err := s.Resolve(ctx, provider, account)
+	if err != nil {
+		return domain.RouteSnapshot{}, false, err
+	}
+	return route.Select(cohort)
+}
+
 func (s *Service) ObserveSource(ctx context.Context, source domain.ReplaySource) error {
 	return s.store.ObserveSource(ctx, source)
 }

@@ -3,6 +3,8 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
+	"slices"
 )
 
 const RouteSubject = "control.channel-route.v1"
@@ -11,14 +13,15 @@ const RouteEventType = "ChannelRouteProjected.v1"
 const MaxRouteEventBytes = 16384
 
 type Route struct {
-	Provider             Provider `json:"provider"`
-	AccountID            string   `json:"account_id"`
-	Generation           int64    `json:"generation"`
-	TenantID             string   `json:"tenant_id,omitempty"`
-	BindingID            string   `json:"binding_id,omitempty"`
-	DeploymentRevisionID string   `json:"deployment_revision_id,omitempty"`
-	ManifestRef          string   `json:"manifest_ref,omitempty"`
-	ManifestDigest       string   `json:"manifest_digest,omitempty"`
+	Provider             Provider        `json:"provider"`
+	AccountID            string          `json:"account_id"`
+	Generation           int64           `json:"generation"`
+	TenantID             string          `json:"tenant_id,omitempty"`
+	BindingID            string          `json:"binding_id,omitempty"`
+	DeploymentRevisionID string          `json:"deployment_revision_id,omitempty"`
+	ManifestRef          string          `json:"manifest_ref,omitempty"`
+	ManifestDigest       string          `json:"manifest_digest,omitempty"`
+	Traffic              *TrafficRollout `json:"traffic,omitempty"`
 }
 type RouteProjection struct {
 	EventID       string `json:"event_id"`
@@ -70,11 +73,16 @@ func AdvanceRoute(previous RouteState, a Account, b *Binding, eventID string) (R
 		r.DeploymentRevisionID = b.Target.DeploymentRevisionID
 		r.ManifestRef = b.Target.ManifestID
 		r.ManifestDigest = b.Target.ManifestDigest
+		if b.Traffic != nil {
+			traffic := *b.Traffic
+			traffic.CanarySubjects = slices.Clone(traffic.CanarySubjects)
+			r.Traffic = &traffic
+		}
 	}
 	if previous.Projection != nil {
 		old := previous.Projection.Route
 		old.Generation = 0
-		if old == r && previous.Projection.Enabled == enabled {
+		if reflect.DeepEqual(old, r) && previous.Projection.Enabled == enabled {
 			return previous, false, nil
 		}
 	}
@@ -97,7 +105,13 @@ func (p RouteProjection) Validate() error {
 		if !ValidID(r.TenantID) || !ValidID(r.BindingID) || !ValidID(r.DeploymentRevisionID) || !ValidID(r.ManifestRef) || !ValidDigest(r.ManifestDigest) {
 			return failure(SourceIntegrity, "/route")
 		}
-	} else if r.TenantID != "" || r.BindingID != "" || r.DeploymentRevisionID != "" || r.ManifestRef != "" || r.ManifestDigest != "" {
+		stable := PublishedTarget{TenantID: r.TenantID, DeploymentRevisionID: r.DeploymentRevisionID, ManifestID: r.ManifestRef, ManifestDigest: r.ManifestDigest}
+		if r.Traffic != nil {
+			if err := r.Traffic.Validate(r.TenantID, stable); err != nil {
+				return failure(SourceIntegrity, "/route/traffic")
+			}
+		}
+	} else if r.TenantID != "" || r.BindingID != "" || r.DeploymentRevisionID != "" || r.ManifestRef != "" || r.ManifestDigest != "" || r.Traffic != nil {
 		return failure(SourceIntegrity, "/route")
 	}
 	return nil

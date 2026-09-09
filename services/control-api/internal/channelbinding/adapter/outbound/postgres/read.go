@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/channelbinding/application"
@@ -79,7 +80,7 @@ func loadAggregate(ctx context.Context, tx pgx.Tx, tenant, id, scope string, loc
 	} else if projection != nil || digest != nil {
 		return result, integrity()
 	}
-	binding, err := scanBinding(tx.QueryRow(ctx, `SELECT tenant_id,id,account_id,binding_revision,enabled,deployment_id,revision_number,deployment_revision_id,manifest_ref,manifest_digest,created_by,created_at,updated_at FROM channel_bindings WHERE tenant_id=$1 AND account_id=$2`+suffix, tenant, id))
+	binding, err := scanBinding(tx.QueryRow(ctx, `SELECT tenant_id,id,account_id,binding_revision,enabled,deployment_id,revision_number,deployment_revision_id,manifest_ref,manifest_digest,traffic_policy_jsonb,created_by,created_at,updated_at FROM channel_bindings WHERE tenant_id=$1 AND account_id=$2`+suffix, tenant, id))
 	if err == nil {
 		result.Binding = &binding
 	} else if !errors.Is(err, application.ErrBindingNotFound) {
@@ -121,13 +122,16 @@ func loadAggregate(ctx context.Context, tx pgx.Tx, tenant, id, scope string, loc
 		if err = result.Binding.Target.Validate(tenant); err != nil {
 			return result, err
 		}
+		if result.Binding.Traffic != nil && result.Binding.Traffic.Validate(tenant, result.Binding.Target) != nil {
+			return result, integrity()
+		}
 		if result.Route.Projection.Enabled != (a.Enabled && result.Binding.Enabled) {
 			return result, integrity()
 		}
 		if result.Route.Projection.Enabled {
 			r := result.Route.Projection.Route
 			t := result.Binding.Target
-			if r.BindingID != result.Binding.ID || r.DeploymentRevisionID != t.DeploymentRevisionID || r.ManifestRef != t.ManifestID || r.ManifestDigest != t.ManifestDigest {
+			if r.BindingID != result.Binding.ID || r.DeploymentRevisionID != t.DeploymentRevisionID || r.ManifestRef != t.ManifestID || r.ManifestDigest != t.ManifestDigest || !reflect.DeepEqual(r.Traffic, result.Binding.Traffic) {
 				return result, integrity()
 			}
 		}
@@ -136,7 +140,8 @@ func loadAggregate(ctx context.Context, tx pgx.Tx, tenant, id, scope string, loc
 }
 func scanBinding(row pgx.Row) (domain.Binding, error) {
 	var b domain.Binding
-	err := row.Scan(&b.TenantID, &b.ID, &b.AccountID, &b.Revision, &b.Enabled, &b.Target.DeploymentID, &b.Target.RevisionNumber, &b.Target.DeploymentRevisionID, &b.Target.ManifestID, &b.Target.ManifestDigest, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
+	var traffic []byte
+	err := row.Scan(&b.TenantID, &b.ID, &b.AccountID, &b.Revision, &b.Enabled, &b.Target.DeploymentID, &b.Target.RevisionNumber, &b.Target.DeploymentRevisionID, &b.Target.ManifestID, &b.Target.ManifestDigest, &traffic, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
 	b.Target.TenantID = b.TenantID
 	if errors.Is(err, pgx.ErrNoRows) {
 		return b, application.ErrBindingNotFound
@@ -144,7 +149,13 @@ func scanBinding(row pgx.Row) (domain.Binding, error) {
 	if err != nil {
 		return b, dbError(err)
 	}
-	if !domain.ValidID(b.ID) || !domain.ValidVersion(b.Revision) || b.Target.Validate(b.TenantID) != nil {
+	if traffic != nil {
+		b.Traffic = &domain.TrafficRollout{}
+		if json.Unmarshal(traffic, b.Traffic) != nil {
+			return b, integrity()
+		}
+	}
+	if !domain.ValidID(b.ID) || !domain.ValidVersion(b.Revision) || b.Target.Validate(b.TenantID) != nil || b.Traffic != nil && b.Traffic.Validate(b.TenantID, b.Target) != nil {
 		return b, integrity()
 	}
 	return b, nil

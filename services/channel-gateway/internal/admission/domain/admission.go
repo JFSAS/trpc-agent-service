@@ -100,6 +100,8 @@ type RouteSnapshot struct {
 	DeploymentRevisionID string `json:"deployment_revision_id"`
 	ManifestRef          string `json:"manifest_ref"`
 	ManifestDigest       string `json:"manifest_digest"`
+	RolloutID            string `json:"-"`
+	RolloutVariant       string `json:"-"`
 }
 type Acceptance struct {
 	Input   Inbound
@@ -164,7 +166,8 @@ func (i Inbound) Validate() error {
 	return nil
 }
 func (r RouteSnapshot) ValidateFor(k EventKey) error {
-	if r.Provider != k.Provider || r.AccountID != k.AccountID || r.Generation < 1 || r.Generation > 9007199254740991 || !identifier.MatchString(r.TenantID) || !identifier.MatchString(r.BindingID) || !identifier.MatchString(r.DeploymentRevisionID) || len(r.ManifestRef) > 2048 || !manifestReference.MatchString(r.ManifestRef) || !manifestDigest.MatchString(r.ManifestDigest) {
+	rolloutValid := r.RolloutID == "" && r.RolloutVariant == "" || identifier.MatchString(r.RolloutID) && (r.RolloutVariant == "stable" || r.RolloutVariant == "canary")
+	if r.Provider != k.Provider || r.AccountID != k.AccountID || r.Generation < 1 || r.Generation > 9007199254740991 || !identifier.MatchString(r.TenantID) || !identifier.MatchString(r.BindingID) || !identifier.MatchString(r.DeploymentRevisionID) || len(r.ManifestRef) > 2048 || !manifestReference.MatchString(r.ManifestRef) || !manifestDigest.MatchString(r.ManifestDigest) || !rolloutValid {
 		return ErrInvalidInput
 	}
 	return nil

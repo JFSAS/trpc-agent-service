@@ -5,10 +5,41 @@ import (
 	"testing"
 
 	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
+	"github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestAdmissionReportsSelectedRolloutDimensions(t *testing.T) {
+	ex := tracetest.NewInMemoryExporter()
+	p := sdktrace.NewTracerProvider(sdktrace.WithSyncer(ex))
+	defer p.Shutdown(context.Background())
+	service := New(ledgerStub{commit: func(_ context.Context, c domain.Acceptance) (domain.Receipt, error) {
+		return c.Receipt, nil
+	}}, cohortResolver{resolveFor: func(context.Context, string, string, string, string, string) (domain.RouteSnapshot, error) {
+		r := route()
+		r.DeploymentRevisionID = "revision-canary"
+		r.ManifestRef = "manifests/revision-canary"
+		r.RolloutID = "rollout-1"
+		r.RolloutVariant = "canary"
+		return r, nil
+	}}, p.Tracer("gateway"))
+	if _, err := service.AcceptInbound(context.Background(), input()); err != nil {
+		t.Fatal(err)
+	}
+	spans := ex.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("spans=%d", len(spans))
+	}
+	attributes := map[string]string{}
+	for _, a := range spans[0].Attributes {
+		attributes[string(a.Key)] = a.Value.AsString()
+	}
+	if attributes["app.rollout.id"] != "rollout-1" || attributes["app.rollout.variant"] != "canary" || attributes["app.deployment.revision.id"] != "revision-canary" {
+		t.Fatalf("rollout attributes=%v", attributes)
+	}
+}
 
 type tracedPublishFunc func(context.Context, string, string, []byte, tracecontext.Carrier) error
 

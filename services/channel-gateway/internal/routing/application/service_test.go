@@ -67,3 +67,35 @@ func TestServicePreservesReadinessAndErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestResolveForSelectsBeforeReturningRoute(t *testing.T) {
+	stable := domain.RouteSnapshot{
+		Provider:             "telegram",
+		AccountID:            "account-1",
+		TenantID:             "tenant-1",
+		BindingID:            "binding-1",
+		Generation:           7,
+		DeploymentRevisionID: "revision-stable",
+		ManifestRef:          "manifest/revision-stable",
+		ManifestDigest:       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Traffic: &domain.TrafficRollout{
+			RolloutID: "rollout-1",
+			Target: domain.PublishedTarget{
+				TenantID:             "tenant-1",
+				DeploymentID:         "deployment-canary",
+				RevisionNumber:       2,
+				DeploymentRevisionID: "revision-canary",
+				ManifestRef:          "manifest/revision-canary",
+				ManifestDigest:       "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			},
+			PercentageBasisPoints: 1,
+			CanarySubjects:        []string{"user-1"},
+		},
+	}
+	store := &storeSpy{route: stable}
+	service, _ := application.NewService(store)
+	selected, canary, err := service.ResolveFor(context.Background(), "telegram", "account-1", domain.Cohort{ConversationID: "conversation-1", SenderID: "user-1"})
+	if err != nil || !canary || selected.DeploymentRevisionID != "revision-canary" || selected.Traffic != nil || selected.RolloutVariant != "canary" || store.calls != 1 {
+		t.Fatalf("selected=%+v canary=%v calls=%d err=%v", selected, canary, store.calls, err)
+	}
+}

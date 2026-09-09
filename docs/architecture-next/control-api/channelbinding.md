@@ -29,13 +29,13 @@ Binding 生效是路由配置变化，不自动创建 Run；真正接纳由后�
 
 | 类型 | 持久字段 | 不变量 |
 | --- | --- | --- |
-| ChannelBinding | tenant_id、binding_id、account_id、binding_revision、enabled、deployment_id、revision_number、deployment_revision_id、manifest_id、manifest_digest、created/updated_by/at | 目标三元组由 Deployment Owner 解析，不信客户端自报 |
+| ChannelBinding | tenant_id、binding_id、account_id、binding_revision、enabled、stable PublishedTarget、可选 TrafficRollout、created/updated_by/at | stable/canary目标均由 Deployment Owner 解析，不信客户端自报 |
 | AccountRouteState | tenant_id、provider、account_id、generation、min_route_generation、canonical_projection、projection_digest | 生命周期跟随账户，不能用 Binding CAS 代替 generation |
 | CommandReceipt | tenant_id、operation、scope_id、key_hash、request_digest、result、created_at | 只存脱敏确定结果，按稳定 key 重放 |
 | RouteProjection Outbox | 现有 control_outbox 行 | 一次有效投影变化一个事件，永久 event_id 与确定正文 |
 
 V1 每账户至多一个稳定 Binding 记录，account_id 创建后不变；不实现 Binding 删除或迁移。
-单账户多路由、群/会话条件分流、跨租户转移均为后续扩展。Gateway 已支持同账户换 Binding
+一个 Binding 最多携带一个 canary，不支持任意多目标权重表、群/会话条件表达式或跨租户转移。Gateway 已支持同账户换 Binding
 后 generation 延续；V1 即使暂不开放该操作，仍独立持久化账户序列，避免未来重置路由水位。
 
 绑定只能引用本租户的账户和精确发布目标。AgentVersion、ProfileRevision、Manifest 的内容
@@ -83,13 +83,16 @@ effective_route_enabled = account.enabled AND binding.enabled
 | GET /v1/tenants/{tenant_id}/channel-bindings | List，200 |
 | GET /v1/tenants/{tenant_id}/channel-bindings/{binding_id} | Get，200 |
 | POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target | SetTarget，200 |
+| POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/traffic | SetTraffic，200 |
 | POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled | SetEnabled，200 |
 
 Create 输入：account_id 与 target:{deployment_id,revision_number}；初始 disabled 是固定规则，
 不接受用户 supplied Manifest/AgentVersion/ProfileRevision、latest 或 agent_id 替代目标。
-SetTarget 输入还含 expected_binding_revision；SetEnabled 输入含 expected_binding_revision 与
-布尔 enabled。Body 上限 16 KiB，关闭 DTO、重复 JSON key/未知字段拒绝。List 默认 50、最大100。
-全部写操作需 Idempotency-Key，Tenant 身份来自有效 Session+Membership，不来自 Body。
+SetTarget 输入还含 expected_binding_revision；SetTraffic 输入含 expected_binding_revision、
+确定 canary target、percentage_basis_points 与 canary_subjects；SetEnabled 输入含
+expected_binding_revision 与布尔 enabled。普通Body上限16 KiB，灰度Body上限64 KiB；关闭DTO、
+重复 JSON key/未知字段拒绝。List 默认50、最大100。全部写操作需 Idempotency-Key，Tenant
+身份来自有效 Session+Membership，不来自 Body。
 
 用户可在产品中先选 Agent，但提交前必须选择该 Agent 对应的确定部署修订；不引入服务端
 “自动挑最新部署”的隐含逻辑。目标解析端口定义于使用方 Application：
@@ -189,7 +192,8 @@ Control 的路由 Domain 测试以它验证生产者输出，不另行维护不�
 - Consumer：`channel-gateway-routes-v1`，Gateway 用自己的受限 NATS 身份消费。
 - Envelope 必须且只含 event_id、整数 schema_version=1、enabled、route；最多 **16384** 字节。
 - enabled=true：route 必须含 provider/account_id/generation/tenant_id/binding_id/
-  deployment_revision_id/manifest_ref/manifest_digest，禁止额外字段。
+  deployment_revision_id/manifest_ref/manifest_digest；存在灰度时还含完整TrafficRollout，
+  canary PublishedTarget 不依赖 Gateway 回查Control，其他额外字段仍被拒绝。
 - enabled=false：route 仅含 provider/account_id/generation；目标/租户/Binding 字段必须省略，不能传 null。
 - generation 范围1..2^53-1，属于账户，换 Binding/停用/重启用也不重置。
 
@@ -300,6 +304,28 @@ Control 读模型返回 binding_revision、desired.enabled、精确 target、当
 回滚业务路由是把 Binding 目标改回另一个仍有效的旧 Revision，使用新的 Binding CAS 和更高
 账户 generation；不回滚 Manifest 内容、generation或旧 Event ID。停用后恢复也用新的路由事件。
 
+### 8.1 版本回退不等于灰度发布
+
+当前实现必须拆成独立能力描述，不能用“支持灰度/回滚”合并表述：
+
+| 能力 | 当前状态 | 准确语义 |
+| --- | --- | --- |
+| Revision 路由回退 | **已实现** | DeploymentRevision/RuntimeManifest 不可变；Owner 可用 Binding CAS 将目标重新指向仍有效的旧 Revision，并发布更高 RouteGeneration。只影响之后首次接纳的新事件，旧 Admission/Run/Reply 继续使用其固定目标。 |
+| 双目标流量灰度 | **已实现** | Binding 保留一个 stable target，并可发布一个确定的 canary target、0–10000 基点比例和最多100个显式 sender ID；完整策略随更高 RouteGeneration 投影。 |
+| Gateway 稳定选择 | **已实现** | 0基点暂停灰度；非零时显式 sender 优先，其余使用 rollout ID、Provider、Account 与可信 sender ID 的确定性哈希。同一用户在同策略和账户下跨重试/会话保持目标一致。Admission 固定最终 DeploymentRevision/Manifest。 |
+| 结果指标与自动回退 | **未实现** | Admission trace 已带 rollout ID、variant 和所选 DeploymentRevision，但尚无正式分版本聚合窗口、阈值决策器或自动发布停止/回退命令。 |
+
+`SetChannelBindingTarget` 仍只是**精确目标切换/回退**；它在目标真正改变时清除已有灰度
+策略。`POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/traffic` 才是灰度命令，
+输入 Binding CAS、确定 canary Revision、基点比例和显式 sender 列表，并支持
+`Idempotency-Key`。发布新的 DeploymentRevision 本身不会自动产生流量。
+
+V1 使用受限的 stable+canary 双目标，而不是任意多目标权重表。Control 在事务内保存策略，
+并把完整 canary PublishedTarget 编译进 `ChannelRouteProjected.v1`；Gateway 不读取 Control
+Draft、不查询“最新版本”，也不在接纳时访问 Deployment。比例更新若候选不变会保留
+rollout ID，使哈希桶单调扩张/收缩；更换候选会分配新 rollout ID。0基点是人工停止灰度，
+把 Binding target 改到旧 Revision 是人工整体回退，两者都不是自动回退。
+
 ## 9. 已实现后端切片与跨任务归属
 
 | 阶段 | 当前实现位置 | 验收出口 |
@@ -307,7 +333,7 @@ Control 读模型返回 binding_revision、desired.enabled、精确 target、当
 | B0 关闭协议 | 管理/事件 fixture、目标DTO；协调已有路由 Schema | 无新增相互冲突的同名协议、整数/字符串版本分别验证 |
 | B1 Domain | domain/binding.go、route.go、snapshot.go | 状态表、投影比较、CAS/序列上限、无秘密payload |
 | B2 Application | application/commands.go、queries.go、ports.go | 通过 Deployment Query Port；角色/租户/Receipt/NOOP |
-| B3 PostgreSQL | 所属 Binding/Account/Route Repository 与现有基线表 | 账户停用/绑定启用竞争、事务原子、唯一键、并发重试 |
+| B3 PostgreSQL | 所属 Binding/Account/Route Repository；灰度字段由0009迁移加入，不改已发布基线 | 账户停用/绑定启用竞争、事务原子、唯一键、并发重试、策略重启恢复 |
 | B4 HTTP / wiring | 所属 inbound/http、模块wiring、bootstrap | 后端真实接口与OpenAPI一致，不抢先改Web |
 | B5 Distribution | 模块事件映射、Control Relay/infra连接及NATS受限权限 | 真PG+JetStream、PubAck丢失/重投/断电、保留与恢复 |
 | B6 Gateway组合 | Gateway 的 Control 接入实现与验收文档 | 账户/路由乱序、动态接入、凭据轮换、已接纳快照不变 |
@@ -324,6 +350,9 @@ Worker、Manifest 正文执行与完整回复不因本次联合验收而视为�
 | 同 AgentVersion + 两个 ProfileRevision | 两份独立 DeploymentRevision，Binding精确选其中之一 |
 | 发布新Profile/Deployment Revision | 现有 Binding、旧Manifest和已接纳Run不变 |
 | Binding精确切换与回退 | Binding CAS和RouteGeneration各自推进，新Run选新目标，旧Run不变 |
+| 15% 灰度 + 显式用户 | Control 固定 stable/canary 与1500基点；显式 sender 优先，其他 sender 确定性分桶；Admission 固定所选目标 |
+| 比例改为0 | 新接纳全部选择 stable；已接纳 Run 不变，策略仍保留以便审计和后续调整 |
+| 把版本回退误报为自动灰度回退 | 拒绝该结论；当前回退是显式 Binding 命令，尚无指标阈值自动决策器 |
 | 一账户并发创建两绑定 | 唯一键只允许一个，失败方不留Outbox/Receipt |
 | 停用账户与启用Binding竞争 | Account行锁串行；绝不出现账户disabled但effective route enabled |
 | disabled期间改目标 | 管理CAS推进，无含目标的disabled事件；重新启用发完整新目标 |

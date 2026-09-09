@@ -22,6 +22,7 @@ type schema struct {
 	Required    []string          `json:"required"`
 	Properties  map[string]schema `json:"properties"`
 	Definitions map[string]schema `json:"$defs"`
+	Items       *schema           `json:"items"`
 }
 
 func main() {
@@ -80,9 +81,18 @@ func emit(out *bytes.Buffer, name string, object schema) error {
 	sort.Strings(fields)
 	for _, field := range fields {
 		property := object.Properties[field]
+		required := false
+		for _, item := range object.Required {
+			if item == field {
+				required = true
+			}
+		}
 		typ := property.GoType
 		if strings.HasPrefix(property.Ref, "#/$defs/") {
 			typ = strings.TrimPrefix(property.Ref, "#/$defs/")
+			if !required {
+				typ = "*" + typ
+			}
 		}
 		if typ == "" {
 			switch property.Type {
@@ -92,20 +102,19 @@ func emit(out *bytes.Buffer, name string, object schema) error {
 				typ = "bool"
 			case "integer":
 				typ = "int64"
+			case "array":
+				if property.Items == nil || property.Items.Type != "string" {
+					return fmt.Errorf("unsupported array schema for %s.%s", name, field)
+				}
+				typ = "[]string"
 			default:
 				return fmt.Errorf("unsupported schema type for %s.%s", name, field)
 			}
 		}
-		if typ != "string" && typ != "bool" && typ != "int" && typ != "int64" && property.Ref == "" {
+		if typ != "string" && typ != "bool" && typ != "int" && typ != "int64" && typ != "[]string" && property.Ref == "" {
 			return fmt.Errorf("unsupported Go type %q", typ)
 		}
 		tag := field
-		required := false
-		for _, item := range object.Required {
-			if item == field {
-				required = true
-			}
-		}
 		if !required {
 			tag += ",omitempty"
 		}

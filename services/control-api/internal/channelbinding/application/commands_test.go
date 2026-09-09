@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,10 +44,20 @@ func cloneAggregate(a Aggregate) Aggregate {
 	}
 	if a.Binding != nil {
 		v := *a.Binding
+		if v.Traffic != nil {
+			traffic := *v.Traffic
+			traffic.CanarySubjects = slices.Clone(traffic.CanarySubjects)
+			v.Traffic = &traffic
+		}
 		a.Binding = &v
 	}
 	if a.Route.Projection != nil {
 		v := *a.Route.Projection
+		if v.Route.Traffic != nil {
+			traffic := *v.Route.Traffic
+			traffic.CanarySubjects = slices.Clone(traffic.CanarySubjects)
+			v.Route.Traffic = &traffic
+		}
 		a.Route.Projection = &v
 	}
 	return a
@@ -310,6 +321,92 @@ func TestBindingLifecycleUsesExactTargetAndIndependentVersions(t *testing.T) {
 		if err != nil || bytes.Contains(raw, []byte("TEST_ONLY")) {
 			t.Fatal("route wire", err)
 		}
+	}
+}
+
+func TestBindingTrafficPublishesCompletePolicyAndReplays(t *testing.T) {
+	s, m, _, targets := setup(t)
+	ctx := context.Background()
+	created := create(t, s)
+	accountID := created.Account.ID
+	if _, err := s.SetAccountEnabled(ctx, owner, accountID, "account-on", AccountEnabledInput{1, true}); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := s.CreateBinding(ctx, owner, "bind", CreateBindingInput{accountID, domain.TargetSelector{DeploymentID: "dpl_stable", RevisionNumber: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SetBindingEnabled(ctx, owner, binding.Binding.ID, "binding-on", BindingEnabledInput{1, true}); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeReads := targets.reads.Load()
+	input := BindingTrafficInput{
+		ExpectedBindingRevision: 2,
+		Target:                  domain.TargetSelector{DeploymentID: "dpl_canary", RevisionNumber: 2},
+		PercentageBasisPoints:   1500,
+		CanarySubjects:          []string{"usr_b", "usr_a"},
+	}
+	rollout, err := s.SetBindingTraffic(ctx, owner, binding.Binding.ID, "traffic", input)
+	if err != nil || rollout.Binding.Traffic == nil || rollout.Binding.Revision != 3 || rollout.RouteGeneration != 3 || rollout.EventID == "" {
+		t.Fatalf("set traffic: %+v err=%v", rollout, err)
+	}
+	traffic := m.data.events[len(m.data.events)-1].Route.Traffic
+	if traffic == nil || traffic.Target.DeploymentRevisionID != "dpr_dpl_canary" || traffic.PercentageBasisPoints != 1500 || !slices.Equal(traffic.CanarySubjects, []string{"usr_a", "usr_b"}) {
+		t.Fatalf("incomplete route traffic: %+v", traffic)
+	}
+
+	readsAfterFirst := targets.reads.Load()
+	if readsAfterFirst != beforeReads+1 {
+		t.Fatalf("candidate read count=%d want=%d", readsAfterFirst, beforeReads+1)
+	}
+	replay, err := s.SetBindingTraffic(ctx, owner, binding.Binding.ID, "traffic", input)
+	if err != nil || !reflect.DeepEqual(replay, rollout) || targets.reads.Load() != readsAfterFirst {
+		t.Fatalf("receipt replay re-read candidate: %+v err=%v", replay, err)
+	}
+
+	// Changing only the percentage retains rollout identity and emits a new
+	// complete route generation.
+	input.ExpectedBindingRevision = 3
+	input.PercentageBasisPoints = 3000
+	updated, err := s.SetBindingTraffic(ctx, owner, binding.Binding.ID, "traffic-expand", input)
+	if err != nil || updated.Binding.Traffic.ID != rollout.Binding.Traffic.ID || updated.RouteGeneration != 4 {
+		t.Fatalf("expand traffic: %+v err=%v", updated, err)
+	}
+	if _, err = s.SetAccountEnabled(ctx, owner, accountID, "account-off", AccountEnabledInput{2, false}); err != nil {
+		t.Fatal(err)
+	}
+	beforeRestore := targets.reads.Load()
+	restored, err := s.SetAccountEnabled(ctx, owner, accountID, "account-restore", AccountEnabledInput{3, true})
+	if err != nil || restored.RouteGeneration != 6 || restored.Binding.Traffic == nil || targets.reads.Load() != beforeRestore+2 {
+		t.Fatalf("account restore did not revalidate rollout: %+v reads=%d before=%d err=%v", restored, targets.reads.Load(), beforeRestore, err)
+	}
+}
+
+func TestEnablingBindingRevalidatesStableAndCanaryTargets(t *testing.T) {
+	s, _, _, targets := setup(t)
+	ctx := context.Background()
+	created := create(t, s)
+	binding, err := s.CreateBinding(ctx, owner, "bind", CreateBindingInput{created.Account.ID, domain.TargetSelector{DeploymentID: "dpl_stable", RevisionNumber: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traffic, err := s.SetBindingTraffic(ctx, owner, binding.Binding.ID, "traffic", BindingTrafficInput{
+		ExpectedBindingRevision: 1,
+		Target:                  domain.TargetSelector{DeploymentID: "dpl_canary", RevisionNumber: 1},
+		PercentageBasisPoints:   500,
+		CanarySubjects:          []string{},
+	})
+	if err != nil || traffic.RouteGeneration != 1 || traffic.EventID != "" {
+		t.Fatalf("disabled policy update: %+v err=%v", traffic, err)
+	}
+	if _, err = s.SetAccountEnabled(ctx, owner, created.Account.ID, "account-on", AccountEnabledInput{1, true}); err != nil {
+		t.Fatal(err)
+	}
+	before := targets.reads.Load()
+	enabled, err := s.SetBindingEnabled(ctx, owner, binding.Binding.ID, "binding-on", BindingEnabledInput{2, true})
+	if err != nil || enabled.RouteGeneration != 2 || targets.reads.Load() != before+2 {
+		t.Fatalf("enable did not revalidate both targets: %+v reads=%d before=%d err=%v", enabled, targets.reads.Load(), before, err)
 	}
 }
 func TestCredentialRotationCASAndReceiptReplay(t *testing.T) {

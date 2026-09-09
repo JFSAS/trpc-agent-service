@@ -484,7 +484,7 @@ WebhookSecret静态约束见4.1。新增验收：双副本10/11先后屏障、�
 <a id="当前实现入口与验证"></a>
 ## 13. 当前实现入口与验证
 
-- 公开契约：`api/openapi/control/v1/channel-public.yaml`，由主 OpenAPI 引用11个已实现操作。
+- 公开契约：`api/openapi/control/v1/channel-public.yaml`，由主 OpenAPI 引用12个已实现操作。
 - 启动配置、三条内部 mTLS 路径、Producer权限与本地回归命令：
   [Control Channel 运行说明](../../../services/control-api/CHANNEL_RUNTIME.md)。
 - 真实 PostgreSQL 集成验证账户/凭据/Catalog/Receipt/Route的原子性、提交期OWNER检查、

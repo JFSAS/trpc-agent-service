@@ -18,7 +18,7 @@ func TestRouteWireMatchesFrozenGatewaySchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(raw)
-	if hex.EncodeToString(hash[:]) != "97c1f701e220fb25aa9e94d5afa2d340828cf4559864d8ffe6407c0060c50cba" {
+	if hex.EncodeToString(hash[:]) != "d332b451f5ed16f3a3a46593717e39d292d6bb83eabfb8cf0051c4483f035c4d" {
 		t.Fatal("Gateway route contract changed without coordination")
 	}
 	decoded, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))

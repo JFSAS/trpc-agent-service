@@ -18,10 +18,20 @@ func cloneAggregate(a application.Aggregate) application.Aggregate {
 	}
 	if a.Binding != nil {
 		b := *a.Binding
+		if b.Traffic != nil {
+			traffic := *b.Traffic
+			traffic.CanarySubjects = slices.Clone(traffic.CanarySubjects)
+			b.Traffic = &traffic
+		}
 		a.Binding = &b
 	}
 	if a.Route.Projection != nil {
 		p := *a.Route.Projection
+		if p.Route.Traffic != nil {
+			traffic := *p.Route.Traffic
+			traffic.CanarySubjects = slices.Clone(traffic.CanarySubjects)
+			p.Route.Traffic = &traffic
+		}
 		a.Route.Projection = &p
 	}
 	return a
@@ -55,6 +65,11 @@ func validateAggregate(a application.Aggregate) error {
 		}
 		if err := b.Target.Validate(a.Account.TenantID); err != nil {
 			return err
+		}
+		if b.Traffic != nil {
+			if err := b.Traffic.Validate(a.Account.TenantID, b.Target); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -123,7 +138,7 @@ func validateChange(old, a application.Aggregate, exists bool) error {
 		if a.Binding == nil || old.Binding.ID != a.Binding.ID || old.Binding.TenantID != a.Binding.TenantID || old.Binding.AccountID != a.Binding.AccountID || old.Binding.CreatedBy != a.Binding.CreatedBy || !old.Binding.CreatedAt.Equal(a.Binding.CreatedAt) {
 			return integrity()
 		}
-		changed := old.Binding.Target != a.Binding.Target || old.Binding.Enabled != a.Binding.Enabled
+		changed := old.Binding.Target != a.Binding.Target || old.Binding.Enabled != a.Binding.Enabled || !reflect.DeepEqual(old.Binding.Traffic, a.Binding.Traffic)
 		if changed {
 			if old.Binding.Revision == domain.MaxVersion || a.Binding.Revision != old.Binding.Revision+1 {
 				return integrity()
@@ -204,7 +219,14 @@ func (t *writeTx) Save(ctx context.Context, a application.Aggregate) error {
 	}
 	if a.Binding != nil {
 		b := a.Binding
-		_, err = t.tx.Exec(ctx, `INSERT INTO channel_bindings(tenant_id,id,account_id,binding_revision,enabled,deployment_id,revision_number,deployment_revision_id,manifest_ref,manifest_digest,created_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(tenant_id,id) DO UPDATE SET binding_revision=EXCLUDED.binding_revision,enabled=EXCLUDED.enabled,deployment_id=EXCLUDED.deployment_id,revision_number=EXCLUDED.revision_number,deployment_revision_id=EXCLUDED.deployment_revision_id,manifest_ref=EXCLUDED.manifest_ref,manifest_digest=EXCLUDED.manifest_digest,updated_at=EXCLUDED.updated_at`, b.TenantID, b.ID, b.AccountID, b.Revision, b.Enabled, b.Target.DeploymentID, b.Target.RevisionNumber, b.Target.DeploymentRevisionID, b.Target.ManifestID, b.Target.ManifestDigest, b.CreatedBy, b.CreatedAt, b.UpdatedAt)
+		var traffic any
+		if b.Traffic != nil {
+			traffic, err = json.Marshal(b.Traffic)
+			if err != nil {
+				return integrity()
+			}
+		}
+		_, err = t.tx.Exec(ctx, `INSERT INTO channel_bindings(tenant_id,id,account_id,binding_revision,enabled,deployment_id,revision_number,deployment_revision_id,manifest_ref,manifest_digest,traffic_policy_jsonb,created_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(tenant_id,id) DO UPDATE SET binding_revision=EXCLUDED.binding_revision,enabled=EXCLUDED.enabled,deployment_id=EXCLUDED.deployment_id,revision_number=EXCLUDED.revision_number,deployment_revision_id=EXCLUDED.deployment_revision_id,manifest_ref=EXCLUDED.manifest_ref,manifest_digest=EXCLUDED.manifest_digest,traffic_policy_jsonb=EXCLUDED.traffic_policy_jsonb,updated_at=EXCLUDED.updated_at`, b.TenantID, b.ID, b.AccountID, b.Revision, b.Enabled, b.Target.DeploymentID, b.Target.RevisionNumber, b.Target.DeploymentRevisionID, b.Target.ManifestID, b.Target.ManifestDigest, traffic, b.CreatedBy, b.CreatedAt, b.UpdatedAt)
 		if err != nil {
 			return dbError(err)
 		}

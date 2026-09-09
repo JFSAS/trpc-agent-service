@@ -610,6 +610,7 @@ func TestControlOpenAPIContainsImplementedChannelRoutes(t *testing.T) {
 		"POST /v1/tenants/{tenant_id}/channel-bindings",
 		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/enabled",
 		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/target",
+		"POST /v1/tenants/{tenant_id}/channel-bindings/{binding_id}/traffic",
 	})
 	for path := range document.Paths.Map() {
 		if strings.HasPrefix(path, "/internal/") {

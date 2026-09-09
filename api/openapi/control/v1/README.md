@@ -167,12 +167,12 @@ See the [credential contract](../../../../docs/architecture-next/control-api/run
 for internal consumption, failure, and key-configuration boundaries.
 Generated clients and server bindings belong under `/gen`, not this directory.
 
-## Channel: 11 implemented management operations
+## Channel: 12 implemented management operations
 
 `openapi.yaml` references `channel-public.yaml` for the configured Channel surface.
 The request schemas directly reference the canonical closed Channel V1 JSON Schemas;
 OpenAPI 3.1 conditionals (`if`/`then`/`else`) are preserved rather than weakened.
-Seven OWNER write commands require `Idempotency-Key`; both original create and
+Eight OWNER write commands require `Idempotency-Key`; both original create and
 its valid replay return `201`. Four member read operations expose only redacted
 account/binding/status projections. Lists use stable-ID cursor/page_size (1–100,
 default 50), not offset pagination. Internal mTLS endpoints are deliberately absent
@@ -184,7 +184,7 @@ and the Control Channel runtime guide. Profile-owned schemas and APIs are unchan
 `preflight-public.yaml`, referenced by `openapi.yaml`, adds OWNER
 `POST .../channel-accounts/{account_id}/preflights` (202, fixed idempotent
 creation receipt) and ACTIVE MEMBER `GET .../preflights/{preflight_id}` (200,
-redacted task/result). Existing 11 Channel management operations are unchanged.
+redacted task/result). Existing 12 Channel management operations are unchanged.
 A saved disabled Telegram account needs no Binding/Deployment or READY state.
 All three expected account/connection/BotToken versions are required. State,
 diagnostic outcome, account freshness and unconfirmed Gateway config freshness

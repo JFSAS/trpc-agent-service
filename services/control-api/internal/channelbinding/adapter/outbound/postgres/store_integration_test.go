@@ -96,6 +96,13 @@ func channelPG(t *testing.T, baselineOnly ...bool) (*Store, *application.Service
 		if _, err = pool.Exec(ctx, string(upgrade)); err != nil {
 			t.Fatal("apply receive modes upgrade", err)
 		}
+		rollout, err := migrations.Files.ReadFile("0009_channel_binding_traffic_rollout.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(rollout)); err != nil {
+			t.Fatal("apply traffic rollout upgrade", err)
+		}
 	}
 	if _, err = pool.Exec(ctx, `INSERT INTO user_accounts(id,username,normalized_username) VALUES('usr_owner','owner','owner'),('usr_other','other','other');
  INSERT INTO tenants(id,slug,name,created_at,updated_at) VALUES('tnt_a','a','A',now(),now()),('tnt_b','b','B',now(),now());
@@ -267,6 +274,53 @@ func TestChannelRouteFloorAtomicityAgainstPostgreSQL(t *testing.T) {
 	}
 	if err = rows.Err(); err != nil || count != 4 {
 		t.Fatal("outbox count", count, err)
+	}
+}
+
+func TestChannelTrafficPolicyPersistsAndProjectsAgainstPostgreSQL(t *testing.T) {
+	store, service, pool := channelPG(t)
+	seedTargets(t, pool)
+	ctx := context.Background()
+	created := createAccount(t, service)
+	if _, err := service.SetAccountEnabled(ctx, testActor, created.Account.ID, "account-on", application.AccountEnabledInput{ExpectedAccountRevision: 1, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := service.CreateBinding(ctx, testActor, "bind", application.CreateBindingInput{AccountID: created.Account.ID, Target: domain.TargetSelector{DeploymentID: "dpl_a", RevisionNumber: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.SetBindingEnabled(ctx, testActor, binding.Binding.ID, "binding-on", application.BindingEnabledInput{ExpectedBindingRevision: 1, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	rollout, err := service.SetBindingTraffic(ctx, testActor, binding.Binding.ID, "traffic", application.BindingTrafficInput{
+		ExpectedBindingRevision: 2,
+		Target:                  domain.TargetSelector{DeploymentID: "dpl_b", RevisionNumber: 1},
+		PercentageBasisPoints:   2750,
+		CanarySubjects:          []string{"usr_other", "usr_owner"},
+	})
+	if err != nil || rollout.Binding.Traffic == nil || rollout.RouteGeneration != 3 {
+		t.Fatalf("set traffic: %+v err=%v", rollout, err)
+	}
+
+	loaded, err := store.GetBinding(ctx, testActor.TenantID, binding.Binding.ID)
+	if err != nil || loaded.Binding == nil || loaded.Binding.Traffic == nil {
+		t.Fatalf("load traffic: %+v err=%v", loaded, err)
+	}
+	if loaded.Binding.Traffic.ID != rollout.Binding.Traffic.ID || loaded.Binding.Traffic.Target.DeploymentRevisionID != "dpr_dpl_b" || loaded.Binding.Traffic.PercentageBasisPoints != 2750 {
+		t.Fatalf("stored policy changed: %+v", loaded.Binding.Traffic)
+	}
+
+	var raw []byte
+	var digest string
+	if err = pool.QueryRow(ctx, `SELECT payload_jsonb,payload_digest FROM control_outbox WHERE event_type=$1 AND aggregate_revision=3`, domain.RouteEventType).Scan(&raw, &digest); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := domain.ValidateStoredRoute(raw, digest)
+	if err != nil || projection.Route.Traffic == nil || projection.Route.Traffic.Target.ManifestID != "rmf_dpl_b" {
+		t.Fatalf("outbox policy: %+v err=%v", projection.Route.Traffic, err)
+	}
+	if bytes.Contains(raw, []byte("TEST_ONLY")) {
+		t.Fatal("route policy leaked account credentials")
 	}
 }
 func TestChannelWriteFailureRollsBackAllRecordsAgainstPostgreSQL(t *testing.T) {

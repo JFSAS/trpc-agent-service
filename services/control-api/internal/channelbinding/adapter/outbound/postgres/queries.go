@@ -190,7 +190,7 @@ func (s *Store) ListBindings(ctx context.Context, tenant string, page applicatio
 		result.NextCursor = ids[len(ids)-1]
 	}
 	for _, id := range ids {
-		b, err := scanBinding(tx.QueryRow(ctx, `SELECT tenant_id,id,account_id,binding_revision,enabled,deployment_id,revision_number,deployment_revision_id,manifest_ref,manifest_digest,created_by,created_at,updated_at FROM channel_bindings WHERE tenant_id=$1 AND id=$2`, tenant, id))
+		b, err := scanBinding(tx.QueryRow(ctx, `SELECT tenant_id,id,account_id,binding_revision,enabled,deployment_id,revision_number,deployment_revision_id,manifest_ref,manifest_digest,traffic_policy_jsonb,created_by,created_at,updated_at FROM channel_bindings WHERE tenant_id=$1 AND id=$2`, tenant, id))
 		if err != nil {
 			return result, err
 		}

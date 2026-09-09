@@ -48,6 +48,13 @@ func TestReceiveModeMigrationBackfillsAndPreservesLedger(t *testing.T) {
 	if _, err = pool.Exec(ctx, string(raw)); err != nil {
 		t.Fatal(err)
 	}
+	rollout, err := migrations.Files.ReadFile("0009_channel_binding_traffic_rollout.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(rollout)); err != nil {
+		t.Fatal(err)
+	}
 	got, err := store.GetAccount(ctx, "tnt_a", a.Account.ID)
 	if err != nil || got.Account.Config.ReceiveMode != domain.Webhook || got.Account.Revision != 2 || got.Account.ConnectionRevision != 2 {
 		t.Fatal("old account not explicitly webhook with CAS advanced", err)

@@ -34,6 +34,17 @@ type resolveFunc func(context.Context, string, string) (domain.RouteSnapshot, er
 func (f resolveFunc) Resolve(ctx context.Context, p, a string) (domain.RouteSnapshot, error) {
 	return f(ctx, p, a)
 }
+
+type cohortResolver struct {
+	resolveFor func(context.Context, string, string, string, string, string) (domain.RouteSnapshot, error)
+}
+
+func (r cohortResolver) Resolve(context.Context, string, string) (domain.RouteSnapshot, error) {
+	return domain.RouteSnapshot{}, errors.New("legacy resolver must not be used")
+}
+func (r cohortResolver) ResolveFor(ctx context.Context, provider, account, conversation, thread, sender string) (domain.RouteSnapshot, error) {
+	return r.resolveFor(ctx, provider, account, conversation, thread, sender)
+}
 func input() domain.Inbound {
 	return domain.Inbound{Key: domain.EventKey{Provider: "telegram", AccountID: "account", EventID: "event"}, Kind: "text", ConversationID: "100", SenderID: "100", Text: "hello", SourceDigest: strings.Repeat("a", 64), ReceivedAt: time.Now().UTC()}
 }
@@ -112,6 +123,32 @@ func TestDecisionsOwnTheirFacts(t *testing.T) {
 				t.Fatalf("decision: %s", got.Decision)
 			}
 		})
+	}
+}
+
+func TestAdmissionPersistsSelectedCanaryTarget(t *testing.T) {
+	in := input()
+	committed := false
+	service := New(ledgerStub{commit: func(_ context.Context, c domain.Acceptance) (domain.Receipt, error) {
+		committed = true
+		if c.Route == nil || c.Route.DeploymentRevisionID != "revision-canary" || c.Route.ManifestRef != "manifests/revision-canary" || c.Route.RolloutID != "rollout-1" || c.Route.RolloutVariant != "canary" {
+			t.Fatalf("selected target was not fixed in admission: %+v", c.Route)
+		}
+		return c.Receipt, nil
+	}}, cohortResolver{resolveFor: func(_ context.Context, provider, account, conversation, thread, sender string) (domain.RouteSnapshot, error) {
+		if provider != in.Key.Provider || account != in.Key.AccountID || conversation != in.ConversationID || thread != in.ThreadID || sender != in.SenderID {
+			t.Fatalf("untrusted or incomplete cohort: %q %q %q %q %q", provider, account, conversation, thread, sender)
+		}
+		r := route()
+		r.DeploymentRevisionID = "revision-canary"
+		r.ManifestRef = "manifests/revision-canary"
+		r.RolloutID = "rollout-1"
+		r.RolloutVariant = "canary"
+		return r, nil
+	}})
+
+	if _, err := service.AcceptInbound(context.Background(), in); err != nil || !committed {
+		t.Fatalf("admission err=%v committed=%v", err, committed)
 	}
 }
 func TestRouteRacesAreRetriedButBounded(t *testing.T) {

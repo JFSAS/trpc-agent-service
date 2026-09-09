@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -182,7 +183,12 @@ func (c *Consumer) process(ctx context.Context, msg jetstream.Msg, expected doma
 		return c.quarantineMessage(ctx, msg, p, domain.QuarantineInvalidSchema)
 	}
 	r := wire.Route
-	event := domain.RouteEvent{SchemaVersion: wire.SchemaVersion, EventID: wire.EventID, Enabled: wire.Enabled, Route: domain.RouteSnapshot{Provider: r.Provider, AccountID: r.AccountID, TenantID: r.TenantID, BindingID: r.BindingID, Generation: r.Generation, DeploymentRevisionID: r.DeploymentRevisionID, ManifestRef: r.ManifestRef, ManifestDigest: r.ManifestDigest}}
+	var traffic *domain.TrafficRollout
+	if r.Traffic != nil {
+		t := r.Traffic.Target
+		traffic = &domain.TrafficRollout{RolloutID: r.Traffic.RolloutID, PercentageBasisPoints: r.Traffic.PercentageBasisPoints, CanarySubjects: slices.Clone(r.Traffic.CanarySubjects), Target: domain.PublishedTarget{TenantID: t.TenantID, DeploymentID: t.DeploymentID, RevisionNumber: t.RevisionNumber, DeploymentRevisionID: t.DeploymentRevisionID, ManifestRef: t.ManifestRef, ManifestDigest: t.ManifestDigest}}
+	}
+	event := domain.RouteEvent{SchemaVersion: wire.SchemaVersion, EventID: wire.EventID, Enabled: wire.Enabled, Route: domain.RouteSnapshot{Provider: r.Provider, AccountID: r.AccountID, TenantID: r.TenantID, BindingID: r.BindingID, Generation: r.Generation, DeploymentRevisionID: r.DeploymentRevisionID, ManifestRef: r.ManifestRef, ManifestDigest: r.ManifestDigest, Traffic: traffic}}
 	if err = c.applier.ApplyFromStream(ctx, p, event); err != nil {
 		// Store persists permanent conflicts before returning ProjectionBlocked.
 		// Transient PostgreSQL failures leave no ACK or initialization progress.

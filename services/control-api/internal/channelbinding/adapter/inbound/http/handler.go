@@ -23,6 +23,7 @@ type Commands interface {
 	SetAccountEnabled(context.Context, application.Actor, string, string, application.AccountEnabledInput) (application.CommandResult, error)
 	CreateBinding(context.Context, application.Actor, string, application.CreateBindingInput) (application.CommandResult, error)
 	SetBindingTarget(context.Context, application.Actor, string, string, application.BindingTargetInput) (application.CommandResult, error)
+	SetBindingTraffic(context.Context, application.Actor, string, string, application.BindingTrafficInput) (application.CommandResult, error)
 	SetBindingEnabled(context.Context, application.Actor, string, string, application.BindingEnabledInput) (application.CommandResult, error)
 }
 type Queries interface {
@@ -48,6 +49,7 @@ func (h *Handler) Register(routes gin.IRoutes) {
 	routes.GET("/v1/tenants/:tenant_id/channel-bindings", h.listBindings)
 	routes.GET("/v1/tenants/:tenant_id/channel-bindings/:binding_id", h.getBinding)
 	routes.POST("/v1/tenants/:tenant_id/channel-bindings/:binding_id/target", h.authorizeWrite, h.bindingTarget)
+	routes.POST("/v1/tenants/:tenant_id/channel-bindings/:binding_id/traffic", h.authorizeWrite, h.bindingTraffic)
 	routes.POST("/v1/tenants/:tenant_id/channel-bindings/:binding_id/enabled", h.authorizeWrite, h.bindingEnabled)
 }
 func actor(c *gin.Context) (application.Actor, bool) {
@@ -231,6 +233,22 @@ func (h *Handler) bindingTarget(c *gin.Context) {
 		return
 	}
 	r, err := h.commands.SetBindingTarget(c.Request.Context(), a, c.Param("binding_id"), k, input)
+	respond(c, 200, r, err)
+}
+func (h *Handler) bindingTraffic(c *gin.Context) {
+	a, ok := actor(c)
+	if !ok {
+		return
+	}
+	k, ok := key(c)
+	if !ok {
+		return
+	}
+	input, ok := decode[application.BindingTrafficInput](c, "binding-traffic.schema.json", 64*1024)
+	if !ok {
+		return
+	}
+	r, err := h.commands.SetBindingTraffic(c.Request.Context(), a, c.Param("binding_id"), k, input)
 	respond(c, 200, r, err)
 }
 func (h *Handler) bindingEnabled(c *gin.Context) {
