@@ -58,6 +58,33 @@ class CombinedHarness(ArtifactHarness,KnowledgeHarness,MemoryHarness,_summary.Su
     def __init__(self,*args,live=False,**kwargs):
         self.live=live;self.catalog_restarts=0
         super().__init__(*args,**kwargs)
+    def failure_snapshot(self,run_id):
+        """Read only owned Run facts before cleanup; JSON protects multiline text."""
+        if not run_id:return {'run_id':None,'queries':{},'reason':'no Run submitted'}
+        rid=self.quote(run_id)
+        queries={
+            'run':"SELECT clock_timestamp() AS observed_at,tenant_id,run_id,session_id,status,wait_reason,attempts,current_attempt_id,accepted_at,execution_deadline,run_deadline,reply_deadline FROM worker.execution_runs WHERE run_id="+rid,
+            'head':"SELECT s.tenant_id,s.session_id,s.accepted_ref,s.accepted_digest,s.settled_sequence,s.next_sequence FROM worker.execution_sessions s JOIN worker.execution_runs r USING(tenant_id,session_id) WHERE r.run_id="+rid,
+            'completion':"SELECT run_id,completion_id,attempt_id,status,candidate_ref,candidate_digest,reply_disposition,reason,memory_status,completed_at FROM worker.execution_completions WHERE run_id="+rid,
+            'attempts':"SELECT attempt_id,status,reason,worker_id,lease_epoch,parent_ref,parent_digest,created_at,ended_at FROM worker.execution_attempts WHERE run_id="+rid+" ORDER BY created_at",
+            'final_outbox':"SELECT intent_id,run_id,digest,ready,published_at,convert_from(payload,'UTF8')::json AS payload FROM worker.execution_reply_outbox WHERE run_id="+rid,
+            'reply_transport':"SELECT stream_name,stream_id,stream_sequence,raw_digest,outcome,reason,intent_id,run_id,recorded_at FROM gateway.gateway_reply_transport_receipts WHERE run_id="+rid+" OR run_id='' ORDER BY stream_sequence",
+            'delivery_intents':"SELECT intent_id,run_id,digest,intent,deadline,part_count,created_at FROM gateway.gateway_delivery_intents WHERE run_id="+rid,
+            'delivery_parts':"SELECT p.part_id,p.intent_id,p.part_index,p.body,p.state,p.attempt_number,p.current_attempt_id,p.updated_at FROM gateway.gateway_delivery_parts p JOIN gateway.gateway_delivery_intents i USING(intent_id) WHERE i.run_id="+rid+" ORDER BY p.part_index",
+            'delivery_attempts':"SELECT a.attempt_id,a.part_id,a.attempt_number,a.result,a.created_at,a.finished_at FROM gateway.gateway_delivery_attempts a JOIN gateway.gateway_delivery_parts p USING(part_id) JOIN gateway.gateway_delivery_intents i ON i.intent_id=p.intent_id WHERE i.run_id="+rid+" ORDER BY a.created_at",
+            'gateway_owners':"SELECT account_id,revision,enabled,instance_id,epoch,lease_until,blocked_revision FROM gateway.gateway_connection_accounts",
+        }
+        result={'run_id':run_id,'queries':{}}
+        for name,query in queries.items():
+            try:
+                rows=self.sql("SELECT COALESCE(json_agg(row_to_json(fact)),'[]'::json)::text FROM ("+query+") fact")
+                if len(rows)!=1 or len(rows[0])!=1:raise ValueError('JSON evidence row shape')
+                result['queries'][name]=json.loads(rows[0][0])
+            except Exception as exc:result['queries'][name]={'read_error_type':type(exc).__name__}
+        for name,read in (('memory',self.memory_state),('artifact_metadata',self.metadata_state),('s3_objects',self.object_state),('knowledge',self.knowledge_state)):
+            try:result[name]=read()
+            except Exception as exc:result[name]={'read_error_type':type(exc).__name__}
+        return result
     def provision(self):
         self._initializing_dependencies=True;self._s3_bootstrap_retries=0
         try:

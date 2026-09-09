@@ -26,6 +26,7 @@ def main():
     h=CombinedHarness(args.root,args.artifacts or Path(tempfile.mkdtemp(prefix='worker-capabilities-combined-')),args.race,live=args.live,model_name='deepseek-v4-flash' if args.live else 'joint-fixture')
     evidence={'result':'PENDING','model_execution':'REAL_DEEPSEEK_UNMODIFIED_BYTES' if args.live else 'DETERMINISTIC_MODEL_FIXTURE','embedding_execution':'DETERMINISTIC_FIXTURE','real_external_embedding_verified':False,'im':'REAL_CHANNEL_LAB','rounds':[],'matrix':'three normal Runs only; standalone fault matrices are separately verified'}
     print('CAPABILITIES_JOINT_ARTIFACTS='+str(h.artifacts),flush=True)
+    current_run_id=None
     def save():h.record('capabilities-joint.json',evidence)
     def primary_records():
         return [r for r in h.model.snapshot() if r['request'].get('stream')] if h.live else [{'request':r} for r in h.model.snapshot()]
@@ -54,7 +55,7 @@ def main():
         previous=None;previous_summary=None
         for index,text in enumerate(round_inputs()):
             offset=len(primary_records());summary_offset=len(summary_records());embedding_offset=len(h.embedding_provider.embeddings())
-            run_id=submit(h,text,'42');delivery=h.wait_delivery(run_id);result=wait_success(h,run_id);actual=run(h,run_id);accepted=head(h,actual)
+            run_id=submit(h,text,'42');current_run_id=run_id;delivery=h.wait_delivery(run_id);result=wait_success(h,run_id);actual=run(h,run_id);accepted=head(h,actual)
             assert accepted['accepted_ref']==result['candidate']['candidate_ref'] and accepted['accepted_digest']==result['candidate']['content_digest']
             assert result['candidate']['parent_ref']==(previous['candidate']['candidate_ref'] if previous else '')
             assert result['candidate']['parent_digest']==(previous['candidate']['content_digest'] if previous else '')
@@ -110,6 +111,7 @@ def main():
     except BaseException as exc:
         frame=traceback.extract_tb(exc.__traceback__)[-1]
         evidence.update(result='FAIL',error=h.redact(str(exc)),error_type=type(exc).__name__,error_location={'file':Path(frame.filename).name,'line':frame.lineno})
+        evidence['failure_snapshot']=h.failure_snapshot(current_run_id)
         if hasattr(h,'embedding_provider'):evidence['embedding_requests']=h.embedding_provider.embeddings()
         if hasattr(h,'summary_provider'):evidence.update(primary_calls=primary_records(),summary_calls=summary_records())
         save();raise RuntimeError(evidence['error']) from None

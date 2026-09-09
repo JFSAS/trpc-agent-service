@@ -68,6 +68,22 @@ class CombinedFixtureTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'parent failed'):h.close()
         h.summary_provider.close.assert_called_once();h.embedding_provider.close.assert_called_once();self.assertEqual(records[0]['result'],'FAIL')
 
+    def test_failure_snapshot_uses_json_rows_and_survives_read_errors(self):
+        h=self.harness();queries=[];value=[{'body':'line one\n\nline two\ttab'}]
+        def sql(query):
+            queries.append(query)
+            self.assertTrue(query.startswith("SELECT COALESCE(json_agg(row_to_json(fact))"))
+            if 'worker.execution_attempts' in query:raise RuntimeError('private dependency detail')
+            return [[json.dumps(value)]]
+        h.sql=sql
+        for name in ('memory_state','metadata_state','object_state','knowledge_state'):setattr(h,name,Mock(return_value=[]))
+        result=h.failure_snapshot("run'quoted")
+        self.assertEqual(len(queries),10);self.assertIn("run''quoted",queries[0])
+        self.assertEqual(result['queries']['delivery_parts'],value)
+        self.assertEqual(result['queries']['attempts'],{'read_error_type':'RuntimeError'})
+        self.assertNotIn('private dependency detail',json.dumps(result));self.assertNotIn('token_hash',' '.join(queries));self.assertNotIn('credential_ref',' '.join(queries))
+        self.assertEqual(h.failure_snapshot(None)['queries'],{})
+
     def test_minio_bootstrap_retries_only_bucket_503(self):
         h=self.harness();h._initializing_dependencies=True;h._s3_bootstrap_retries=0
         with patch.object(f.ArtifactHarness,'s3_request',side_effect=[RuntimeError('fixture S3 HTTP status 503 expected 200'),b'ready']) as request,patch.object(f.time,'sleep'):
