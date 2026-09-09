@@ -14,3 +14,14 @@ coverage.html
 **/.env.*
 !**/.env.example
 .codex-worktrees
+# Local dependency/build caches are not Go build inputs.
+**/node_modules
+**/.next
+**/.test-dist
+.gocache
+**/artifacts
+**/verification
+**/.git
+**/__pycache__
+**/*-key.pem
+**/*.key
