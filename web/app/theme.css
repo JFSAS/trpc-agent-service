@@ -56,7 +56,8 @@
   --resource-color: var(--primary);
   --resource-soft: var(--primary-soft);
 }
-[data-resource-category="tools"] {
+[data-resource-category="tools"],
+[data-resource-category="executors"] {
   --resource-color: var(--secondary-ink);
   --resource-soft: var(--secondary-soft);
 }

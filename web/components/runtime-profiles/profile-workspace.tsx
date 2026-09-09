@@ -14,10 +14,10 @@ import styles from "./profile-workspace.module.css";
 
 type FocusTarget = { category: ResourceCategory; name: string; pointer?: string };
 export function diagnosticTarget(diagnostic: ProfileValidationDiagnostic): FocusTarget | null {
-  const categories: Record<string, ResourceCategory> = { model: "models", tool: "tools", knowledge: "knowledge", storage: "storage" };
+  const categories: Record<string, ResourceCategory> = { model: "models", tool: "tools", knowledge: "knowledge", storage: "storage", executor: "executors" };
   const parts = diagnostic.pointer.split("/").slice(1).map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~"));
   if (parts[0] === "config") parts.shift();
-  const category = diagnostic.resource_kind ? categories[diagnostic.resource_kind] : ["models", "tools", "knowledge", "storage"].includes(parts[0]) ? parts[0] as ResourceCategory : undefined;
+  const category = diagnostic.resource_kind ? categories[diagnostic.resource_kind] : ["models", "tools", "knowledge", "storage", "executors"].includes(parts[0]) ? parts[0] as ResourceCategory : undefined;
   const name = diagnostic.resource_key ?? parts[1];
   return category && name ? { category, name, pointer: diagnostic.pointer } : null;
 }

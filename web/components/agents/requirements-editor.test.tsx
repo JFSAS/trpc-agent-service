@@ -130,3 +130,16 @@ describe("RequirementsEditor", () => {
     for (const button of screen.getAllByRole("button")) expect(button).toBeDisabled();
   });
 });
+
+it("adds fixed workspace Executor requirements without enabling a node", () => {
+  render(<StatefulEditor />);
+  expect(screen.getByLabelText("Executors 新 Capability")).toHaveValue("workspace");
+  expect(screen.getByLabelText("Executors 新 Capability")).toHaveAttribute("readonly");
+  fireEvent.change(screen.getByLabelText("Executors 新 Slot ID"), { target: { value: "sandbox" } });
+  fireEvent.click(screen.getByRole("button", { name: "添加 Executors Slot" }));
+  const spec = JSON.parse(screen.getByTestId("spec").textContent!);
+  expect(spec.requirements.executors).toEqual({ sandbox: { capability: "workspace" } });
+  expect(spec.nodes.assistant).not.toHaveProperty("workspace");
+  fireEvent.click(screen.getByRole("button", { name: "删除 sandbox" }));
+  expect(JSON.parse(screen.getByTestId("spec").textContent!).requirements.executors).toEqual({});
+});

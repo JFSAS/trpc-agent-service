@@ -84,3 +84,20 @@ it("keeps runtime edits on the real controlled canvas and round-trips through JS
   expect(screen.getByLabelText("memory_load")).toBeChecked();
   expect(screen.getByLabelText("摘要事件触发阈值")).toHaveValue(3);
 });
+
+it("round-trips explicit workspace selection through the actual Agent canvas and JSON", () => {
+  render(<EditorHarness />);
+  fireEvent.change(screen.getByLabelText("Executors 新 Slot ID"), { target: { value: "sandbox" } });
+  fireEvent.click(screen.getByRole("button", { name: "添加 Executors Slot" }));
+  fireEvent.change(screen.getByLabelText("Workspace Executor Slot"), { target: { value: "sandbox" } });
+  fireEvent.click(screen.getByLabelText("workspace_exec"));
+  const before = JSON.parse(screen.getByTestId("source").textContent!);
+  expect(before.requirements.executors).toEqual({ sandbox: { capability: "workspace" } });
+  expect(before.nodes.assistant.workspace).toEqual({ executor_slot: "sandbox", tools: ["workspace_exec"] });
+  expect(before.nodes.assistant.artifact).toBeUndefined();
+  fireEvent.click(screen.getByRole("button", { name: "JSON" }));
+  expect(JSON.parse((screen.getByLabelText("AgentSpec JSON") as HTMLTextAreaElement).value)).toEqual(before);
+  fireEvent.click(screen.getByRole("button", { name: "画布" }));
+  expect(screen.getByLabelText("workspace_exec")).toBeChecked();
+  expect(screen.getByLabelText("workspace_save_artifact")).not.toBeChecked();
+});

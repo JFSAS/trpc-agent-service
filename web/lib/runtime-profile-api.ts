@@ -1,5 +1,5 @@
 /** Public authoring DTOs. These are config projections, never canonical Specs or credential IDs. */
-export type ResourceCategory = "models" | "tools" | "knowledge" | "storage";
+export type ResourceCategory = "models" | "tools" | "knowledge" | "storage" | "executors";
 export type ProfilePageInput = { offset: number; limit: number };
 
 export type RuntimeProfile = {
@@ -47,7 +47,9 @@ export type StorageDestination = {
   sslmode?: string;
 };
 export type StorageConfig = { kind?: string; backend_id?: string; backend_revision?: number; destination?: StorageDestination };
+export type ExecutorConfig = { kind?: string };
 export type ProfileConfig = {
+  executors?: Record<string, ExecutorConfig>;
   models: Record<string, ModelConfig>;
   tools: Record<string, ToolConfig>;
   knowledge: Record<string, KnowledgeConfig>;
@@ -122,7 +124,7 @@ export type ProfileValidationDiagnostic = {
   severity: "error" | "warning";
   pointer: string;
   // These are singular kinds, unlike the config's category keys.
-  resource_kind: "model" | "tool" | "knowledge" | "storage" | null;
+  resource_kind: "model" | "tool" | "knowledge" | "storage" | "executor" | null;
   resource_key: string | null;
   message: string;
 };
