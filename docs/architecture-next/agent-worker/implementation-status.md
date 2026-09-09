@@ -11,6 +11,10 @@
 不代表当前 `worker` 分支能力。当前按显式 AgentSpec → Profile → immutable Manifest →
 Worker 装配逐包完成：
 
+- [多后端迁移 V1](backend-migration-v1.md)：Session（含 Summary）与 Memory 已提供
+  PostgreSQL/Redis 间显式当前快照迁移、不可变/Revision 校验及真实双向后端夹具；产品入口
+  已收敛为 Memory 迁移、成功后发布新 DeploymentRevision、最后由 Web 对 ChannelBinding
+  执行 CAS 切换。仍不包含在线双写或 Artifact/Knowledge 的伪通用迁移。
 - [正式 Session Summary](session-summary-v1.md)：摘要与 boundary 随同 Session snapshot
   接受，下轮加载和消费；不新增摘要数据库。
 - [PostgreSQL Memory](memory-postgres-v1.md) 与 [Redis Memory](memory-redis-v1.md)：

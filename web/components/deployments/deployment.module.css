@@ -5,3 +5,4 @@
 @media(max-width:700px){.bar .actions button{white-space:nowrap;min-height:40px}.bar .actions button:first-child{flex-basis:100%}}
 
 .banner{background:var(--info-soft);border-color:var(--info-border);color:var(--info-ink)}
+.progress{display:grid;gap:12px;list-style:none;padding:0;margin:18px 0}.progress li{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px}

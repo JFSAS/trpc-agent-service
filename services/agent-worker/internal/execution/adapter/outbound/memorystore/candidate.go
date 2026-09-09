@@ -39,6 +39,20 @@ type Snapshot struct {
 	Revision uint64
 	Entries  []*memory.Entry
 }
+
+// SnapshotDigest gives migration verification the same canonical identity as
+// normal accepted writes without exposing backend record formats.
+func SnapshotDigest(scope Scope, snapshot Snapshot) (string, error) {
+	if !scope.valid() || snapshot.Revision > math.MaxInt64 || (snapshot.Revision == 0 && len(snapshot.Entries) != 0) {
+		return "", ErrIdentity
+	}
+	base := uint64(0)
+	if snapshot.Revision > 0 {
+		base = snapshot.Revision - 1
+	}
+	return (Candidate{Scope: scope, BaseRevision: base, Entries: snapshot.Entries}).Digest()
+}
+
 type Candidate struct {
 	Scope        Scope           `json:"scope"`
 	BaseRevision uint64          `json:"base_revision"`

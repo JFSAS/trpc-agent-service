@@ -62,6 +62,7 @@ func TestControlOpenAPIContainsDeploymentV1Routes(t *testing.T) {
 		"GET /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/artifacts/{filename}",
 		"PATCH /v1/tenants/{tenant_id}/deployments/{deployment_id}",
 		"POST /v1/tenants/{tenant_id}/deployments",
+		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/backend-migrations",
 		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions",
 		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/knowledge/{resource}/import",
 		"POST /v1/tenants/{tenant_id}/deployments/{deployment_id}/validate",

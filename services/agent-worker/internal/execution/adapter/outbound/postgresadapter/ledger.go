@@ -170,6 +170,13 @@ func (l *Ledger) Accept(ctx context.Context, req domain.Requested, policy domain
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.Receipt{}, err
 	}
+	// A tenant backend migration holds the matching exclusive advisory lock
+	// while it verifies quiescence and copies current Memory heads. Existing
+	// receipt replays above remain available, but a new Run cannot cross the
+	// migration snapshot/cutover boundary.
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1,731004286))`, req.Route.TenantID); err != nil {
+		return domain.Receipt{}, err
+	}
 	// Capacity admission is globally serialized, but only for new identities.
 	// Retries replay their receipt even while the queue is full.
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(731004285)`); err != nil {

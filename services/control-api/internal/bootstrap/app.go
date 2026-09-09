@@ -203,6 +203,14 @@ func New(ctx context.Context, config Config) (*App, error) {
 			return nil, err
 		}
 	}
+	var backendMigrations deploymentapp.BackendMigrator
+	if config.Runtime != nil {
+		backendMigrations, err = config.Runtime.backendMigrationClient()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+	}
 	deploymentModule, err := deployment.NewModule(deployment.Dependencies{
 		ManagedBackends: deploymentBackendAccess{targets: backendTargets, tenants: activeTenantMemberLookup{tenants: tenantModule.Service}},
 		ArtifactBackend: artifactBackend, ArtifactCredentials: runtimeProfileModule.Service,
@@ -213,6 +221,8 @@ func New(ctx context.Context, config Config) (*App, error) {
 		AgentVersions:      agentModule.Service,
 		ProfileRevisions:   runtimeProfileModule.Service,
 		ProfileCredentials: runtimeProfileModule.Service,
+		StorageCredentials: runtimeProfileModule.Service,
+		BackendMigrations:  backendMigrations,
 		Platform:           platformContract,
 	})
 	if err != nil {

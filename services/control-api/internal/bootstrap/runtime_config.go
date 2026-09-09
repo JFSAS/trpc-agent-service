@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	artifactclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workerartifact"
 	knowledgeclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workerknowledge"
+	migrationclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workermigration"
 	managementhttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runmanagement/adapter/outbound/workerhttp"
 	profilehttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/inbound/runtimehttp"
 	executionhttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/outbound/executionhttp"
@@ -174,4 +175,13 @@ func (c *RuntimeConfig) knowledgeClient() (*knowledgeclient.Client, error) {
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tc, MaxIdleConns: 8, IdleConnTimeout: 30 * time.Second}, Timeout: 60 * time.Second}
 	return knowledgeclient.New(client, c.ExecutionURL)
+}
+
+func (c *RuntimeConfig) backendMigrationClient() (*migrationclient.Client, error) {
+	tc, err := runtimeTLS(c.ExecutionCertFile, c.ExecutionKeyFile, c.ExecutionCAFile)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tc, MaxIdleConns: 2, IdleConnTimeout: 30 * time.Second}, Timeout: 65 * time.Second}
+	return migrationclient.New(client, c.ExecutionURL)
 }

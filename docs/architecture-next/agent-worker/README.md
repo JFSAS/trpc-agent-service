@@ -1,5 +1,8 @@
 # Worker V1：持久执行、固定快照与最终回复
 
+> 多后端数据迁移的当前实现、冻结/校验/切换边界见
+> [Worker 多后端迁移 V1](backend-migration-v1.md)。
+
 - **设计状态**：V1 范围已按 2026-09-07 评审收敛；Session 接缝已取得真实 PostgreSQL spike 证据。
 - **实现状态**：Worker、Control 分发/授权、Gateway Reply 与部署接线已有代码；真实 PG/NATS/SDK fixture 纵切已通过。真实模型与 Telegram 联合验收尚待完成，精确门禁见 [实现状态](implementation-status.md)。
 - **基线**：`worker` 分支，提交 `661e4a826ce8f539d8f610b3f1ef99cdbe4a4fdd`。

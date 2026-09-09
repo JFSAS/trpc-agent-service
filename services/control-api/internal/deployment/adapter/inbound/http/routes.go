@@ -16,6 +16,7 @@ type DeploymentService interface {
 	UpdateDeploymentMetadata(context.Context, application.UpdateDeploymentCommand) (domain.Deployment, error)
 	ValidateDeploymentRevision(context.Context, application.ValidateDeploymentCommand) (domain.ValidationReport, error)
 	PublishDeploymentRevision(context.Context, application.PublishDeploymentCommand) (application.PublishDeploymentResult, error)
+	MigrateAndPublish(context.Context, application.MigrateAndPublishCommand) (application.MigrateAndPublishResult, error)
 	GetDeployment(context.Context, string, string, string) (domain.Deployment, error)
 	ListDeployments(context.Context, string, string, application.Page) (application.DeploymentPage, error)
 	GetDeploymentRevision(context.Context, string, string, string, int64) (domain.PublishedRevision, error)
@@ -30,7 +31,7 @@ func NewHandler(service DeploymentService) *Handler {
 	return &Handler{service: service}
 }
 
-// Register adds the complete eight-route Deployment V1 management surface.
+// Register adds the Deployment V1 management and explicit migration surface.
 func (h *Handler) Register(routes gin.IRoutes) {
 	routes.POST("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/knowledge/:resource/import", h.importKnowledge)
 	routes.PUT("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/artifacts/:filename", h.artifact)
@@ -41,6 +42,7 @@ func (h *Handler) Register(routes gin.IRoutes) {
 	routes.PATCH("/v1/tenants/:tenant_id/deployments/:deployment_id", h.updateDeployment)
 	routes.POST("/v1/tenants/:tenant_id/deployments/:deployment_id/validate", h.validateDeploymentRevision)
 	routes.POST("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions", h.publishDeploymentRevision)
+	routes.POST("/v1/tenants/:tenant_id/deployments/:deployment_id/backend-migrations", h.migrateAndPublish)
 	routes.GET("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions", h.listDeploymentRevisions)
 	routes.GET("/v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number", h.getDeploymentRevision)
 }

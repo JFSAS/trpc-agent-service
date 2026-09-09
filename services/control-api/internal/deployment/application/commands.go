@@ -45,3 +45,18 @@ type PublishDeploymentResult struct {
 	Validation domain.ValidationReport  `json:"validation"`
 	Created    bool                     `json:"-"`
 }
+
+type MigrateAndPublishCommand struct {
+	TenantID                     string
+	DeploymentID                 string
+	ActorUserID                  string
+	IdempotencyKey               string
+	SourceRevisionNumber         int64
+	ExpectedLatestRevisionNumber *int64
+	Input                        domain.DeploymentInput
+}
+
+type MigrateAndPublishResult struct {
+	MemoryScopesCopied int                     `json:"memory_scopes_copied"`
+	Publication        PublishDeploymentResult `json:"publication"`
+}

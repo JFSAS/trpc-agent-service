@@ -37,6 +37,8 @@ export type ManifestView = {
 export type DeploymentRevision = DeploymentRevisionSummary & { input: DeploymentInput; manifest_view: ManifestView };
 export type PublishDeploymentInput = { expected_latest_revision_number: number | null; input: DeploymentInput };
 export type DeploymentPublication = { revision: DeploymentRevision; validation: DeploymentReport };
+export type BackendMigrationInput = PublishDeploymentInput & { source_revision_number: number };
+export type BackendMigrationPublication = { memory_scopes_copied: number; publication: DeploymentPublication };
 export type DeploymentPage = { deployments: Deployment[]; offset: number; limit: number; total: number };
 export type DeploymentRevisionPage = { revisions: DeploymentRevisionSummary[]; offset: number; limit: number; total: number };
 export class DeploymentApiError extends Error {
@@ -54,9 +56,9 @@ export async function deploymentRead<T>(operation: Promise<T>): Promise<T> {
     })]);
   } finally { clearTimeout(timeout); }
 }
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEPLOYMENT_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEPLOYMENT_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`/api/control${path}`, { ...init, credentials: "include", cache: "no-store", signal: controller.signal });
     const body = await response.json().catch(() => {
@@ -79,6 +81,7 @@ export const deploymentApi = {
   update(tenant: string, id: string, input: { expected_metadata_revision: number; name?: string; description?: string }) { return request<Deployment>(path(tenant, id), json("PATCH", input)); },
   validate(tenant: string, id: string, input: DeploymentInput) { return request<DeploymentReport>(`${path(tenant, id)}/validate`, json("POST", input)); },
   publish(tenant: string, id: string, input: PublishDeploymentInput, key: string) { return request<DeploymentPublication>(`${path(tenant, id)}/revisions`, json("POST", input, key)); },
+  migrateAndPublish(tenant: string, id: string, input: BackendMigrationInput, key: string) { return request<BackendMigrationPublication>(`${path(tenant, id)}/backend-migrations`, json("POST", input, key), 75_000); },
   listRevisions(tenant: string, id: string, offset = 0, limit = 20) { return request<DeploymentRevisionPage>(`${path(tenant, id)}/revisions${page(offset, limit)}`); },
   getRevision(tenant: string, id: string, n: number) { return request<DeploymentRevision>(`${path(tenant, id)}/revisions/${n}`); },
 };
@@ -89,6 +92,10 @@ export function deploymentError(error: unknown): string {
       DEPLOYMENT_METADATA_REVISION_CONFLICT: "名称或描述已被更新。你的输入已保留，请对比当前信息后再次确认。",
       IDEMPOTENCY_CONFLICT: "本次请求标识已用于不同内容。请核实历史记录后再开始新的操作。",
       DEPENDENCY_UNAVAILABLE: "凭据检查依赖暂时异常，请重试；无需重新填写凭据。",
+      BACKEND_MIGRATION_BUSY: "来源版本仍有运行中任务，请等待完成后重试迁移。",
+      BACKEND_MIGRATION_INVALID: "来源和目标必须启用不同的 Memory 后端，且使用同一个 Agent。",
+      BACKEND_MIGRATION_UNAVAILABLE: "迁移 Worker 暂时不可用，请使用同一请求标识重试。",
+      BACKEND_MIGRATION_FAILED: "目标后端已有冲突数据或迁移回读校验失败；未发布新版本。",
     };
     if (messages[error.code]) return messages[error.code];
     if (error.status === 401) return "会话已过期，请重新登录；待发布选择已保留在当前浏览器。";

@@ -43,6 +43,7 @@ func TestHandlerRegistersDeploymentAndArtifactRoutes(t *testing.T) {
 		"GET /v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/artifacts/:filename",
 		"PATCH /v1/tenants/:tenant_id/deployments/:deployment_id",
 		"POST /v1/tenants/:tenant_id/deployments",
+		"POST /v1/tenants/:tenant_id/deployments/:deployment_id/backend-migrations",
 		"POST /v1/tenants/:tenant_id/deployments/:deployment_id/revisions",
 		"POST /v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/knowledge/:resource/import",
 		"POST /v1/tenants/:tenant_id/deployments/:deployment_id/validate",
@@ -103,6 +104,13 @@ func TestHandlerEightRouteSuccessResponses(t *testing.T) {
 			}
 			return application.PublishDeploymentResult{Published: published, Validation: report, Created: true}, nil
 		},
+		migrate: func(_ context.Context, command application.MigrateAndPublishCommand) (application.MigrateAndPublishResult, error) {
+			assertInput(t, command.Input)
+			if command.IdempotencyKey != "migration-key" || command.SourceRevisionNumber != 1 || command.ActorUserID != testUserID {
+				t.Fatalf("migration command = %#v", command)
+			}
+			return application.MigrateAndPublishResult{MemoryScopesCopied: 2, Publication: application.PublishDeploymentResult{Published: published, Validation: report, Created: true}}, nil
+		},
 		listRevisions: func(_ context.Context, tenantID, deploymentID, userID string, page application.Page) (application.RevisionSummaryPage, error) {
 			if tenantID != testTenantID || deploymentID != testDeploymentID || userID != testUserID ||
 				page.Offset != 0 || page.Limit != 20 {
@@ -130,6 +138,7 @@ func TestHandlerEightRouteSuccessResponses(t *testing.T) {
 		{"patch", http.MethodPatch, deploymentPath(), `{"expected_metadata_revision":1,"name":"Production 2"}`, nil, http.StatusOK},
 		{"validate", http.MethodPost, deploymentPath() + "/validate", validInputJSON(), nil, http.StatusOK},
 		{"publish", http.MethodPost, deploymentPath() + "/revisions", validPublishJSON("null"), map[string]string{"Idempotency-Key": "publish-key"}, http.StatusCreated},
+		{"migrate", http.MethodPost, deploymentPath() + "/backend-migrations", `{"source_revision_number":1,"expected_latest_revision_number":null,"input":{"schema_version":"v1","agent":{"agent_id":"agt_fixture_agent","version_number":3},"profile":{"profile_id":"rpf_fixture_profile","revision_number":2}}}`, map[string]string{"Idempotency-Key": "migration-key"}, http.StatusCreated},
 		{"list revisions", http.MethodGet, deploymentPath() + "/revisions", "", nil, http.StatusOK},
 		{"get revision", http.MethodGet, deploymentPath() + "/revisions/1", "", nil, http.StatusOK},
 	} {
@@ -530,10 +539,18 @@ type fakeDeploymentService struct {
 	update        func(context.Context, application.UpdateDeploymentCommand) (domain.Deployment, error)
 	validate      func(context.Context, application.ValidateDeploymentCommand) (domain.ValidationReport, error)
 	publish       func(context.Context, application.PublishDeploymentCommand) (application.PublishDeploymentResult, error)
+	migrate       func(context.Context, application.MigrateAndPublishCommand) (application.MigrateAndPublishResult, error)
 	get           func(context.Context, string, string, string) (domain.Deployment, error)
 	list          func(context.Context, string, string, application.Page) (application.DeploymentPage, error)
 	getRevision   func(context.Context, string, string, string, int64) (domain.PublishedRevision, error)
 	listRevisions func(context.Context, string, string, string, application.Page) (application.RevisionSummaryPage, error)
+}
+
+func (f *fakeDeploymentService) MigrateAndPublish(ctx context.Context, command application.MigrateAndPublishCommand) (application.MigrateAndPublishResult, error) {
+	if f.migrate != nil {
+		return f.migrate(ctx, command)
+	}
+	return application.MigrateAndPublishResult{}, errors.New("unexpected MigrateAndPublish call")
 }
 
 func (f *fakeDeploymentService) CreateDeployment(ctx context.Context, command application.CreateDeploymentCommand) (application.CreateDeploymentResult, error) {
