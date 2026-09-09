@@ -126,8 +126,8 @@ func TestWorkerSequenceCompileRejectsInvalidSecondLeafAndTopology(t *testing.T) 
 			n.Kind = agentdomain.NodeKindParallel
 			in.Agent.Spec.Nodes["nested"] = n
 		},
-		"loop": func(in *CompileInput) {
-			in.Agent.Spec.Nodes["nested"] = agentdomain.Node{Kind: agentdomain.NodeKindLoop, Body: "first", MaxIterations: 2}
+		"loop without explicit bound": func(in *CompileInput) {
+			in.Agent.Spec.Nodes["nested"] = agentdomain.Node{Kind: agentdomain.NodeKindLoop, Body: "first", MaxIterations: 0}
 		},
 		"cycle": func(in *CompileInput) {
 			n := in.Agent.Spec.Nodes["nested"]
@@ -206,7 +206,7 @@ func TestWorkerSequenceSingleLeafRequiresNewReleasePin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deploymentv1.WorkerV1PlanContract != "llm-sequence-parallel-tree-v1" {
+	if deploymentv1.WorkerV1PlanContract != "llm-sequence-parallel-loop-tree-v1" {
 		t.Fatal("unexpected plan contract")
 	}
 	if err = deploymentv1.ValidateWorkerV1(wire, in.Platform.Digest); err != nil {

@@ -18,7 +18,7 @@ const WorkerV1PlatformVersion = "worker-v1"
 
 // WorkerV1PlanContract pins the supported ordered single-parent execution tree.
 // It participates in the release digest; it is not a runtime-configurable policy.
-const WorkerV1PlanContract = "llm-sequence-parallel-tree-v1"
+const WorkerV1PlanContract = "llm-sequence-parallel-loop-tree-v1"
 
 // WorkerV1SessionRuntimeRole is the fixed append-only runtime principal from
 // Database V1 provisioning. Draft profiles and historical contracts stay generic.
@@ -335,8 +335,18 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 					return err
 				}
 			}
+		case "loop":
+			if node.Body == "" || node.MaxIterations < 1 || node.MaxIterations > 32 {
+				return reject("loop requires one body and explicit max_iterations in 1..32")
+			}
+			if node.Children != nil || node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
+				return reject("loop cannot contain children, llm or data options")
+			}
+			if err := visit(node.Body, depth+1); err != nil {
+				return err
+			}
 		default:
-			return reject("only llm, sequence and parallel are supported")
+			return reject("only llm, sequence, parallel and loop are supported")
 		}
 		return nil
 	}
@@ -357,6 +367,8 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 			return leaves, nil
 		case "sequence":
 			id = node.Children[len(node.Children)-1]
+		case "loop":
+			id = node.Body
 		case "parallel":
 			return nil, reject(fmt.Sprintf("terminal parallel node %q requires an explicit successor llm in sequence", id))
 		}

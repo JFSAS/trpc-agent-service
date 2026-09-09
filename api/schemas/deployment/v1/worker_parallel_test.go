@@ -184,8 +184,8 @@ func TestWorkerParallelBoundsAndSingleParent(t *testing.T) {
 		},
 		"missing":     func(c *ManifestContent) { delete(c.AgentPlan.Nodes, "second") },
 		"unreachable": func(c *ManifestContent) { c.AgentPlan.Nodes["orphan"] = c.AgentPlan.Nodes["second"] },
-		"loop": func(c *ManifestContent) {
-			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "loop", Body: "second", MaxIterations: 1}
+		"loop without explicit bound": func(c *ManifestContent) {
+			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "loop", Body: "second", MaxIterations: 0}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

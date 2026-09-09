@@ -1,4 +1,4 @@
-// Package trpcagent adapts one fixed Worker V1 LLM to a pinned SDK Runner.
+// Package trpcagent assembles fixed Worker nodes into one pinned SDK Runner.
 // Execution retains credential authorization, candidate durability and Completion.
 package trpcagent
 
@@ -63,6 +63,8 @@ type MemorySelection struct {
 	PreloadLimit int
 }
 type NodeConfig struct {
+	Body              string
+	MaxIterations     int64
 	Kind              string
 	Children          []string
 	Instruction       string
@@ -190,6 +192,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		return Result{}, fmt.Errorf("%w: SDK run initialization", ErrModel)
 	}
 	var observed error
+	var terminalInvocationID string
 	for {
 		select {
 		case <-ctx.Done():
@@ -244,6 +247,12 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					result.Memory = &candidate
 				}
 				return result, nil
+			}
+			// The same terminal leaf executes again in a Loop. A new SDK
+			// invocation starts a new final candidate, even if it returns empty.
+			if evt != nil && evt.Author == terminal && evt.InvocationID != terminalInvocationID {
+				terminalInvocationID = evt.InvocationID
+				result.FinalText = ""
 			}
 			if evt == nil || evt.Response == nil {
 				continue

@@ -69,8 +69,14 @@ func validateSequencePlan(p domain.Plan) error {
 			return false
 		}
 		seen[id] = true
-		if n.Kind == "sequence" || n.Kind == "parallel" {
-			if len(n.Children) < 1 || len(n.Children) > 64 || n.Instruction != "" || n.ModelName != "" || n.ModelEndpoint != "" || n.ModelCredential != (domain.CredentialUse{}) || n.Temperature != nil || n.MaxOutputTokens != nil || len(n.ToolResources) > 0 || n.KnowledgeResource != "" || n.Memory != nil || n.Artifact || n.AddSessionSummary {
+		if n.Kind == "sequence" || n.Kind == "parallel" || n.Kind == "loop" {
+			if n.Instruction != "" || n.ModelName != "" || n.ModelEndpoint != "" || n.ModelCredential != (domain.CredentialUse{}) || n.Temperature != nil || n.MaxOutputTokens != nil || len(n.ToolResources) > 0 || n.KnowledgeResource != "" || n.Memory != nil || n.Artifact || n.AddSessionSummary {
+				return false
+			}
+			if n.Kind == "loop" {
+				return len(n.Children) == 0 && n.Body != "" && n.MaxIterations >= 1 && n.MaxIterations <= 32 && visit(n.Body, depth+1)
+			}
+			if len(n.Children) < 1 || len(n.Children) > 64 || n.Body != "" || n.MaxIterations != 0 {
 				return false
 			}
 			for _, child := range n.Children {
@@ -80,7 +86,7 @@ func validateSequencePlan(p domain.Plan) error {
 			}
 			return true
 		}
-		if n.Kind != "llm" || len(n.Children) > 0 || strings.TrimSpace(n.ModelName) == "" {
+		if n.Kind != "llm" || len(n.Children) > 0 || n.Body != "" || n.MaxIterations != 0 || strings.TrimSpace(n.ModelName) == "" {
 			return false
 		}
 		ep, err := url.Parse(n.ModelEndpoint)
@@ -138,9 +144,17 @@ func validateSequencePlan(p domain.Plan) error {
 	// Parallel produces branch events, not a semantic root answer. Only an
 	// explicit subsequent LLM on the ordered terminal path may supply Final.
 	terminal := p.NodeID
-	for p.Nodes[terminal].Kind == "sequence" {
-		children := p.Nodes[terminal].Children
-		terminal = children[len(children)-1]
+	for {
+		n := p.Nodes[terminal]
+		if n.Kind == "loop" {
+			terminal = n.Body
+			continue
+		}
+		if n.Kind == "sequence" {
+			terminal = n.Children[len(n.Children)-1]
+			continue
+		}
+		break
 	}
 	if p.Nodes[terminal].Kind != "llm" {
 		return application.ErrManifestInvalid
@@ -207,7 +221,7 @@ func (a *attempt) populateSequence(req *trpcagent.Request) error {
 		tools[t.Resource] = trpcagent.MCPToolConfig{Resource: t.Resource, Tool: a.mcpServices[i].Tool()}
 	}
 	for id, n := range p.Nodes {
-		out := trpcagent.NodeConfig{Kind: n.Kind, Children: append([]string(nil), n.Children...), Instruction: n.Instruction, Model: trpcagent.Model{Endpoint: n.ModelEndpoint, Name: n.ModelName, APIKey: a.nodeModelKeys[id], Temperature: n.Temperature, MaxOutputTokens: n.MaxOutputTokens}, Artifact: n.Artifact, AddSessionSummary: n.AddSessionSummary}
+		out := trpcagent.NodeConfig{Kind: n.Kind, Body: n.Body, MaxIterations: n.MaxIterations, Children: append([]string(nil), n.Children...), Instruction: n.Instruction, Model: trpcagent.Model{Endpoint: n.ModelEndpoint, Name: n.ModelName, APIKey: a.nodeModelKeys[id], Temperature: n.Temperature, MaxOutputTokens: n.MaxOutputTokens}, Artifact: n.Artifact, AddSessionSummary: n.AddSessionSummary}
 		for _, key := range n.ToolResources {
 			out.Tools = append(out.Tools, tools[key])
 		}

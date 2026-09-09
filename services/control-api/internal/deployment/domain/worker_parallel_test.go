@@ -137,8 +137,8 @@ func TestWorkerParallelCompileChecksEveryBranch(t *testing.T) {
 			n.Children = []string{"second", "first"}
 			in.Agent.Spec.Nodes["nested"] = n
 		},
-		"loop": func(in *CompileInput) {
-			in.Agent.Spec.Nodes["nested"] = agentdomain.Node{Kind: agentdomain.NodeKindLoop, Body: "second", MaxIterations: 2}
+		"loop without explicit bound": func(in *CompileInput) {
+			in.Agent.Spec.Nodes["nested"] = agentdomain.Node{Kind: agentdomain.NodeKindLoop, Body: "second", MaxIterations: 0}
 		},
 		"Summary missing": func(in *CompileInput) { delete(in.Profile.Spec.Models, "summarizer") },
 	} {
@@ -154,7 +154,7 @@ func TestWorkerParallelCompileChecksEveryBranch(t *testing.T) {
 }
 
 func TestWorkerParallelReleasePinRejectsSequenceRelease(t *testing.T) {
-	if deploymentv1.WorkerV1PlanContract != "llm-sequence-parallel-tree-v1" {
+	if deploymentv1.WorkerV1PlanContract != "llm-sequence-parallel-loop-tree-v1" {
 		t.Fatal("wrong pinned execution tree contract")
 	}
 	// Even a newly published single LLM has the new release identity. Neither

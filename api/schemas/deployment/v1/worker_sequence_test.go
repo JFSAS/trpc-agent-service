@@ -127,8 +127,8 @@ func TestWorkerSequenceRejectsNonTreeAndInactiveOptions(t *testing.T) {
 		"terminal parallel": func(c *ManifestContent) {
 			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "parallel", Children: []string{"second"}}
 		},
-		"loop": func(c *ManifestContent) {
-			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "loop", Body: "second", MaxIterations: 1}
+		"loop without explicit bound": func(c *ManifestContent) {
+			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "loop", Body: "second", MaxIterations: 0}
 		},
 		"llm children": func(c *ManifestContent) {
 			n := c.AgentPlan.Nodes["first"]

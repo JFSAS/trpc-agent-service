@@ -13,6 +13,7 @@ import (
 
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/chainagent"
+	"trpc.group/trpc-go/trpc-agent-go/agent/cycleagent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/parallelagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
@@ -49,8 +50,15 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 		}
 		seen[id] = true
 		switch n.Kind {
+		case "loop":
+			if n.Body == "" || n.MaxIterations < 1 || n.MaxIterations > 32 || len(n.Children) != 0 || compositeHasLeafConfig(n) {
+				return errors.New("invalid loop configuration")
+			}
+			if err := visit(n.Body, depth+1); err != nil {
+				return err
+			}
 		case "sequence", "parallel":
-			if n.Instruction != "" || n.Model.Endpoint != "" || n.Model.Name != "" || n.Model.APIKey != "" || n.Model.Temperature != nil || n.Model.MaxOutputTokens != nil || len(n.Children) > 64 || len(n.Children) == 0 || n.Memory != nil || n.Artifact || n.Knowledge != nil || len(n.Tools) > 0 || n.AddSessionSummary {
+			if n.Body != "" || n.MaxIterations != 0 || compositeHasLeafConfig(n) || len(n.Children) > 64 || len(n.Children) == 0 {
 				return errors.New("invalid sequence configuration")
 			}
 			for _, child := range n.Children {
@@ -59,7 +67,7 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 				}
 			}
 		case "llm":
-			if len(n.Children) > 0 {
+			if len(n.Children) > 0 || n.Body != "" || n.MaxIterations != 0 {
 				return errors.New("LLM cannot have sequence children")
 			}
 			if _, err := nodeOutputLimit(n.Model, req.MaxOutputTokens); err != nil {
@@ -171,6 +179,13 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 	var build func(string) (agent.Agent, error)
 	build = func(id string) (agent.Agent, error) {
 		n := nodes[id]
+		if n.Kind == "loop" {
+			body, err := build(n.Body)
+			if err != nil {
+				return nil, err
+			}
+			return isolatedChain{Agent: cycleagent.New(id, cycleagent.WithSubAgents([]agent.Agent{body}), cycleagent.WithMaxIterations(int(n.MaxIterations))), lifecycle: &a.lifecycle}, nil
+		}
 		if n.Kind == "sequence" || n.Kind == "parallel" {
 			children := make([]agent.Agent, 0, len(n.Children))
 			for _, child := range n.Children {
@@ -313,6 +328,8 @@ func terminalLeaf(nodes map[string]NodeConfig, id string) (string, error) {
 	switch n.Kind {
 	case "llm":
 		return id, nil
+	case "loop":
+		return terminalLeaf(nodes, n.Body)
 	case "sequence":
 		return terminalLeaf(nodes, n.Children[len(n.Children)-1])
 	default:
@@ -334,4 +351,8 @@ func (a *executionAssembly) wait(timeout time.Duration) bool {
 	case <-timer.C:
 		return false
 	}
+}
+
+func compositeHasLeafConfig(n NodeConfig) bool {
+	return n.Instruction != "" || n.Model.Endpoint != "" || n.Model.Name != "" || n.Model.APIKey != "" || n.Model.Temperature != nil || n.Model.MaxOutputTokens != nil || n.Memory != nil || n.Artifact || n.Knowledge != nil || len(n.Tools) > 0 || n.AddSessionSummary
 }

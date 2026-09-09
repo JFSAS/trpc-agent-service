@@ -33,6 +33,8 @@ type Plan struct {
 // NodePlan preserves each leaf's explicit authority inside an ordered SDK tree.
 // Resources on Plan are the initialization closure, not implicit node options.
 type NodePlan struct {
+	Body                                  string
+	MaxIterations                         int64
 	Kind                                  string
 	Children                              []string
 	Instruction, ModelEndpoint, ModelName string

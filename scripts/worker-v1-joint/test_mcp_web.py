@@ -100,7 +100,7 @@ class MCPBrowserGuards(unittest.TestCase):
     def test_cli_preserves_existing_scenarios_and_adds_mcp_without_starting(self):
         result = subprocess.run([sys.executable, '-B', str(Path(web.__file__)), '--help'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('{memory,session,artifact,knowledge,mcp,sequence,parallel}', result.stdout)
+        self.assertIn('{memory,session,artifact,knowledge,mcp,sequence,parallel,loop}', result.stdout)
         self.assertIn('{postgresql,redis}', result.stdout)
 
 

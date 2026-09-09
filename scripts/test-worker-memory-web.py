@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own one isolated stack for real browser Memory, Session, Artifact, Knowledge, MCP, Sequence or Parallel publication."""
+"""Own one isolated stack for real browser Memory, Session, Artifact, Knowledge, MCP, Sequence, Parallel or Loop publication."""
 import argparse
 import copy
 import json
@@ -371,17 +371,75 @@ def run_parallel_browser_round(h, publication, marker, evidence):
     assert len(delivery['outgoing_added']) == len(parts) and ''.join(message['text'] for message in delivery['outgoing_added']) == delivery['final_text']
     evidence.update(result='PASS', worker_used_gui_manifest=True, mcp_server='ACTUAL_TRPC_MCP_GO_V0.0.10', im='REAL_CHANNEL_LAB', embedding='NOT_USED', run_id=run_id, run=actual, route=route, candidate=candidate, completion=result['completion'], head=accepted, delivery=delivery, exchange=exchange, model_requests=calls, mcp_events=events, mcp_state=state, gateway_receipts=receipts, gateway_parts=parts, distinct_model_credential_ids=True, distinct_tool_credential_ids=True)
 
+LOOP_GUI_INSTRUCTION_SUFFIX = ' Use the actual prior iteration output without skipping the declared iteration.'
+
+
+def verify_loop_browser_publication(publication, marker):
+    from loop_joint_fixture import MODEL
+    view = publication['manifest_view']
+    assert publication['deployment_id'] == marker['deployment_id'] and publication['revision_number'] == marker['revision_number'] == 2
+    assert view['sources']['agent']['agent_id'] == marker['agent_id'] and view['sources']['agent']['version_number'] == marker['agent_version_number'] == 2
+    # Loop changes Agent structure only. Keep the explicitly selected existing
+    # Profile revision rather than manufacturing an unrelated credential update.
+    assert view['sources']['profile']['profile_id'] == marker['profile_id'] and view['sources']['profile']['revision_number'] == marker['profile_revision_number'] == 1
+    assert marker['initial_max_iterations'] == 1 and marker['published_max_iterations'] == 2
+    assert marker['profile_credential_reopen'] == {'result': 'PASS', 'profile_id': marker['profile_id'], 'profile_revision_number': 1, 'resource': 'primary', 'action': 'keep', 'input_empty': True, 'original_key_absent': True}
+    plan = view['agent_plan']; nodes = plan['nodes']
+    assert plan['root'] == 'workflow' and set(nodes) == {'workflow', 'assistant'}
+    assert nodes['workflow'] == {'kind': 'loop', 'body': 'assistant', 'max_iterations': 2}
+    node = nodes['assistant']
+    assert node['kind'] == 'llm' and node['model_resource'] == 'primary'
+    assert node['instruction'].endswith(LOOP_GUI_INSTRUCTION_SUFFIX)
+    assert node['tool_resources'] == [] and node['callable_entries'] == [] and node['knowledge_resources'] == []
+    assert not node.get('memory') and not node.get('artifact') and not node.get('add_session_summary')
+    assert set(view['resources']['models']) == {'primary'} and not view['resources']['tools'] and not view['resources']['knowledge']
+    assert view['resources']['models']['primary']['model'] == MODEL
+
+
+def run_loop_browser_round(h, publication, marker, evidence):
+    from loop_joint_fixture import NORMAL, require_exchange, require_accepted_history
+    from faults import submit, run, head, rows
+    verify_loop_browser_publication(publication, marker)
+    h.wait(lambda: h.sql('SELECT content_digest FROM worker.runtime_manifests WHERE manifest_id=' + h.quote(h.manifest_id)) == [[h.manifest_digest]], 'GUI Loop Manifest durable Worker projection')
+    assert not hasattr(h, 'mcp_url'), 'no MCP server is part of this GUI scenario'
+    model_offset = len(h.model.snapshot())
+    run_id = submit(h, NORMAL, '42')
+    delivery = h.wait_delivery(run_id)
+    result = wait_success(h, run_id)
+    actual, candidate = run(h, run_id), result['candidate']; accepted = head(h, actual)
+    route = rows(h, "SELECT request_json->'Route' AS route FROM worker.execution_runs WHERE run_id=" + h.quote(run_id))[0]['route']
+    assert (route['ManifestRef'], route['ManifestDigest'], route['DeploymentRevisionID']) == (h.manifest_id, h.manifest_digest, h.revision_id)
+    assert actual['attempts'] == actual['session_sequence'] == 1
+    assert (accepted['accepted_ref'], accepted['accepted_digest']) == (candidate['candidate_ref'], candidate['content_digest'])
+    h.wait(lambda: len(h.model.snapshot()[model_offset:]) == 2 and all(c.get('complete') for c in h.model.snapshot()[model_offset:]), 'Loop model observation completion')
+    calls = h.model.snapshot()[model_offset:]
+    exchange = require_exchange(calls, NORMAL, live=False, limit=publication['manifest_view']['execution']['max_output_tokens'])
+    require_accepted_history(None, candidate, [call['request'] for call in calls])
+    verify_sequence_candidate_content(candidate, exchange, delivery)
+    receipts = rows(h, 'SELECT stream_id,stream_sequence,outcome,reason,intent_id,run_id FROM gateway.gateway_reply_transport_receipts WHERE run_id=' + h.quote(run_id))
+    parts = rows(h, 'SELECT p.part_id,p.body,p.state FROM gateway.gateway_delivery_parts p JOIN gateway.gateway_delivery_intents i USING(intent_id) WHERE i.run_id=' + h.quote(run_id) + ' ORDER BY p.part_index')
+    assert len(receipts) == 1 and receipts[0]['outcome'] == 'ACCEPTED' and receipts[0]['reason'] == ''
+    assert receipts[0]['intent_id'] == delivery['intent_id'] and receipts[0]['run_id'] == run_id
+    assert parts and all(part['state'] == 'ACCEPTED' for part in parts) and ''.join(part['body'] for part in parts) == delivery['final_text']
+    assert len(delivery['outgoing_added']) == len(parts) and ''.join(message['text'] for message in delivery['outgoing_added']) == delivery['final_text']
+    evidence.update(result='PASS', worker_used_gui_manifest=True, mcp_server='NOT_STARTED', im='REAL_CHANNEL_LAB', embedding='NOT_USED', run_id=run_id, run=actual, route=route, candidate=candidate, completion=result['completion'], head=accepted, delivery=delivery, exchange=exchange, model_requests=calls, gateway_receipts=receipts, gateway_parts=parts)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--coordination', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--backend', choices=('postgresql', 'redis'), default='postgresql')
-    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact', 'knowledge', 'mcp', 'sequence', 'parallel'), default='memory')
+    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact', 'knowledge', 'mcp', 'sequence', 'parallel', 'loop'), default='memory')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     harness = WebHarness
     model_fixture = MemoryModelFixture
+    if args.scenario == 'loop':
+        from loop_joint_fixture import LoopHarness, MODEL
+        class LoopWebHarness(WebPublicationMixin, LoopHarness):
+            pass
+        harness = LoopWebHarness
     if args.scenario == 'parallel':
         from parallel_joint_fixture import ParallelHarness, MODELS
         class ParallelWebHarness(WebPublicationMixin, ParallelHarness):
@@ -420,8 +478,9 @@ def main():
         class RedisWebHarness(WebPublicationMixin, RedisMemoryHarness):
             pass
         harness = RedisWebHarness
-    h = harness(root, args.artifacts, **({'model_name': MODELS['research_a']} if args.scenario == 'parallel' else {'model_name': RESEARCH_MODEL} if args.scenario == 'sequence' else {'model_name': 'joint-mcp-fixture'} if args.scenario == 'mcp' else {}))
-    backend_id = None if args.scenario in ('mcp', 'sequence', 'parallel') else 'joint-knowledge-qdrant' if args.scenario == 'knowledge' else 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
+    h = harness(root, args.artifacts, **({'model_name': MODEL} if args.scenario == 'loop' else {'model_name': MODELS['research_a']} if args.scenario == 'parallel' else {'model_name': RESEARCH_MODEL} if args.scenario == 'sequence' else {'model_name': 'joint-mcp-fixture'} if args.scenario == 'mcp' else {}))
+    if args.scenario == 'loop': h.initial_max_iterations = 1
+    backend_id = None if args.scenario in ('mcp', 'sequence', 'parallel', 'loop') else 'joint-knowledge-qdrant' if args.scenario == 'knowledge' else 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
     web = None
     web_log = None
     evidence = {'result': 'PENDING', 'gui': 'PENDING', 'external_model': 'DETERMINISTIC_HTTP_FIXTURE', 'shared_services_changed': False}
@@ -430,7 +489,9 @@ def main():
         target.write_text(h.redact(json.dumps(evidence, indent=2, ensure_ascii=False)) + '\n')
     try:
         h.provision()
-        if args.scenario == 'parallel':
+        if args.scenario == 'loop':
+            h.prepare_loop()
+        elif args.scenario == 'parallel':
             h.prepare_parallel()
         elif args.scenario == 'sequence':
             h.prepare_sequence()
@@ -464,7 +525,8 @@ def main():
                     raise RuntimeError('isolated Web readiness timeout') from None
                 time.sleep(.5)
         access = Path(h.work) / 'gui-access.json'
-        secrets = {} if args.scenario in ('knowledge', 'mcp', 'sequence', 'parallel') else {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
+        secrets = {} if args.scenario in ('knowledge', 'mcp', 'sequence', 'parallel', 'loop') else {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
+        if args.scenario == 'loop': secrets = {'model_api_key': h.model.key, 'initial_max_iterations': h.initial_max_iterations}
         if args.scenario == 'knowledge': secrets = {'qdrant_api_key': h.qdrant_key, 'embedding_api_key': h.model.embedding_key}
         if args.scenario in ('mcp', 'sequence', 'parallel'):
             from mcp_joint_fixture import SELECTED
@@ -494,6 +556,8 @@ def main():
         elif args.scenario == 'session':
             assert view['runtime']['summary']['enabled'] and node['add_session_summary']
             selected_storage = view['storage_roles']['session']
+        elif args.scenario == 'loop':
+            verify_loop_browser_publication(publication, marker)
         elif args.scenario == 'parallel':
             verify_parallel_browser_publication(publication, marker, h.mcp_url)
         elif args.scenario == 'sequence':
@@ -506,7 +570,7 @@ def main():
         else:
             assert node['artifact'] == {'enabled': True, 'resource': 'artifact'}
             selected_storage = view['storage_roles']['artifact']
-        if args.scenario not in ('knowledge', 'mcp', 'sequence', 'parallel'):
+        if args.scenario not in ('knowledge', 'mcp', 'sequence', 'parallel', 'loop'):
             assert view['resources']['storage'][selected_storage]['backend']['backend_id'] == backend_id
         h.revision_id = publication['id']
         h.manifest_id, h.manifest_digest = publication['manifest_id'], publication['manifest_digest']
@@ -524,6 +588,8 @@ def main():
             assert len(state) == 1 and 'persistent orchid memory' in json.dumps(state)
             assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id=' + h.quote(run_id)) == [['APPLIED']]
             evidence.update(result='PASS', worker_used_gui_manifest=True, run_id=run_id, delivery=delivery, memory=state, completion=result['completion'])
+        elif args.scenario == 'loop':
+            run_loop_browser_round(h, publication, marker, evidence)
         elif args.scenario == 'parallel':
             run_parallel_browser_round(h, publication, marker, evidence)
         elif args.scenario == 'sequence':

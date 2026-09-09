@@ -52,7 +52,7 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 	if err = protocol.ValidateWorkerV1(content, r.ContractDigest); err != nil {
 		return domain.Plan{}, application.ErrManifestUnsupported
 	}
-	if content.AgentPlan.Nodes[content.AgentPlan.Root].Kind == "sequence" {
+	if kind := content.AgentPlan.Nodes[content.AgentPlan.Root].Kind; kind == "sequence" || kind == "loop" {
 		return projectSequence(content, m), nil
 	}
 	return projectLLM(content, content.AgentPlan.Root, m), nil

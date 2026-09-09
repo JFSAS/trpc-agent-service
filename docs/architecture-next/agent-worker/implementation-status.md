@@ -42,7 +42,11 @@ MCP 已取得真实 Streamable HTTP server、正式 HTTP 发布 + Channel Lab �
 并发装配；正式 fixture 两种相反完成顺序及分支失败取消、真实模型正常运行、既有 GUI
 同 Manifest 发布/执行均通过。共享 Memory 的真实 SDK 并行 add/load 与候选无丢写
 race 已验；PG/Redis Memory、Artifact 等真实后端并行组合仍留后续相关回归。
-下一包为 Loop，复用 SDK，不另建调度平台。
+[Loop](loop-v1.md) 的既有 body/max_iterations 已完成 Reader/Factory 与真实 SDK Cycle
+接线、定向 race、正式成功/终轮失败/恢复及 GUI 差异输出验收。真实模型两次场景均因
+额外引用/标记指令未满足而保留 FAIL；第二次已证两次调用、完整前轮上下文、正式
+接受与 Gateway/Lab 交付，不能因同文本响应独立证明末轮选择。无新增退出 DSL 或
+隐式预算。后续单独补 Parallel 真实数据后端组合及统一相关回归。
 
 ## 1. 本轮交付
 
