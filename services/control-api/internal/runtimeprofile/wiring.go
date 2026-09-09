@@ -20,6 +20,7 @@ import (
 // ExecutionVerifier and AuthenticateWorker opt into the internal runtime HTTP
 // route as a pair. The current process bootstrap leaves both unset.
 type Dependencies struct {
+	FinalArtifacts           application.FinalArtifactAuthorizer
 	ManagedCredentialTargets application.ManagedCredentialTargetResolver
 	Backends                 application.BackendAccess
 	ExecutionVerifier        application.ExecutionAuthorizationVerifier
@@ -59,11 +60,11 @@ func NewModule(deps Dependencies) (*Module, error) {
 		ManagedCredentialTargets: deps.ManagedCredentialTargets,
 		Store:                    store, TenantAccess: deps.TenantAccess, Backends: deps.Backends,
 		Credentials: store, Cipher: cipher, OwnerAccess: deps.OwnerAccess,
-		ExecutionVerifier: deps.ExecutionVerifier,
-		NewCredentialID:   generateCredentialID,
-		NewProfileID:      func() (string, error) { return generateID("rpf") },
-		NewRevisionID:     func() (string, error) { return generateID("rpr") },
-		Now:               time.Now,
+		ExecutionVerifier: deps.ExecutionVerifier, FinalArtifacts: deps.FinalArtifacts,
+		NewCredentialID: generateCredentialID,
+		NewProfileID:    func() (string, error) { return generateID("rpf") },
+		NewRevisionID:   func() (string, error) { return generateID("rpr") },
+		Now:             time.Now,
 	})
 	protected := deps.Routes.Group("", deps.Authenticate)
 	httpadapter.NewHandler(service).Register(protected)

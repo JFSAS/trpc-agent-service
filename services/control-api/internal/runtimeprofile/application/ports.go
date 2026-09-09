@@ -41,6 +41,7 @@ type Store interface {
 }
 
 type Dependencies struct {
+	FinalArtifacts           FinalArtifactAuthorizer
 	ManagedCredentialTargets ManagedCredentialTargetResolver
 	Backends                 BackendAccess
 	ExecutionVerifier        ExecutionAuthorizationVerifier
