@@ -232,3 +232,20 @@ WeCom `subscribe` 可能替换同 Bot 的其他客户端，不称为只读检查
 所有 Provider 共用原有每 principal/instance 每秒 2 次 claim 限流；不按 Provider 新增
 独立配额。普通 `wecom_connection` 与诊断 consumer 保持分离。此源码变更不修改现有
 运行配置；两个诊断 runner 的开关与有界连接实现由 Gateway 部署文档说明。
+
+### 7.1 已部署环境补齐预检授权
+
+在 `CONTROL_CHANNEL_CONFIG_FILE` 指向的 JSON 中，找到与 Gateway mTLS 身份匹配的
+`workloads` 项，在现有 `consumers` 数组中追加 `wecom_preflight`，不要替换或扩展其他
+workload 的权限。`wecom_connection` 只授权普通连接，不能替代诊断 consumer。
+
+该文件在启动时读取；修改挂载文件后重启 Control 才会生效，单独这个配置变更无需重建
+镜像。先保存原文件，核对 JSON 与差异，并避开管理面正在保存或发布的操作窗口。
+Gateway 在 `GATEWAY_ACCOUNT_SOURCE=control` 下默认开启企业微信诊断 runner，可显式
+配置 `GATEWAY_WECOM_PREFLIGHT_ENABLED=true`；环境变量变更需通过容器重新创建生效。
+
+验证应分别记录：服务启动、真实预检 COMPLETED 与检查结果、实际消息及回复。
+合成凭据返回 `WECOM_AUTH_REJECTED` 可证明执行和结果回传，不证明真实凭据认证成功。
+回退授权配置前先停止新诊断并等待在途租约结束；不要删除任务历史。配置回退不会恢复
+企业微信被替换的外部连接。相关实际验收见
+[2026-09-09 企业微信验收记录](../../docs/architecture-next/channel-gateway/wecom-live-acceptance-20260909.md)。
