@@ -9,6 +9,7 @@ import (
 // Plan is the runtime-ready projection of one fully validated immutable
 // Manifest. It carries only the V1 closure, never mutable Profile values.
 type Plan struct {
+	Executors                                                  map[string]ExecutorPlan
 	Nodes                                                      map[string]NodePlan
 	Knowledges                                                 map[string]KnowledgePlan
 	Tools                                                      []ToolPlan
@@ -33,6 +34,7 @@ type Plan struct {
 // NodePlan preserves each leaf's explicit authority inside an ordered SDK tree.
 // Resources on Plan are the initialization closure, not implicit node options.
 type NodePlan struct {
+	Workspace                             *WorkspacePlan
 	Body                                  string
 	MaxIterations                         int64
 	Kind                                  string
@@ -179,9 +181,17 @@ func (p Plan) Uses() []CredentialUse {
 }
 
 type RuntimeResult struct {
+	Attachments                            []Attachment
 	MemoryDigest                           string
 	MemoryTimeout                          time.Duration
 	FinalText                              string
 	Snapshot                               []byte
 	InputTokens, OutputTokens, TotalTokens int64
 }
+
+// WorkspacePlan is an explicit node selection, never authority from resource presence.
+type WorkspacePlan struct {
+	ExecutorResource string
+	Tools            []string
+}
+type ExecutorPlan struct{ Kind, AdapterVersion string }

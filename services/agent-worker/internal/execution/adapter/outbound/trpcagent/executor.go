@@ -15,6 +15,7 @@ import (
 
 	replycodec "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
 	replywire "github.com/liuzengh/trpc-agent-service/gen/events/execution/v1"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	openaiapi "github.com/openai/openai-go"
 	openaioption "github.com/openai/openai-go/option"
 	"go.opentelemetry.io/otel/attribute"
@@ -27,6 +28,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session/summary"
+	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
 const SDKVersion = "v1.11.2"
@@ -62,7 +64,9 @@ type MemorySelection struct {
 	Tools        []string
 	PreloadLimit int
 }
+type WorkspaceConfig struct{ ExecTool, SaveArtifactTool tool.CallableTool }
 type NodeConfig struct {
+	WorkspaceTools    []string
 	Body              string
 	MaxIterations     int64
 	Kind              string
@@ -76,6 +80,7 @@ type NodeConfig struct {
 	AddSessionSummary bool
 }
 type Request struct {
+	Workspace                             *WorkspaceConfig
 	Nodes                                 map[string]NodeConfig
 	Tools                                 []MCPToolConfig
 	Knowledge                             *KnowledgeConfig
@@ -91,10 +96,11 @@ type Request struct {
 }
 type Usage struct{ InputTokens, OutputTokens, TotalTokens int }
 type Result struct {
-	Memory    *MemoryCandidate
-	FinalText string
-	Snapshot  []byte
-	Usage     Usage
+	Attachments []domain.Attachment
+	Memory      *MemoryCandidate
+	FinalText   string
+	Snapshot    []byte
+	Usage       Usage
 }
 
 type Executor struct {
@@ -245,6 +251,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 						return Result{}, sealErr
 					}
 					result.Memory = &candidate
+				}
+				if assembly.workspace != nil {
+					result.Attachments = assembly.workspace.Attachments()
 				}
 				return result, nil
 			}

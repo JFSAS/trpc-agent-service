@@ -112,7 +112,7 @@ class ChannelLab:
             if row['direction'] != 'out':
                 continue
             body = json.loads(row['body'])
-            messages.append({'row_id': row['id'], 'bot_id': row['bot'], 'chat_id': str(body['chat']['id']), 'message_id': body['message_id'], 'text': body['text']})
+            messages.append({'row_id': row['id'], 'bot_id': row['bot'], 'chat_id': str(body['chat']['id']), 'message_id': body['message_id'], 'text': body.get('text', ''), **({'document': body['document']} if 'document' in body else {})})
         return messages
 
     def close(self):
@@ -181,7 +181,7 @@ class LabGateway:
         round_ = self.rounds[run_id]
         h, lab = self.h, self.h.gateway_fixture
         result = []
-        query = "SELECT i.intent_id,to_json(string_agg(p.body,'' ORDER BY p.part_index))::text,bool_and(p.state='ACCEPTED')::text,count(*)::text FROM gateway.gateway_delivery_intents i JOIN gateway.gateway_delivery_parts p ON p.intent_id=i.intent_id WHERE i.run_id=" + original._literal(run_id) + ' GROUP BY i.intent_id'
+        query = "SELECT i.intent_id,to_json(string_agg(CASE WHEN p.part_index < i.part_count - COALESCE(jsonb_array_length(i.intent->'Attachments'),0) THEN p.body ELSE '' END,'' ORDER BY p.part_index))::text,bool_and(p.state='ACCEPTED')::text,count(*)::text FROM gateway.gateway_delivery_intents i JOIN gateway.gateway_delivery_parts p ON p.intent_id=i.intent_id WHERE i.run_id=" + original._literal(run_id) + ' GROUP BY i.intent_id'
         def accepted():
             result[:] = h.sql(query)
             return len(result) == 1 and result[0][2] == 'true'

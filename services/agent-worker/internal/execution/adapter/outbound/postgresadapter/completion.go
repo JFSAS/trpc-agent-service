@@ -6,11 +6,9 @@ import (
 	"errors"
 	app "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	codec "github.com/liuzengh/trpc-agent-service/api/events/execution/v1"
-	wire "github.com/liuzengh/trpc-agent-service/gen/events/execution/v1"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
@@ -44,6 +42,9 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domai
 	defer func() { telemetrytrace.End(span, resultErr) }()
 	commitAttempted := false
 	if f.Status != domain.Succeeded && f.Status != domain.Failed {
+		return domain.Completion{}, domain.ErrInvalid
+	}
+	if (f.Status != domain.Succeeded && len(f.Attachments) != 0) || domain.ValidateAttachments(f.Attachments) != nil {
 		return domain.Completion{}, domain.ErrInvalid
 	}
 	if f.MemoryDigest != "" && (f.Status != domain.Succeeded || !domain.DigestValid(f.MemoryDigest)) {
@@ -100,12 +101,7 @@ func (l *Ledger) Complete(ctx context.Context, f domain.Finish) (completed domai
 	if f.FinalText != "" && now.Before(r.ReplyDeadline) {
 		c.FinalIntentID = domain.StableID("fin", r.Request.RunID)
 		c.ReplyDisposition = "FINAL"
-		event := wire.ReplyIntent{SchemaVersion: 1, IntentID: c.FinalIntentID, AdmissionID: r.Request.AdmissionID, RunID: r.Request.RunID, Kind: "final", Sequence: 1, Deadline: r.ReplyDeadline.UTC().Format(time.RFC3339Nano), Content: wire.FinalTextContent{Type: "text", Text: f.FinalText}, Execution: wire.ReplyExecution{AttemptID: c.AttemptID, CompletionID: c.CompletionID, Generation: f.Grant.Generation}}
-		payload, err = codec.EncodeReplyIntent(event)
-		if err != nil {
-			return domain.Completion{}, err
-		}
-		digest, err = codec.ReplyIntentDigest(event)
+		payload, digest, err = app.EncodeFinalIntent(r, c.AttemptID, f.Grant.Generation, f.FinalText, f.Attachments)
 		if err != nil {
 			return domain.Completion{}, err
 		}

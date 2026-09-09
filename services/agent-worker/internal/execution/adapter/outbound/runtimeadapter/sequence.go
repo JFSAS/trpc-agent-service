@@ -14,6 +14,13 @@ import (
 )
 
 func cloneSequencePlan(p domain.Plan) domain.Plan {
+	if p.Executors != nil {
+		fixed := make(map[string]domain.ExecutorPlan, len(p.Executors))
+		for k, v := range p.Executors {
+			fixed[k] = v
+		}
+		p.Executors = fixed
+	}
 	if p.Nodes != nil {
 		original := p.Nodes
 		p.Nodes = make(map[string]domain.NodePlan, len(original))
@@ -27,6 +34,11 @@ func cloneSequencePlan(p domain.Plan) domain.Plan {
 			if n.MaxOutputTokens != nil {
 				v := *n.MaxOutputTokens
 				n.MaxOutputTokens = &v
+			}
+			if n.Workspace != nil {
+				v := *n.Workspace
+				v.Tools = append([]string(nil), v.Tools...)
+				n.Workspace = &v
 			}
 			if n.Memory != nil {
 				v := *n.Memory
@@ -48,6 +60,9 @@ func cloneSequencePlan(p domain.Plan) domain.Plan {
 }
 
 func validateSequencePlan(p domain.Plan) error {
+	if err := validateWorkspacePlan(p); err != nil {
+		return err
+	}
 	if len(p.Nodes) == 0 {
 		if len(p.Knowledges) > 0 {
 			return application.ErrManifestInvalid
@@ -70,7 +85,7 @@ func validateSequencePlan(p domain.Plan) error {
 		}
 		seen[id] = true
 		if n.Kind == "sequence" || n.Kind == "parallel" || n.Kind == "loop" {
-			if n.Instruction != "" || n.ModelName != "" || n.ModelEndpoint != "" || n.ModelCredential != (domain.CredentialUse{}) || n.Temperature != nil || n.MaxOutputTokens != nil || len(n.ToolResources) > 0 || n.KnowledgeResource != "" || n.Memory != nil || n.Artifact || n.AddSessionSummary {
+			if n.Instruction != "" || n.ModelName != "" || n.ModelEndpoint != "" || n.ModelCredential != (domain.CredentialUse{}) || n.Temperature != nil || n.MaxOutputTokens != nil || len(n.ToolResources) > 0 || n.KnowledgeResource != "" || n.Memory != nil || n.Artifact || n.AddSessionSummary || n.Workspace != nil {
 				return false
 			}
 			if n.Kind == "loop" {
@@ -222,6 +237,9 @@ func (a *attempt) populateSequence(req *trpcagent.Request) error {
 	}
 	for id, n := range p.Nodes {
 		out := trpcagent.NodeConfig{Kind: n.Kind, Body: n.Body, MaxIterations: n.MaxIterations, Children: append([]string(nil), n.Children...), Instruction: n.Instruction, Model: trpcagent.Model{Endpoint: n.ModelEndpoint, Name: n.ModelName, APIKey: a.nodeModelKeys[id], Temperature: n.Temperature, MaxOutputTokens: n.MaxOutputTokens}, Artifact: n.Artifact, AddSessionSummary: n.AddSessionSummary}
+		if n.Workspace != nil {
+			out.WorkspaceTools = append([]string(nil), n.Workspace.Tools...)
+		}
 		for _, key := range n.ToolResources {
 			out.Tools = append(out.Tools, tools[key])
 		}
