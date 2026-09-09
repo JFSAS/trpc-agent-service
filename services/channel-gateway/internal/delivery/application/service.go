@@ -108,7 +108,7 @@ func (s *Acceptor) AcceptReplyIntent(parent context.Context, i domain.Intent) (d
 	if proof != expected {
 		return s.finalReceipt(ctx, i, digest, domain.ErrUnauthorized)
 	}
-	parts, err := domain.PlanText(target, i.Text)
+	parts, err := domain.Plan(target, i)
 	if err != nil {
 		return s.finalReceipt(ctx, i, digest, err)
 	}

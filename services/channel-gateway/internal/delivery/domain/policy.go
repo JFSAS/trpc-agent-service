@@ -12,6 +12,9 @@ import (
 )
 
 func (i Intent) Validate() error {
+	if err := validateAttachments(i.Attachments); err != nil {
+		return err
+	}
 	for _, id := range []string{i.ID, i.AdmissionID, i.RunID, i.AttemptID, i.CompletionID} {
 		if !identifier.MatchString(id) {
 			return ErrInvalid
@@ -33,9 +36,10 @@ func IntentDigest(i Intent) (string, error) {
 		return "", err
 	}
 	content := struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}{"text", i.Text}
+		Type        string       `json:"type"`
+		Text        string       `json:"text"`
+		Attachments []Attachment `json:"attachments,omitempty"`
+	}{"text", i.Text, i.Attachments}
 	execution := struct {
 		AttemptID    string `json:"attempt_id"`
 		Generation   int64  `json:"generation"`
@@ -72,7 +76,7 @@ func (p Prepared) Validate() error {
 	if err != nil || p.Digest != digest {
 		return ErrInvalid
 	}
-	parts, err := PlanText(p.Target, p.Intent.Text)
+	parts, err := Plan(p.Target, p.Intent)
 	if err != nil {
 		return err
 	}
@@ -146,7 +150,7 @@ func RequestDigest(c Claim) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	parts, err := PlanText(c.Target, c.Intent.Text)
+	parts, err := Plan(c.Target, c.Intent)
 	if err != nil {
 		return "", err
 	}

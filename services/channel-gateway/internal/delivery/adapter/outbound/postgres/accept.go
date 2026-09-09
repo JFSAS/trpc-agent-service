@@ -105,7 +105,7 @@ func (s *Store) Get(ctx context.Context, id string) (domain.Snapshot, error) {
 	if !found {
 		return domain.Snapshot{}, domain.ErrNotFound
 	}
-	rows, err := s.pool.Query(ctx, `SELECT part_id,intent_id,part_index,body,state,attempt_number FROM gateway_delivery_parts WHERE intent_id=$1 ORDER BY part_index LIMIT 64`, id)
+	rows, err := s.pool.Query(ctx, `SELECT part_id,intent_id,part_index,body,state,attempt_number FROM gateway_delivery_parts WHERE intent_id=$1 ORDER BY part_index`, id)
 	if err != nil {
 		return domain.Snapshot{}, databaseError(ctx, err)
 	}

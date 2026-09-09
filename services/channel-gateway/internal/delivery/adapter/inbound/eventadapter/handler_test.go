@@ -3,6 +3,7 @@ package eventadapter_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func TestHandleTransfersExactValidatedFinal(t *testing.T) {
 	ctx := context.Background()
 	h, err := eventadapter.NewHandler(acceptFunc(func(gotCtx context.Context, got domain.Intent) (domain.Receipt, error) {
 		calls++
-		if gotCtx != ctx || got != expected {
+		if gotCtx != ctx || !reflect.DeepEqual(got, expected) {
 			t.Fatalf("input was not transferred exactly: %#v", got)
 		}
 		return receipt, nil

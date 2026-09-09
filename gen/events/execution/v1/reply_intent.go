@@ -18,8 +18,18 @@ type ReplyIntent struct {
 
 // FinalTextContent is defined by the versioned execution JSON Schema.
 type FinalTextContent struct {
-	Text string `json:"text"`
-	Type string `json:"type"`
+	Attachments []ReplyAttachment `json:"attachments,omitempty"`
+	Text        string            `json:"text"`
+	Type        string            `json:"type"`
+}
+
+// ReplyAttachment is defined by the versioned execution JSON Schema.
+type ReplyAttachment struct {
+	MimeType  string `json:"mime_type"`
+	Name      string `json:"name"`
+	Sha256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
+	Version   int64  `json:"version"`
 }
 
 // ReplyExecution is defined by the versioned execution JSON Schema.

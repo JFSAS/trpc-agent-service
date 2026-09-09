@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gowebpki/jcs"
 	dto "github.com/liuzengh/trpc-agent-service/gen/events/execution/v1"
@@ -104,6 +106,23 @@ func decodeReplyIntent(raw []byte) ([]byte, dto.ReplyIntent, error) {
 	}
 	if len(event.Content.Text) > MaxFinalTextBytes || strings.TrimSpace(event.Content.Text) == "" {
 		return nil, zero, invalidReply("text boundary")
+	}
+	seen := map[string]map[int64]bool{}
+	for _, a := range event.Content.Attachments {
+		media, _, mimeErr := mime.ParseMediaType(a.MimeType)
+		if mimeErr != nil || !strings.Contains(media, "/") {
+			return nil, zero, invalidReply("attachment MIME")
+		}
+		if a.Name == "." || a.Name == ".." || len(a.Name) > 255 || strings.IndexFunc(a.Name, unicode.IsControl) >= 0 {
+			return nil, zero, invalidReply("attachment name")
+		}
+		if seen[a.Name] == nil {
+			seen[a.Name] = map[int64]bool{}
+		}
+		if seen[a.Name][a.Version] {
+			return nil, zero, invalidReply("duplicate attachment")
+		}
+		seen[a.Name][a.Version] = true
 	}
 	deadline, err := time.Parse(time.RFC3339Nano, event.Deadline)
 	if err != nil || deadline.IsZero() || deadline.Year() < 1 || deadline.UTC().Format(time.RFC3339Nano) != event.Deadline {

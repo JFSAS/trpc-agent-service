@@ -40,5 +40,8 @@ func (h *Handler) Handle(ctx context.Context, raw []byte) (d.Receipt, error) {
 		return d.Receipt{}, d.ErrInvalid
 	}
 	intent := d.Intent{ID: event.IntentID, AdmissionID: event.AdmissionID, RunID: event.RunID, AttemptID: event.Execution.AttemptID, CompletionID: event.Execution.CompletionID, ExecutionGeneration: event.Execution.Generation, Sequence: event.Sequence, Text: event.Content.Text, Deadline: deadline}
+	for _, a := range event.Content.Attachments {
+		intent.Attachments = append(intent.Attachments, d.Attachment{Name: a.Name, Version: a.Version, MIMEType: a.MimeType, SizeBytes: a.SizeBytes, SHA256: a.Sha256})
+	}
 	return h.acceptor.AcceptReplyIntent(ctx, intent)
 }
