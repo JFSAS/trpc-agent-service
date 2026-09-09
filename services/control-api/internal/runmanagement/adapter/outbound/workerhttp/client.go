@@ -86,6 +86,6 @@ func (c *Client) ListAudit(ctx context.Context, tenant string, offset, limit int
 
 func (c *Client) Usage(ctx context.Context, tenant string) (governancev1.UsageSummary, error) {
 	var summary governancev1.UsageSummary
-	err := c.get(ctx, "/internal/v1/management/tenants/"+url.PathEscape(tenant)+"/usage-summary", &summary)
+	err := c.get(ctx, "/internal/v1/management/tenants/"+url.PathEscape(tenant)+"/usage-summary", nil, &summary)
 	return summary, err
 }
