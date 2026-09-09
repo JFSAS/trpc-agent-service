@@ -23,17 +23,29 @@ const summaryColumns = `r.run_id,r.session_id,r.status,r.wait_reason,r.attempts,
  r.accepted_at,r.execution_deadline,
  COALESCE(c.reason,''),COALESCE(c.memory_status,''),
  CASE WHEN o.intent_id IS NULL THEN 'NOT_CREATED' WHEN o.published_at IS NULL THEN 'PENDING' ELSE 'HANDED_OFF' END,
- COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.total_tokens,0)`
+ COALESCE(u.input_tokens,0),COALESCE(u.output_tokens,0),COALESCE(u.total_tokens,0),COALESCE(u.usage_records,0)`
 
 func scanSummary(row pgx.Row) (managementv1.RunSummary, error) {
 	var out managementv1.RunSummary
+	var usageRecords int64
 	if err := row.Scan(&out.RunID, &out.SessionID, &out.Status, &out.WaitReason, &out.Attempts,
 		&out.AcceptedAt, &out.ExecutionUntil, &out.FailureReason, &out.MemoryStatus,
-		&out.ReplyStatus, &out.InputTokens, &out.OutputTokens, &out.TotalTokens); err != nil {
+		&out.ReplyStatus, &out.InputTokens, &out.OutputTokens, &out.TotalTokens, &usageRecords); err != nil {
 		return out, err
 	}
 	out.Stage = stage(out)
+	out.UsageStatus = usageStatus(out, usageRecords)
 	return out, nil
+}
+
+func usageStatus(run managementv1.RunSummary, records int64) string {
+	if records == 0 {
+		return "UNAVAILABLE"
+	}
+	if run.Status == "SUCCEEDED" && records == int64(run.Attempts) {
+		return "COMPLETE"
+	}
+	return "PARTIAL"
 }
 
 func stage(run managementv1.RunSummary) string {
@@ -66,7 +78,7 @@ func (r *Reader) List(ctx context.Context, tenant string, offset, limit int) (ma
  FROM execution_runs r
  LEFT JOIN execution_completions c ON c.tenant_id=r.tenant_id AND c.run_id=r.run_id
  LEFT JOIN execution_reply_outbox o ON o.tenant_id=r.tenant_id AND o.run_id=r.run_id
- LEFT JOIN LATERAL (SELECT COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,COALESCE(sum(total_tokens),0) total_tokens FROM execution_model_usage WHERE tenant_id=r.tenant_id AND run_id=r.run_id) u ON true
+ LEFT JOIN LATERAL (SELECT count(*) usage_records,COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,COALESCE(sum(total_tokens),0) total_tokens FROM execution_model_usage WHERE tenant_id=r.tenant_id AND run_id=r.run_id) u ON true
  WHERE r.tenant_id=$1 ORDER BY r.accepted_at DESC,r.run_id DESC OFFSET $2 LIMIT $3`, tenant, offset, limit)
 	if err != nil {
 		return page, err
@@ -85,6 +97,7 @@ func (r *Reader) List(ctx context.Context, tenant string, offset, limit int) (ma
 func (r *Reader) Get(ctx context.Context, tenant, runID string) (managementv1.RunDetail, error) {
 	var out managementv1.RunDetail
 	var acceptedHead, acceptedDigest string
+	var usageRecords int64
 	err := r.pool.QueryRow(ctx, `SELECT `+summaryColumns+`,r.admission_id,
  COALESCE(r.request_json->'Route'->>'ManifestRef',''),COALESCE(r.request_json->'Route'->>'ManifestDigest',''),
  s.accepted_ref,s.accepted_digest
@@ -92,11 +105,11 @@ func (r *Reader) Get(ctx context.Context, tenant, runID string) (managementv1.Ru
  JOIN execution_sessions s ON s.tenant_id=r.tenant_id AND s.session_id=r.session_id
  LEFT JOIN execution_completions c ON c.tenant_id=r.tenant_id AND c.run_id=r.run_id
  LEFT JOIN execution_reply_outbox o ON o.tenant_id=r.tenant_id AND o.run_id=r.run_id
- LEFT JOIN LATERAL (SELECT COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,COALESCE(sum(total_tokens),0) total_tokens FROM execution_model_usage WHERE tenant_id=r.tenant_id AND run_id=r.run_id) u ON true
+ LEFT JOIN LATERAL (SELECT count(*) usage_records,COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,COALESCE(sum(total_tokens),0) total_tokens FROM execution_model_usage WHERE tenant_id=r.tenant_id AND run_id=r.run_id) u ON true
  WHERE r.tenant_id=$1 AND r.run_id=$2`, tenant, runID).Scan(
 		&out.RunID, &out.SessionID, &out.Status, &out.WaitReason, &out.Attempts,
 		&out.AcceptedAt, &out.ExecutionUntil, &out.FailureReason, &out.MemoryStatus,
-		&out.ReplyStatus, &out.InputTokens, &out.OutputTokens, &out.TotalTokens,
+		&out.ReplyStatus, &out.InputTokens, &out.OutputTokens, &out.TotalTokens, &usageRecords,
 		&out.AdmissionID, &out.ManifestRef, &out.ManifestDigest, &acceptedHead, &acceptedDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, ErrNotFound
@@ -105,6 +118,7 @@ func (r *Reader) Get(ctx context.Context, tenant, runID string) (managementv1.Ru
 		return out, err
 	}
 	out.Stage = stage(out.RunSummary)
+	out.UsageStatus = usageStatus(out.RunSummary, usageRecords)
 	if acceptedHead != "" {
 		out.SessionHead = acceptedHead
 	}
@@ -159,9 +173,9 @@ func (r *Reader) Get(ctx context.Context, tenant, runID string) (managementv1.Ru
 func timeline(run managementv1.RunDetail) []managementv1.TimelineEvent {
 	events := []managementv1.TimelineEvent{{Source: "worker", Category: "RUN_ACCEPTED", Status: "SUCCEEDED", OccurredAt: run.AcceptedAt}}
 	for _, attempt := range run.AttemptsLog {
-		events = append(events, managementv1.TimelineEvent{Source: "worker", Category: "ATTEMPT_CREATED", Status: attempt.Status, Reason: attempt.Reason, OccurredAt: attempt.CreatedAt, Attributes: map[string]any{"attempt_id": attempt.AttemptID, "generation": attempt.Generation, "worker_id": attempt.WorkerID}})
+		events = append(events, managementv1.TimelineEvent{Source: "worker", Category: "ATTEMPT_CREATED", Status: "CREATED", OccurredAt: attempt.CreatedAt, Attributes: map[string]any{"attempt_id": attempt.AttemptID, "generation": attempt.Generation, "worker_id": attempt.WorkerID}})
 		if attempt.StartedAt != nil {
-			events = append(events, managementv1.TimelineEvent{Source: "worker", Category: "AGENT_STARTED", Status: attempt.Status, OccurredAt: *attempt.StartedAt, Attributes: map[string]any{"attempt_id": attempt.AttemptID}})
+			events = append(events, managementv1.TimelineEvent{Source: "worker", Category: "AGENT_STARTED", Status: "RUNNING", OccurredAt: *attempt.StartedAt, Attributes: map[string]any{"attempt_id": attempt.AttemptID}})
 		}
 		if attempt.EndedAt != nil {
 			events = append(events, managementv1.TimelineEvent{Source: "worker", Category: "ATTEMPT_ENDED", Status: attempt.Status, Reason: attempt.Reason, OccurredAt: *attempt.EndedAt, Attributes: map[string]any{"attempt_id": attempt.AttemptID}})

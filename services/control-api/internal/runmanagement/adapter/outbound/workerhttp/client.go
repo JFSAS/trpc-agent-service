@@ -28,9 +28,10 @@ func New(client *http.Client, base string) (*Client, error) {
 	return &Client{client: client, base: u}, nil
 }
 
-func (c *Client) get(ctx context.Context, path string, target any) error {
+func (c *Client) get(ctx context.Context, path string, query url.Values, target any) error {
 	u := *c.base
 	u.Path += path
+	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return application.ErrUnavailable
@@ -58,22 +59,26 @@ func (c *Client) get(ctx context.Context, path string, target any) error {
 	return nil
 }
 
-func pagePath(tenant, resource string, offset, limit int) string {
-	return fmt.Sprintf("/internal/v1/management/tenants/%s/%s?offset=%s&limit=%s", url.PathEscape(tenant), resource, strconv.Itoa(offset), strconv.Itoa(limit))
+func pagePath(tenant, resource string) string {
+	return fmt.Sprintf("/internal/v1/management/tenants/%s/%s", url.PathEscape(tenant), resource)
+}
+
+func pageQuery(offset, limit int) url.Values {
+	return url.Values{"offset": []string{strconv.Itoa(offset)}, "limit": []string{strconv.Itoa(limit)}}
 }
 
 func (c *Client) ListRuns(ctx context.Context, tenant string, offset, limit int) (managementv1.RunPage, error) {
 	var page managementv1.RunPage
-	err := c.get(ctx, pagePath(tenant, "runs", offset, limit), &page)
+	err := c.get(ctx, pagePath(tenant, "runs"), pageQuery(offset, limit), &page)
 	return page, err
 }
 func (c *Client) GetRun(ctx context.Context, tenant, runID string) (managementv1.RunDetail, error) {
 	var run managementv1.RunDetail
-	err := c.get(ctx, "/internal/v1/management/tenants/"+url.PathEscape(tenant)+"/runs/"+url.PathEscape(runID), &run)
+	err := c.get(ctx, "/internal/v1/management/tenants/"+url.PathEscape(tenant)+"/runs/"+url.PathEscape(runID), nil, &run)
 	return run, err
 }
 func (c *Client) ListAudit(ctx context.Context, tenant string, offset, limit int) (managementv1.AuditPage, error) {
 	var page managementv1.AuditPage
-	err := c.get(ctx, pagePath(tenant, "audit-events", offset, limit), &page)
+	err := c.get(ctx, pagePath(tenant, "audit-events"), pageQuery(offset, limit), &page)
 	return page, err
 }

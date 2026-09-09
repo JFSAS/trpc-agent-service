@@ -30,7 +30,13 @@ Session 正文、凭据、工具参数或工具结果。Web 不连接 Worker 数
 
 详情按时间组合 `RUN_ACCEPTED`、Attempt 创建/开始/结束、Completion 与 Reply 交接事实。Memory
 只展示当前状态；现有账本没有 Memory Finalizer 的完成时间，因此 V1 不伪造时间线事件。
+Attempt 创建和 Agent 开始事件分别使用 `CREATED`、`RUNNING`，最终状态和失败原因只出现在
+`ATTEMPT_ENDED` 及 Attempt 概览中，避免把后来发生的失败倒填到较早时间点。
 分页使用 `accepted_at DESC, run_id DESC`；所有运行查询先限定 `tenant_id`。
+
+模型用量带有 `usage_status`：没有持久化行时为 `UNAVAILABLE`，页面显示“未采集”而不是数字
+`0`；存在部分记录时为 `PARTIAL`；成功 Run 的每个 Attempt 都有记录时才为 `COMPLETE`。
+该状态只描述当前 `execution_model_usage` 账本的覆盖度，不代表 Provider 账单或完整成本。
 
 ## 3. 审计事实
 
@@ -62,3 +68,7 @@ V1 的跨服务 offset 聚合限定最近 100 条，避免为了深分页而无�
 - 列表不包含请求正文、输出正文、凭据或工具参数。
 - Control 与 Worker 审计事件按时间合并后再做全局分页，不分别分页后简单拼接。
 - Worker 不可用时返回稳定 `RUN_MANAGEMENT_UNAVAILABLE`，页面不展示伪造的空成功结果。
+- Control 的 Worker HTTP Client 必须分别编码 URL Path 和 Query；HTTPS 回归测试检查两个列表
+  路由收到原始 `/runs`、`/audit-events` 路径及独立的 `offset`、`limit` 参数。
+- 翻页请求成功后才提交页面 offset；请求失败时保留上一成功页及其页码，首次失败不显示
+  “暂无记录”。

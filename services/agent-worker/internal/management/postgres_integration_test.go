@@ -49,11 +49,18 @@ func TestManagementProjectionPostgres(t *testing.T) {
 	}
 	reader := management.NewReader(runtime)
 	page, err := reader.List(ctx, "tenant", 0, 25)
-	if err != nil || page.Total != 1 || len(page.Runs) != 1 || page.Runs[0].ReplyStatus != "PENDING" {
+	if err != nil || page.Total != 1 || len(page.Runs) != 1 || page.Runs[0].ReplyStatus != "PENDING" || page.Runs[0].UsageStatus != "UNAVAILABLE" {
+		t.Fatal(page, err)
+	}
+	if _, err = runtime.Exec(ctx, `INSERT INTO execution_model_usage(operation_id,tenant_id,run_id,attempt_id,input_tokens,output_tokens,total_tokens,result_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, "usage", "tenant", "run", grant.AttemptID, 12, 4, 16, domain.Digest([]byte("usage"))); err != nil {
+		t.Fatal(err)
+	}
+	page, err = reader.List(ctx, "tenant", 0, 25)
+	if err != nil || page.Runs[0].UsageStatus != "COMPLETE" || page.Runs[0].InputTokens != 12 || page.Runs[0].OutputTokens != 4 || page.Runs[0].TotalTokens != 16 {
 		t.Fatal(page, err)
 	}
 	detail, err := reader.Get(ctx, "tenant", "run")
-	if err != nil || detail.ManifestRef != "manifest" || detail.AdmissionID != "admission" || len(detail.AttemptsLog) != 1 || detail.SessionHead == "" {
+	if err != nil || detail.ManifestRef != "manifest" || detail.AdmissionID != "admission" || len(detail.AttemptsLog) != 1 || detail.SessionHead == "" || detail.UsageStatus != "COMPLETE" || detail.TotalTokens != 16 {
 		t.Fatal(detail, err)
 	}
 	if detail.Stage != "REPLY_PUBLISH" {
