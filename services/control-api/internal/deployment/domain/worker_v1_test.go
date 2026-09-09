@@ -18,7 +18,7 @@ func TestWorkerV1ContractGatesAndPreservesLegacy(t *testing.T) {
 	current := legacy
 	current.Platform = WorkerV1PlatformExecutionContract()
 	if _, report := Compile(current); report.Valid {
-		t.Fatal("legacy tools/composition accepted for worker-v1")
+		t.Fatal("legacy data adapters/roles accepted for worker-v1")
 	}
 	current.Agent.Spec.Nodes = map[string]agentdomain.Node{"assistant": {Kind: agentdomain.NodeKindLLM, Instruction: "Answer.", ModelSlot: "primary", ToolSlots: []string{}, KnowledgeSlots: []string{}}}
 	current.Agent.Spec.Root = "assistant"
@@ -51,8 +51,8 @@ func TestWorkerV1ContractGatesAndPreservesLegacy(t *testing.T) {
 }
 
 func TestWorkerV1RoleRuleParticipatesInPinnedContractDigest(t *testing.T) {
-	if got := WorkerV1PlatformExecutionContract().Digest; got != "sha256:0b44e8d6f9fa6de5494713180b56445b2b4597ff9130b05b212ab0baab04156b" {
-		t.Fatalf("Worker role rule release identity = %s", got)
+	if got := WorkerV1PlatformExecutionContract().Digest; got != "sha256:371030c61a5e4a4557ff67d0e14eb43eb53e0c08d3ccca90979c2b84e8722d69" {
+		t.Fatalf("Worker role and ordered plan release identity = %s", got)
 	}
 	if got := DefaultPlatformExecutionContract().Digest; got != "sha256:e5c1019aa4fa0ea06b08f4966bc5cf154113b702f3ace93db6483fcc5a0d5d33" {
 		t.Fatalf("historical platform-v1 identity changed = %s", got)

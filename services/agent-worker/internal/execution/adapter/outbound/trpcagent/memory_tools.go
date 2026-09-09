@@ -16,11 +16,12 @@ var ErrMemoryTool = errors.New("memory tool execution failed")
 // These callbacks enforce the existing published call budget and observe SDK
 // errors. They do not implement tool CRUD, parse arguments, or export contents.
 type memoryToolState struct {
-	allowed map[string]bool
-	limit   int64
-	calls   atomic.Int64
-	failed  atomic.Bool
-	tracer  trace.Tracer
+	allowed     map[string]bool
+	limit       int64
+	calls       atomic.Int64
+	sharedCalls *atomic.Int64
+	failed      atomic.Bool
+	tracer      trace.Tracer
 }
 
 func newMemoryToolState(names []string, limit int64, tracer trace.Tracer) *memoryToolState {
@@ -33,7 +34,11 @@ func newMemoryToolState(names []string, limit int64, tracer trace.Tracer) *memor
 func (s *memoryToolState) callbacks() *tool.Callbacks {
 	return &tool.Callbacks{
 		BeforeTool: []tool.BeforeToolCallbackStructured{func(ctx context.Context, a *tool.BeforeToolArgs) (*tool.BeforeToolResult, error) {
-			if a == nil || !s.allowed[a.ToolName] || s.calls.Add(1) > s.limit {
+			counter := &s.calls
+			if s.sharedCalls != nil {
+				counter = s.sharedCalls
+			}
+			if a == nil || !s.allowed[a.ToolName] || counter.Add(1) > s.limit {
 				s.failed.Store(true)
 				return nil, ErrMemoryTool
 			}

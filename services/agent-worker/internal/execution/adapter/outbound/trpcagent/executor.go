@@ -21,14 +21,12 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
-	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/memory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session/summary"
-	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
 const SDKVersion = "v1.11.2"
@@ -60,7 +58,23 @@ type MemoryConfig struct {
 	Tools        []string
 	PreloadLimit int
 }
+type MemorySelection struct {
+	Tools        []string
+	PreloadLimit int
+}
+type NodeConfig struct {
+	Kind              string
+	Children          []string
+	Instruction       string
+	Model             Model
+	Tools             []MCPToolConfig
+	Knowledge         *KnowledgeConfig
+	Memory            *MemorySelection
+	Artifact          bool
+	AddSessionSummary bool
+}
 type Request struct {
+	Nodes                                 map[string]NodeConfig
 	Tools                                 []MCPToolConfig
 	Knowledge                             *KnowledgeConfig
 	Artifact                              *ArtifactConfig
@@ -92,26 +106,12 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	if e.CapacityBytes <= 0 || e.DrainTimeout <= 0 {
 		return result, errors.New("positive snapshot capacity and drain timeout required")
 	}
-	if req.TenantID == "" || req.SessionID == "" || req.RunID == "" || req.AttemptID == "" || req.NodeID == "" || strings.TrimSpace(req.InputText) == "" || req.Model.Name == "" {
-		return result, errors.New("invalid single LLM request")
+	if req.TenantID == "" || req.SessionID == "" || req.RunID == "" || req.AttemptID == "" || req.NodeID == "" || strings.TrimSpace(req.InputText) == "" {
+		return result, errors.New("invalid execution request")
 	}
-	endpoint, parseErr := url.Parse(req.Model.Endpoint)
-	if parseErr != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return result, errors.New("invalid model endpoint")
-	}
-	maxTokens := req.MaxOutputTokens
-	if req.Model.MaxOutputTokens != nil {
-		maxTokens = *req.Model.MaxOutputTokens
-	}
-	// The node generation schema has its own ceiling, validated with the full
-	// Manifest before this adapter. It is not a ceiling on the published
-	// execution.max_output_tokens. Only guard the effective value and the SDK's
-	// native-int representation here; never add a private model-token policy.
-	if maxTokens <= 0 || maxTokens > req.MaxOutputTokens || int64(int(maxTokens)) != maxTokens {
-		return result, errors.New("invalid published per-response output limit")
-	}
-	if req.Model.Temperature != nil && (*req.Model.Temperature < 0 || *req.Model.Temperature > 2) {
-		return result, errors.New("invalid temperature")
+	nodes, terminal, validationErr := executionNodes(req)
+	if validationErr != nil {
+		return result, validationErr
 	}
 	if req.Summary != nil {
 		sm := req.Summary.Model
@@ -141,29 +141,6 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			span.End()
 		}()
 	}
-	// Both models own attempt-local transports and use the published per-response
-	// output limit. There is no aggregate token reservation or hidden cap.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	defer transport.CloseIdleConnections()
-	httpState := &modelTransport{base: transport}
-	m := newFixedModel(req.Model, maxTokens, httpState)
-	bindings := map[string]string{}
-	for _, t := range req.Tools {
-		alias := mcpToolAlias(t.Resource)
-		if _, dup := bindings[alias]; dup {
-			return Result{}, ErrCallable
-		}
-		bindings[alias] = "tools/" + t.Resource
-	}
-	if req.Knowledge != nil {
-		bindings[sdkKnowledgeName] = "knowledge/" + req.Knowledge.Resource
-	}
-	if len(bindings) > 0 {
-		m, err = WrapCallableModel(m, bindings)
-		if err != nil {
-			return Result{}, err
-		}
-	}
 	var summaryModel *summaryUsageModel
 	var local *overlay
 	if req.Summary == nil {
@@ -187,78 +164,12 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		appends, bytes := local.stats()
 		trace.SpanFromContext(ctx).SetAttributes(attribute.Int64("app.session.overlay.appends", appends), attribute.Int64("app.session.overlay.bytes", bytes))
 	}()
-	max := int(maxTokens)
-	agentOptions := []llmagent.Option{llmagent.WithModel(m), llmagent.WithInstruction(req.Instruction), llmagent.WithGenerationConfig(model.GenerationConfig{MaxTokens: &max, Temperature: req.Model.Temperature, Stream: true}), llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithCodeExecutor(nil), llmagent.WithPreloadMemory(0), llmagent.WithAddSessionSummary(req.Summary != nil && req.Summary.AddSessionSummary), llmagent.WithSyncSummaryIntraRun(false), llmagent.WithMaxHistoryRuns(0), llmagent.WithPreserveSameBranch(true)}
-	runnerOptions := []runner.Option{runner.WithSessionService(local), runner.WithMemoryService(nil)}
-	var memoryAttempt *MemoryAttempt
-	var toolState *memoryToolState
-	var artifactState *artifactTools
-	var knowledgeState *tracedKnowledge
-	cfg := CapabilityConfig{AddSessionSummary: req.Summary != nil && req.Summary.AddSessionSummary}
-	services := CapabilityServices{}
-	mcpRuntime := &mcpState{}
-	names := []string{}
-	var ordinary []tool.Tool
-	for _, t := range req.Tools {
-		if nilCapabilityService(t.Tool) || t.Tool.Declaration() == nil || req.MaxToolCalls < 1 {
-			return Result{}, ErrMCP
-		}
-		alias := mcpToolAlias(t.Resource)
-		ordinary = append(ordinary, boundMCPTool{CallableTool: t.Tool, name: alias, state: mcpRuntime})
-		names = append(names, alias)
+	assembly, err := e.assemble(ctx, req, nodes, local)
+	if err != nil {
+		return Result{}, err
 	}
-	if len(ordinary) > 0 {
-		agentOptions = append(agentOptions, llmagent.WithTools(ordinary))
-	}
-	if req.Memory != nil {
-		if req.Memory.BoundKey.AppName != req.TenantID || req.MaxToolCalls < 1 {
-			return Result{}, ErrMemoryScope
-		}
-		memoryAttempt, err = NewMemoryAttempt(ctx, memory.UserKey{AppName: local.key.AppName, UserID: local.key.UserID}, req.Memory.BoundKey, req.Memory.Entries, req.Memory.BaseRevision)
-		if err != nil {
-			return Result{}, err
-		}
-		defer memoryAttempt.Close()
-		service, traceErr := TraceMemoryService(memoryAttempt, e.Tracer)
-		if traceErr != nil {
-			return Result{}, traceErr
-		}
-		cfg.MemoryTools = req.Memory.Tools
-		cfg.MemoryPreloadLimit = req.Memory.PreloadLimit
-		services.Memory = service
-		names = append(names, req.Memory.Tools...)
-	}
-	if req.Artifact != nil {
-		if req.Artifact.Service == nil || req.Artifact.MaxBytes < 1 || req.MaxToolCalls < 1 {
-			return Result{}, ErrArtifact
-		}
-		artifactState = &artifactTools{tracer: e.Tracer, maxBytes: req.Artifact.MaxBytes}
-		cfg.Artifact = true
-		services.Artifact = req.Artifact.Service
-		services.ArtifactTools = artifactState.tools()
-		names = append(names, ArtifactToolNames...)
-	}
-	if req.Knowledge != nil {
-		if req.Knowledge.Service == nil || req.MaxToolCalls < 1 {
-			return Result{}, ErrKnowledge
-		}
-		knowledgeState = &tracedKnowledge{service: req.Knowledge.Service, tracer: e.Tracer}
-		cfg.Knowledge = true
-		services.Knowledge = knowledgeState
-		names = append(names, sdkKnowledgeName)
-	}
-	if req.Memory != nil || req.Artifact != nil || req.Knowledge != nil || len(req.Tools) > 0 {
-		options, optionErr := BuildCapabilityOptions(cfg, services)
-		if optionErr != nil {
-			return Result{}, optionErr
-		}
-		toolState = newMemoryToolState(names, req.MaxToolCalls, e.Tracer)
-		agentOptions = append(agentOptions, options.Agent...)
-		agentOptions = append(agentOptions, llmagent.WithToolCallbacks(toolState.callbacks()))
-		runnerOptions = append(runnerOptions, options.Runner...)
-	}
-	a := llmagent.New(req.NodeID, agentOptions...)
-	r := runner.NewRunner(local.key.AppName, a, runnerOptions...)
+	defer assembly.close()
+	r := runner.NewRunner(local.key.AppName, assembly.root, assembly.runnerOptions...)
 	defer func() {
 		if closeErr := r.Close(); err == nil && closeErr != nil {
 			result = Result{}
@@ -266,7 +177,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		}
 	}()
 	runCtx, cancel := context.WithCancel(ctx)
-	mcpRuntime.cancel = cancel
+	assembly.mcp.cancel = cancel
 	defer cancel()
 	events, err := r.Run(runCtx, local.key.UserID, local.key.SessionID, model.NewUserMessage(req.InputText), agent.WithDetachedCancel(false))
 	if err != nil {
@@ -282,7 +193,11 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			}
 			return Result{}, ctx.Err()
 		case evt, ok := <-events:
-			if failure := mcpRuntime.failure(); failure != nil {
+			if failure := assembly.failure(); failure != nil {
+				observed = failure
+				cancel()
+			}
+			if failure := assembly.mcp.failure(); failure != nil {
 				observed = failure
 				cancel()
 			}
@@ -299,14 +214,8 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					}
 					return Result{}, err
 				}
-				if knowledgeState != nil && knowledgeState.failed.Load() {
-					return Result{}, ErrKnowledge
-				}
-				if artifactState != nil && artifactState.failed.Load() {
-					return Result{}, ErrArtifact
-				}
-				if toolState != nil && toolState.failed.Load() {
-					return Result{}, ErrMemoryTool
+				if failure := assembly.failure(); failure != nil {
+					return Result{}, failure
 				}
 				if !validFinalText(result.FinalText) {
 					return Result{}, ErrFinal
@@ -321,8 +230,8 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					result.Usage.OutputTokens += usage.OutputTokens
 					result.Usage.TotalTokens += usage.TotalTokens
 				}
-				if memoryAttempt != nil {
-					candidate, sealErr := memoryAttempt.Seal(ctx)
+				if assembly.memory != nil {
+					candidate, sealErr := assembly.memory.Seal(ctx)
 					if sealErr != nil {
 						return Result{}, sealErr
 					}
@@ -335,11 +244,12 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			}
 			if evt.Error != nil && observed == nil {
 				observed = ErrModel
-				if httpState.retryable() {
+				if state := assembly.models[evt.Author]; state != nil && state.retryable() {
 					observed = ErrRetryableModel
 				}
 				cancel()
 			}
+			toolState := assembly.tools[evt.Author]
 			for _, choice := range evt.Choices {
 				if !evt.IsPartial && len(choice.Message.ToolCalls) > 0 {
 					result.FinalText = ""
@@ -355,7 +265,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 					cancel()
 					continue
 				}
-				if !evt.IsPartial && choice.Message.Role == model.RoleAssistant && len(choice.Message.ToolCalls) == 0 && len(choice.Message.ContentParts) == 0 && choice.Message.Content != "" {
+				if evt.Author == terminal && !evt.IsPartial && choice.Message.Role == model.RoleAssistant && len(choice.Message.ToolCalls) == 0 && len(choice.Message.ContentParts) == 0 && choice.Message.Content != "" {
 					result.FinalText = choice.Message.Content
 				}
 			}

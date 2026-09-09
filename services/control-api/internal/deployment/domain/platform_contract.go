@@ -150,6 +150,7 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 		StorageAdapters          map[profiledomain.StorageKind]AdapterContract            `json:"storage_adapters"`
 		Execution                ExecutionPolicy                                          `json:"execution"`
 		Limits                   CompileLimits                                            `json:"limits"`
+		WorkerPlanContract       string                                                   `json:"worker_plan_contract,omitempty"`
 		WorkerSessionRuntimeRole string                                                   `json:"worker_session_runtime_role,omitempty"`
 	}{
 		RuntimeDataCapabilities: sortedUnique(c.RuntimeDataCapabilities),
@@ -165,6 +166,7 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 	// entirely for platform-v1 so historical contract digests remain unchanged.
 	if c.Version == deploymentv1.WorkerV1PlatformVersion {
 		payload.WorkerSessionRuntimeRole = deploymentv1.WorkerV1SessionRuntimeRole
+		payload.WorkerPlanContract = deploymentv1.WorkerV1PlanContract
 	}
 	payload.Execution.AllowedEndpointHosts = sortedUnique(c.Execution.AllowedEndpointHosts)
 	encoded, err := json.Marshal(payload)

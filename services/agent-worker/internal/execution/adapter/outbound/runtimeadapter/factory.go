@@ -95,6 +95,7 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
 	}
+	p = cloneSequencePlan(p)
 	p.Tools = append([]domain.ToolPlan(nil), p.Tools...)
 	if p.Knowledge != nil {
 		fixed := *p.Knowledge
@@ -200,7 +201,7 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 			return nil, err
 		}
 	}
-	toolServices, err := f.prepareTools(ctx, g, p, batch)
+	sequenceKnowledge, err := f.prepareSequenceKnowledge(ctx, p, batch)
 	if err != nil {
 		store.Close()
 		if ms != nil {
@@ -214,7 +215,30 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 		}
 		return nil, err
 	}
-	return &attempt{mcpServices: toolServices, knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
+	nodeModelKeys := map[string]string{}
+	for id, node := range p.Nodes {
+		if node.Kind == "llm" {
+			nodeModelKeys[id] = batch[node.ModelCredential]
+		}
+	}
+	toolServices, err := f.prepareTools(ctx, g, p, batch)
+	if err != nil {
+		for _, s := range sequenceKnowledge {
+			s.Close()
+		}
+		store.Close()
+		if ms != nil {
+			ms.Close()
+		}
+		if as != nil {
+			as.Close()
+		}
+		if ks != nil {
+			ks.Close()
+		}
+		return nil, err
+	}
+	return &attempt{nodeModelKeys: nodeModelKeys, sequenceKnowledge: sequenceKnowledge, mcpServices: toolServices, knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {
@@ -251,6 +275,9 @@ func (f *Factory) start(g domain.Grant) error {
 }
 
 func requiredUses(p domain.Plan) ([]domain.CredentialUse, error) {
+	if err := validateSequencePlan(p); err != nil {
+		return nil, err
+	}
 	if err := validateToolPlans(p); err != nil {
 		return nil, err
 	}

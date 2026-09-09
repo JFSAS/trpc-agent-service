@@ -36,7 +36,9 @@ Control Capability 与既有 Agent 语法对齐，历史 `web.search` 仍有效�
 MCP 已取得真实 Streamable HTTP server、正式 HTTP 发布 + Channel Lab 两轮 fixture
 （含业务 IsError 纠正和下一轮历史消费），以及一轮真实 DeepSeek 选择并使用工具返回。
 具体 GUI 与代码包验收记录见 MCP 文档；上述不代表真实 Telegram 或 live 错误纠正。
-后续按 Sequence → Parallel + 显式汇总 → Loop 逐包实现，复用 SDK，不另建调度平台。
+[Sequence](sequence-v1.md) 已接通有序嵌套 SDK Chain、节点级依赖选择和末叶 Final，
+正式成功/终端失败/恢复联合及真实模型正常链路已验证。后续按 Parallel + 显式汇总
+→ Loop 逐包实现，复用 SDK，不另建调度平台。
 
 ## 1. 本轮交付
 

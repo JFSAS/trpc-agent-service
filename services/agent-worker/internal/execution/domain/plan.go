@@ -2,12 +2,15 @@ package domain
 
 import (
 	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
+	"slices"
 	"time"
 )
 
 // Plan is the runtime-ready projection of one fully validated immutable
 // Manifest. It carries only the V1 closure, never mutable Profile values.
 type Plan struct {
+	Nodes                                                      map[string]NodePlan
+	Knowledges                                                 map[string]KnowledgePlan
 	Tools                                                      []ToolPlan
 	Knowledge                                                  *KnowledgePlan
 	Artifact                                                   *ArtifactPlan
@@ -25,6 +28,25 @@ type Plan struct {
 	ModelCredential, SessionCredential                         CredentialUse
 	SessionBackend                                             *datav1.Snapshot
 	SessionTarget                                              StorageTarget
+}
+
+// NodePlan preserves each leaf's explicit authority inside an ordered SDK tree.
+// Resources on Plan are the initialization closure, not implicit node options.
+type NodePlan struct {
+	Kind                                  string
+	Children                              []string
+	Instruction, ModelEndpoint, ModelName string
+	ModelCredential                       CredentialUse
+	Temperature                           *float64
+	MaxOutputTokens                       *int64
+	ToolResources                         []string
+	KnowledgeResource                     string
+	Memory                                *NodeMemoryPlan
+	Artifact, AddSessionSummary           bool
+}
+type NodeMemoryPlan struct {
+	Tools        []string
+	PreloadLimit int
 }
 
 // SummaryPlan is the fixed model dependency for Session summary generation.
@@ -123,7 +145,35 @@ func (p Plan) Uses() []CredentialUse {
 			}
 		}
 	}
-	return uses
+
+	keys := make([]string, 0, len(p.Nodes))
+	for key := range p.Nodes {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		if p.Nodes[key].Kind == "llm" {
+			uses = append(uses, p.Nodes[key].ModelCredential)
+		}
+	}
+	keys = keys[:0]
+	for key := range p.Knowledges {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		k := p.Knowledges[key]
+		uses = append(uses, k.Credential, k.EmbeddingCredential)
+	}
+	unique := make([]CredentialUse, 0, len(uses))
+	seen := map[CredentialUse]bool{}
+	for _, u := range uses {
+		if !seen[u] {
+			unique = append(unique, u)
+			seen[u] = true
+		}
+	}
+	return unique
 }
 
 type RuntimeResult struct {

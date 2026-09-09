@@ -20,29 +20,31 @@ import (
 )
 
 type attempt struct {
-	mcpServices     []*mcptoolset.Service
-	knowledgeStore  *knowledgestore.Store
-	artifactStore   *artifactstore.Store
-	memoryStore     memoryStore
-	memoryCandidate *memorystore.Candidate
-	memoryDigest    string
-	finalText       string
-	staged          domain.Candidate
-	tracer          trace.Tracer
-	grant           domain.Grant
-	plan            domain.Plan
-	store           candidateStore
-	check           func(context.Context) error
-	modelKey        string
-	summaryKey      string
-	executor        trpcagent.Executor
-	capacity        int
-	mu              sync.Mutex
-	closed          bool
-	executed        bool
-	loaded          bool
-	loadedDigest    string
-	resultDigest    string
+	nodeModelKeys     map[string]string
+	sequenceKnowledge map[string]*knowledgestore.Store
+	mcpServices       []*mcptoolset.Service
+	knowledgeStore    *knowledgestore.Store
+	artifactStore     *artifactstore.Store
+	memoryStore       memoryStore
+	memoryCandidate   *memorystore.Candidate
+	memoryDigest      string
+	finalText         string
+	staged            domain.Candidate
+	tracer            trace.Tracer
+	grant             domain.Grant
+	plan              domain.Plan
+	store             candidateStore
+	check             func(context.Context) error
+	modelKey          string
+	summaryKey        string
+	executor          trpcagent.Executor
+	capacity          int
+	mu                sync.Mutex
+	closed            bool
+	executed          bool
+	loaded            bool
+	loadedDigest      string
+	resultDigest      string
 }
 
 func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, resultErr error) {
@@ -126,6 +128,9 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 			return domain.RuntimeResult{}, memoryError(err)
 		}
 		request.Memory = &trpcagent.MemoryConfig{BoundKey: scope.Key(), Entries: saved.Entries, BaseRevision: saved.Revision, Tools: p.Memory.Tools, PreloadLimit: p.Memory.PreloadLimit}
+	}
+	if err := a.populateSequence(&request); err != nil {
+		return domain.RuntimeResult{}, err
 	}
 	result, err := a.executor.Execute(ctx, request)
 	if err != nil {
@@ -221,6 +226,11 @@ func (a *attempt) Close() {
 		_ = s.Close()
 	}
 	a.mcpServices = nil
+	for _, store := range a.sequenceKnowledge {
+		store.Close()
+	}
+	a.sequenceKnowledge = nil
+	a.nodeModelKeys = nil
 	if a.knowledgeStore != nil {
 		a.knowledgeStore.Close()
 		a.knowledgeStore = nil
