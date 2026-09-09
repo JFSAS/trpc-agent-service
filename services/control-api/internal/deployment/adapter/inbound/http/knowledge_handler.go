@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/gowebpki/jcs"
+	executionv1 "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/application"
 	"io"
 	"net/http"
@@ -30,13 +31,13 @@ func (h *Handler) importKnowledge(c *gin.Context) {
 		writeRequestError(c, err)
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, (2<<20)+1))
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, executionv1.MaxKnowledgeRequestBytes+1))
 	if err != nil {
 		writeRequestError(c, errInvalidRequestBody)
 		return
 	}
 	defer clear(raw)
-	if len(raw) > 2<<20 {
+	if len(raw) > executionv1.MaxKnowledgeRequestBytes {
 		writeKnowledgeError(c, application.ErrKnowledgeTooLarge)
 		return
 	}

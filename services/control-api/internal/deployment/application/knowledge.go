@@ -3,13 +3,14 @@ package application
 import (
 	"context"
 	"errors"
+	executionv1 "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	profileapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
 	"strings"
 	"unicode/utf8"
 )
 
-const MaxKnowledgeTextBytes = 1 << 20
+const MaxKnowledgeTextBytes = executionv1.MaxKnowledgeTextBytes
 
 var (
 	ErrKnowledgeInvalid     = errors.New("invalid knowledge import")
@@ -28,24 +29,9 @@ type KnowledgeImportCommand struct {
 	TenantID, DeploymentID, ActorUserID, Resource, Name, Text string
 	RevisionNumber                                            int64
 }
-type KnowledgeSecrets struct {
-	QdrantAPIKey    string `json:"qdrant_api_key"`
-	EmbeddingAPIKey string `json:"embedding_api_key"`
-}
-type KnowledgeRequest struct {
-	TenantID             string           `json:"tenant_id"`
-	ManifestRef          string           `json:"manifest_ref"`
-	ManifestDigest       string           `json:"manifest_digest"`
-	DeploymentRevisionID string           `json:"deployment_revision_id"`
-	Resource             string           `json:"resource"`
-	Name                 string           `json:"name"`
-	Text                 string           `json:"text"`
-	Operation            string           `json:"operation"`
-	Credentials          KnowledgeSecrets `json:"credentials"`
-}
-type KnowledgeResult struct {
-	Documents int `json:"documents"`
-}
+type KnowledgeSecrets = executionv1.KnowledgeSecrets
+type KnowledgeRequest = executionv1.KnowledgeRequest
+type KnowledgeResult = executionv1.KnowledgeResponse
 
 func (s *Service) ImportKnowledge(ctx context.Context, c KnowledgeImportCommand) (KnowledgeResult, error) {
 	if err := s.authorizeOwner(ctx, c.TenantID, c.ActorUserID); err != nil {

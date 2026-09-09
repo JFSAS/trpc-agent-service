@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	executionv1 "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/application"
 	"io"
 	"net/http"
 	"net/url"
 )
 
-const MaxWireBytes = 2 << 20
+const MaxWireBytes = executionv1.MaxKnowledgeRequestBytes
 
 type Client struct {
 	http *http.Client
@@ -25,7 +26,7 @@ func New(client *http.Client, endpoint string) (*Client, error) {
 	}
 	c := *client
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	u.Path = "/internal/v1/knowledge"
+	u.Path = executionv1.KnowledgePath
 	return &Client{&c, u.String()}, nil
 }
 func (c *Client) ImportKnowledge(ctx context.Context, in application.KnowledgeRequest) (application.KnowledgeResult, error) {
