@@ -15,6 +15,7 @@ import (
 	"time"
 
 	proof "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
+	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 )
 
 var (
@@ -30,10 +31,16 @@ type AttemptVerifier interface {
 type FinalVerifier interface {
 	VerifyFinal(context.Context, proof.FinalRequest) (proof.FinalResponse, error)
 }
+type ManagementReader interface {
+	List(context.Context, string, int, int) (managementv1.RunPage, error)
+	Get(context.Context, string, string) (managementv1.RunDetail, error)
+	Audit(context.Context, string, int, int) (managementv1.AuditPage, error)
+}
 type Options struct {
 	ReplyArtifacts                       ReplyArtifactReader
 	Knowledge                            KnowledgeImporter
 	Artifacts                            ArtifactOperator
+	Management                           ManagementReader
 	Tracer                               trace.Tracer
 	ControlPrincipals, GatewayPrincipals []string
 	Timeout                              time.Duration
@@ -46,6 +53,7 @@ type Handler struct {
 	replyArtifacts    ReplyArtifactReader
 	knowledgeImporter KnowledgeImporter
 	artifacts         ArtifactOperator
+	management        ManagementReader
 	tracer            trace.Tracer
 	attempts          AttemptVerifier
 	finals            FinalVerifier
@@ -88,7 +96,7 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 	for id := range gateway {
 		finalCallers[id] = true
 	}
-	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
+	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, management: o.Management, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST "+proof.AttemptVerifyPath, h.attempt)
 	h.mux.HandleFunc("POST "+proof.FinalVerifyPath, h.final)
 	if o.ReplyArtifacts != nil {
@@ -99,6 +107,11 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 	}
 	if o.Knowledge != nil {
 		h.mux.HandleFunc("POST "+proof.KnowledgePath, h.knowledge)
+	}
+	if o.Management != nil {
+		h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/runs", h.listRuns)
+		h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/runs/{run_id}", h.getRun)
+		h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/audit-events", h.listAudit)
 	}
 	return h, nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/infra/natsadapter"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/infra/telemetry"
+	workermanagement "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/management"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/adapter/outbound/controlhttp"
 	projectionpg "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/adapter/outbound/postgresadapter"
 	manifestapp "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/manifest/application"
@@ -203,7 +204,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	replyArtifacts := replyArtifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader, credentials: replyArtifactCredentialResolver{projection: a.projection, client: finalArtifactCredentials}}
 	queries := proofQueries{ledger: a.ledger, manifests: reader}
-	handler, err := httpadapter.New(queries, queries, httpadapter.Options{ReplyArtifacts: replyArtifacts, Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
+	handler, err := httpadapter.New(queries, queries, httpadapter.Options{ReplyArtifacts: replyArtifacts, Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Management: workermanagement.NewReader(a.pool), Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
 	if err != nil {
 		return nil, err
 	}

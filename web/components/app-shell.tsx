@@ -9,9 +9,11 @@ import {
   LogOut,
   Package,
   Radio,
+  ScrollText,
   ShieldCheck,
   SlidersHorizontal,
   Users,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -130,6 +132,18 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
               >
                 <Radio size={18} /><span>渠道接入</span>
               </Link>
+              <Link
+                className={pathname.startsWith(`/tenants/${tenantPath}/runs`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/runs`} aria-label="运行记录" title="运行记录"
+              >
+                <Workflow size={18} /><span>运行记录</span>
+              </Link>
+              <Link
+                className={pathname.startsWith(`/tenants/${tenantPath}/audit`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/audit`} aria-label="审计记录" title="审计记录"
+              >
+                <ScrollText size={18} /><span>审计记录</span>
+              </Link>
               {activeTenant?.role === "OWNER" && <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/members`) ? "nav-link active" : "nav-link"}
                 href={`/tenants/${tenantPath}/members`} aria-label="成员管理" title="成员管理"
@@ -180,6 +194,9 @@ function pageLabel(pathname: string) {
   if (/^\/tenants\/[^/]+\/channels\/new(?:\/|$)/.test(pathname)) return "新增渠道";
   if (/^\/tenants\/[^/]+\/channels\/[^/]+/.test(pathname)) return "渠道账户详情";
   if (/^\/tenants\/[^/]+\/channels(?:\/|$)/.test(pathname)) return "渠道接入";
+  if (/^\/tenants\/[^/]+\/runs\/[^/]+/.test(pathname)) return "运行详情";
+  if (/^\/tenants\/[^/]+\/runs(?:\/|$)/.test(pathname)) return "运行记录";
+  if (/^\/tenants\/[^/]+\/audit(?:\/|$)/.test(pathname)) return "审计记录";
   if (/^\/tenants\/[^/]+\/members/.test(pathname)) return "成员管理";
   if (/^\/tenants\/[^/]+/.test(pathname)) return "Agent 工作台";
   if (pathname.startsWith("/tenants")) return "选择租户";

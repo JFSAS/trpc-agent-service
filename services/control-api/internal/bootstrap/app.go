@@ -26,6 +26,7 @@ import (
 	deploymentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/domain"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/infra/httpserver"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runmanagement"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile"
 	profileapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant"
@@ -53,6 +54,7 @@ type App struct {
 	tenant          *tenant.Module
 	agent           *agent.Module
 	runtimeProfile  *runtimeprofile.Module
+	runManagement   *runmanagement.Module
 	deployment      *deployment.Module
 	channelBinding  *channelbinding.Module
 }
@@ -171,6 +173,19 @@ func New(ctx context.Context, config Config) (*App, error) {
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("assemble runtime profile: %w", err)
+	}
+	var runManagementModule *runmanagement.Module
+	if config.Runtime != nil {
+		managementClient, clientErr := config.Runtime.managementClient()
+		if clientErr != nil {
+			pool.Close()
+			return nil, clientErr
+		}
+		runManagementModule, err = runmanagement.NewModule(runmanagement.Dependencies{DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(), TenantAccess: activeTenantMemberLookup{tenants: tenantModule.Service}, Runtime: managementClient})
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("assemble run management: %w", err)
+		}
 	}
 	var knowledgeBackend deploymentapp.KnowledgeBackend
 	if config.Runtime != nil {
@@ -302,6 +317,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 		tenant:          tenantModule,
 		agent:           agentModule,
 		runtimeProfile:  runtimeProfileModule,
+		runManagement:   runManagementModule,
 		deployment:      deploymentModule,
 		channelBinding:  channelModule,
 		internalServer:  internalServer,

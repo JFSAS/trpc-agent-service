@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	artifactclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workerartifact"
 	knowledgeclient "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/workerknowledge"
+	managementhttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runmanagement/adapter/outbound/workerhttp"
 	profilehttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/inbound/runtimehttp"
 	executionhttp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/adapter/outbound/executionhttp"
 	"github.com/nats-io/nats.go"
@@ -111,6 +112,15 @@ func (c *RuntimeConfig) executionVerifier() (*executionhttp.Verifier, error) {
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tc, MaxIdleConns: 16, MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second}, Timeout: 5 * time.Second}
 	return executionhttp.New(client, c.ExecutionURL)
+}
+func (c *RuntimeConfig) managementClient() (*managementhttp.Client, error) {
+	tc, err := runtimeTLS(c.ExecutionCertFile, c.ExecutionKeyFile, c.ExecutionCAFile)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tc, MaxIdleConns: 16, MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second}, Timeout: 5 * time.Second}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return managementhttp.New(client, c.ExecutionURL)
 }
 func (c *RuntimeConfig) connectNATS() (*nats.Conn, error) {
 	opts, err := c.nats.options()

@@ -66,6 +66,8 @@
   实现；组合按 SDK 原生能力，Memory/累计 Token 账本列入后续计划。代码与真实 PG/NATS/SDK
   fixture 已有验证，真实模型/Telegram 尚待联合验收；[实现状态](agent-worker/implementation-status.md) 与术语见
   [Execution 术语表](agent-worker/CONTEXT.md)。
+- [运行管理与审计 V1](run-management-audit-v1.md)：新增租户授权的运行记录、Run 时间线与
+  Control/Worker 业务审计聚合；明确区分 Worker Reply 交接和 Gateway 实际送达。
 - [Channel Gateway 四 Module 入门说明](channel-gateway/module-introduction.md)：先理解四类事实和调用关系，再读详细规范。
 - [Channel Gateway 四个业务 Module](channel-gateway/module-boundaries.md)：解释单一 Gateway
   Workload 内 routing、admission、connection、delivery 的职责追踪、目录分工、深接口、事务 seam 和故障时序。

@@ -133,6 +133,32 @@ export type PublishAgentVersionResponse = {
   validation: ValidationReport;
 };
 
+export type RunSummary = {
+  run_id: string; session_id: string; status: string; stage: string;
+  wait_reason?: string; failure_reason?: string; attempts: number;
+  input_tokens: number; output_tokens: number; total_tokens: number;
+  memory_status?: string; reply_status: string; accepted_at: string;
+  execution_deadline?: string;
+};
+export type RunAttempt = {
+  attempt_id: string; worker_id: string; generation: number; status: string;
+  reason?: string; created_at: string; started_at?: string; ended_at?: string;
+};
+export type TimelineEvent = {
+  source: string; category: string; status: string; reason?: string;
+  occurred_at: string; attributes?: Record<string, unknown>;
+};
+export type RunDetail = RunSummary & {
+  admission_id: string; manifest_ref?: string; manifest_digest?: string;
+  session_head?: string; attempt_log: RunAttempt[]; timeline: TimelineEvent[];
+  coverage: string[];
+};
+export type AuditEvent = {
+  event_id: string; source: string; category: string; action: string;
+  outcome: string; actor_id?: string; resource_type: string; resource_id: string;
+  reason?: string; occurred_at: string; attributes?: Record<string, unknown>;
+};
+
 export class ControlApiError extends Error {
   constructor(
     public readonly status: number,
@@ -333,6 +359,23 @@ export const controlApi = {
   getAgentVersion(tenantId: string, agentId: string, versionNumber: number) {
     return request<AgentVersion>(
       `/v1/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(String(versionNumber))}`,
+    );
+  },
+  listRuns(tenantId: string, page: { offset: number; limit: number }) {
+    const query = new URLSearchParams({ offset: String(page.offset), limit: String(page.limit) });
+    return request<{ runs: RunSummary[]; offset: number; limit: number; total: number }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/runs?${query}`,
+    );
+  },
+  getRun(tenantId: string, runId: string) {
+    return request<RunDetail>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/runs/${encodeURIComponent(runId)}`,
+    );
+  },
+  listAuditEvents(tenantId: string, page: { offset: number; limit: number }) {
+    const query = new URLSearchParams({ offset: String(page.offset), limit: String(page.limit) });
+    return request<{ events: AuditEvent[]; offset: number; limit: number; total: number }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/audit-events?${query}`,
     );
   },
 };
