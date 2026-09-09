@@ -1,10 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,11 @@ func TestRealMCPServerSelectedAndCorrectableBusinessError(t *testing.T) {
 	list, e := c.ListTools(ctx, &mcp.ListToolsRequest{})
 	if e != nil || len(list.Tools) != 2 {
 		t.Fatalf("real tools/list: %#v %v", list, e)
+	}
+	// The SDK enumerates tools from a map; tools/list has no stable order.
+	slices.SortFunc(list.Tools, func(a, b mcp.Tool) int { return cmp.Compare(a.Name, b.Name) })
+	if list.Tools[1].Name != "unselected_secret" {
+		t.Fatal("unexpected registered tool")
 	}
 	if list.Tools[0].Name != "selected_search" || len(list.Tools[0].InputSchema.Required) != 1 || list.Tools[0].InputSchema.Required[0] != "query" {
 		t.Fatal("selected input schema changed")
