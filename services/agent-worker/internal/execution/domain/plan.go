@@ -187,6 +187,12 @@ type RuntimeResult struct {
 	FinalText                              string
 	Snapshot                               []byte
 	InputTokens, OutputTokens, TotalTokens int64
+	UsageKnown                             bool
+}
+
+type ModelUsage struct {
+	Known                                  bool
+	InputTokens, OutputTokens, TotalTokens int64
 }
 
 // WorkspacePlan is an explicit node selection, never authority from resource presence.

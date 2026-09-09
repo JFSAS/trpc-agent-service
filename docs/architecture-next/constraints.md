@@ -633,6 +633,15 @@ Platform Operator 同时具有 Tenant Membership 时，前端必须让用户显�
 或 Tenant 上下文；禁止根据 Operator 身份隐式切换 Tenant、自动提升 Tenant 权限
 或复用平台命令绕过 Tenant Application 规则。
 
+### ARC-701：使用治理按 Control、Gateway、Worker 分层落实
+
+后台 Tenant Membership、IM 发送者使用权限和运行额度必须保持为不同授权链。Control
+拥有租户单一当前策略和管理授权；Gateway 在入口执行精确 Account/Binding 用户或群授权
+及跨副本共享请求限流；Worker 以事件固定快照执行跨副本共享并发和 Token 预留/结算。
+各 Workload 只读写自己的存储，不跨域读表。Provider 未返回 usage 时必须记录未知并保留
+预留，不得按零处理；配置单价生成的成本只能标为估算，不能表示供应商账单。V1 不因此
+恢复历史复杂授权/预算框架，也不扩展为充值、支付、发票、套餐或完整计费中心。
+
 ## 8. 待决策事项
 
 以下内容尚未因本文而自动确定：

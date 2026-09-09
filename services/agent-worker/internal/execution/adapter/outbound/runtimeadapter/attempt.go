@@ -163,7 +163,7 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	}
 	a.finalText = result.FinalText
 	a.resultDigest = domain.Digest(result.Snapshot)
-	return domain.RuntimeResult{Attachments: append([]domain.Attachment(nil), result.Attachments...), MemoryDigest: a.memoryDigest, MemoryTimeout: memoryTimeout, FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
+	return domain.RuntimeResult{Attachments: append([]domain.Attachment(nil), result.Attachments...), MemoryDigest: a.memoryDigest, MemoryTimeout: memoryTimeout, FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens), UsageKnown: result.UsageKnown}, nil
 }
 func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Candidate, resultErr error) {
 	ctx, span := telemetrytrace.Start(a.tracer, ctx, "worker.session.stage", trace.WithAttributes(attribute.Int("app.storage.bytes", len(snapshot))))

@@ -11,6 +11,7 @@ type RunRequested struct {
 	Route         RouteSnapshot `json:"route"`
 	RunID         string        `json:"run_id"`
 	SchemaVersion int64         `json:"schema_version"`
+	UsagePolicy   UsagePolicy   `json:"usage_policy,omitempty"`
 }
 
 // EventKey is defined by the versioned execution JSON Schema.
@@ -54,4 +55,16 @@ type RouteSnapshot struct {
 	ManifestRef          string `json:"manifest_ref"`
 	Provider             string `json:"provider"`
 	TenantID             string `json:"tenant_id"`
+}
+
+// UsagePolicy is defined by the versioned execution JSON Schema.
+type UsagePolicy struct {
+	Enabled                      bool  `json:"enabled"`
+	InputMicrosPerMillionTokens  int64 `json:"input_micros_per_million_tokens"`
+	MaxConcurrentRuns            int64 `json:"max_concurrent_runs"`
+	OutputMicrosPerMillionTokens int64 `json:"output_micros_per_million_tokens"`
+	Revision                     int64 `json:"revision"`
+	TokenLimit                   int64 `json:"token_limit"`
+	TokenPeriodSeconds           int64 `json:"token_period_seconds"`
+	TokenReservationPerRun       int64 `json:"token_reservation_per_run"`
 }

@@ -68,6 +68,8 @@
   [Execution 术语表](agent-worker/CONTEXT.md)。
 - [运行管理与审计 V1](run-management-audit-v1.md)：新增租户授权的运行记录、Run 时间线与
   Control/Worker 业务审计聚合；明确区分 Worker Reply 交接和 Gateway 实际送达。
+- [租户使用治理 V1](tenant-usage-governance-v1.md)：Control 管理单一当前策略，Gateway
+  落实 IM allowlist 和共享限流，Worker 落实跨副本并发、Token 预留/结算及未知用量投影。
 - [Channel Gateway 四 Module 入门说明](channel-gateway/module-introduction.md)：先理解四类事实和调用关系，再读详细规范。
 - [Channel Gateway 四个业务 Module](channel-gateway/module-boundaries.md)：解释单一 Gateway
   Workload 内 routing、admission、connection、delivery 的职责追踪、目录分工、深接口、事务 seam 和故障时序。
@@ -112,7 +114,7 @@ Deployment 的 Control Publication 已经落地并覆盖以下阶段：
 4. Distribution：Control路由Relay已通过真实PG/JetStream回归；Gateway固定可信路由三元组。
    Manifest正文读取/执行属于Worker，路由日志恢复由Gateway验证。
 5. Worker：W1 贯通固定 Manifest、凭据、单 LLM 与正式 Session；W2 完成 Telegram Final 回复。
-   组合、Memory、累计 Token 账本为后续计划；代码/fixture 与真实渠道验收分别记录。
+   组合与 Memory 为后续计划；租户级 Token 预留/结算已由使用治理切片实现，代码/fixture 与真实渠道验收分别记录。
 
 上面1～4的Control代码与真实PG/mTLS/NATS回归已接通，公开12个操作列入OpenAPI；
 Gateway 的账户门禁、动态 Telegram 和运行观测已接线。联合真实 Telegram 收信已通过，

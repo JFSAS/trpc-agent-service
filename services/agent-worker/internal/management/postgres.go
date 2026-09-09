@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 )
 
@@ -199,4 +200,23 @@ func (r *Reader) Audit(ctx context.Context, tenant string, offset, limit int) (m
 		page.Events = append(page.Events, event)
 	}
 	return page, rows.Err()
+}
+
+func (r *Reader) Usage(ctx context.Context, tenant string) (governancev1.UsageSummary, error) {
+	out := governancev1.UsageSummary{TenantID: tenant}
+	var start *time.Time
+	err := r.pool.QueryRow(ctx, `SELECT COALESCE(max(policy_revision),0),max(period_start),COALESCE(max(period_seconds),0),COALESCE(max(token_limit),0),
+ COALESCE(sum(CASE WHEN s.usage_known THEN s.total_tokens ELSE 0 END),0),
+ COALESCE(sum(CASE WHEN s.usage_known THEN 0 ELSE x.reserved_tokens END),0),
+ count(*) FILTER(WHERE s.usage_known=false),count(*) FILTER(WHERE s.attempt_id IS NULL),
+ COALESCE(sum(CASE WHEN s.usage_known THEN s.estimated_cost_micros ELSE 0 END),0)
+ FROM worker_tenant_usage_reservations_v1 x LEFT JOIN worker_tenant_usage_settlements_v1 s USING(tenant_id,attempt_id)
+ WHERE x.tenant_id=$1 AND x.period_start=(SELECT max(period_start) FROM worker_tenant_usage_reservations_v1 WHERE tenant_id=$1)`, tenant).Scan(&out.PolicyRevision, &start, &out.PeriodSeconds, &out.TokenLimit, &out.UsedTokens, &out.ReservedTokens, &out.UnknownUsageCount, &out.PendingUsageCount, &out.EstimatedCostMicros)
+	if err != nil {
+		return out, err
+	}
+	if start != nil {
+		out.PeriodStart = start.UTC().Format(time.RFC3339)
+	}
+	return out, nil
 }

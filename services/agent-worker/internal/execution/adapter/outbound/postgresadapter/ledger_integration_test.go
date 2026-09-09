@@ -69,6 +69,53 @@ func TestWorkerLedgerV1Postgres(t *testing.T) {
 		return domain.Finish{Grant: g, Status: domain.Succeeded, Candidate: domain.Candidate{Ref: "candidate_" + g.AttemptID, Digest: domain.Digest([]byte("snapshot" + g.AttemptID)), Parent: g.Parent}, FinalText: "已完成"}
 	}
 
+	t.Run("tenant_quota_is_shared_across_concurrent_workers", func(t *testing.T) {
+		reset(t)
+		one, two := request("quota-one"), request("quota-two")
+		two.Input.ConversationID = "different-session"
+		usage := domain.UsagePolicy{
+			Enabled: true, Revision: 1, MaxConcurrentRuns: 1,
+			TokenPeriodSeconds: 3600, TokenLimit: 1000,
+			TokenReservationPerRun: 100,
+		}
+		one.UsagePolicy, two.UsagePolicy = usage, usage
+		accept(t, one, policy)
+		accept(t, two, policy)
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for i, run := range []domain.Requested{one, two} {
+			wg.Add(1)
+			go func(worker int, requested domain.Requested) {
+				defer wg.Done()
+				_, err := l.Claim(ctx, domain.ClaimRequest{TenantID: requested.Route.TenantID, RunID: requested.RunID, WorkerID: fmt.Sprintf("quota-worker-%d", worker), MaxRunSeconds: 120, MaxActive: 3})
+				errs <- err
+			}(i, run)
+		}
+		wg.Wait()
+		close(errs)
+		succeeded, limited := 0, 0
+		for err := range errs {
+			switch {
+			case err == nil:
+				succeeded++
+			case errors.Is(err, domain.ErrCapacity):
+				limited++
+			default:
+				t.Fatal(err)
+			}
+		}
+		if succeeded != 1 || limited != 1 {
+			t.Fatalf("claims succeeded=%d limited=%d", succeeded, limited)
+		}
+		var reservations int
+		if err := runtime.QueryRow(ctx, `SELECT count(*) FROM worker.worker_tenant_usage_reservations_v1 WHERE tenant_id='tenant_a'`).Scan(&reservations); err != nil {
+			t.Fatal(err)
+		}
+		if reservations != 1 {
+			t.Fatalf("reservations=%d", reservations)
+		}
+	})
+
 	t.Run("backlog_observation_tracks_durable_work", func(t *testing.T) {
 		reset(t)
 		one, two := request("observe1"), request("observe2")

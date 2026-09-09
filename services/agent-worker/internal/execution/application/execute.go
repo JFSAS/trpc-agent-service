@@ -102,6 +102,20 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	}
 	attemptCtx, cancel := context.WithDeadline(ctx, *g.Run.ExecutionDeadline)
 	defer cancel()
+	usageRecorder, _ := p.ledger.(interface {
+		RecordUsage(context.Context, domain.Grant, domain.ModelUsage) error
+	})
+	usageSettled, modelStarted := false, false
+	settleUsage := func(usage domain.ModelUsage) error {
+		if usageSettled || usageRecorder == nil {
+			return nil
+		}
+		if err := usageRecorder.RecordUsage(attemptCtx, g, usage); err != nil {
+			return err
+		}
+		usageSettled = true
+		return nil
+	}
 	stopRenew := make(chan struct{})
 	renewDone := make(chan struct{})
 	var renewMu sync.Mutex
@@ -140,6 +154,11 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 		return err
 	}
 	fail := func(cause error) error {
+		if !modelStarted {
+			if e := settleUsage(domain.ModelUsage{Known: true}); e != nil {
+				return e
+			}
+		}
 		renewMu.Lock()
 		lost := renewErr
 		renewMu.Unlock()
@@ -187,8 +206,16 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 		return fail(err)
 	}
 	start = time.Now()
+	modelStarted = true
 	result, err := runtime.Execute(attemptCtx, history)
 	p.observe(attemptCtx, "execute", r, g.AttemptID, start, err)
+	usage := domain.ModelUsage{Known: err == nil && result.UsageKnown, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, TotalTokens: result.TotalTokens}
+	if !usage.Known {
+		usage.InputTokens, usage.OutputTokens, usage.TotalTokens = 0, 0, 0
+	}
+	if usageErr := settleUsage(usage); usageErr != nil {
+		return fail(usageErr)
+	}
 	if err == nil && p.observer != nil && (result.InputTokens > 0 || result.OutputTokens > 0 || result.TotalTokens > 0) {
 		p.observer.Observe(attemptCtx, Observation{Operation: "usage", Result: "ok", TenantID: r.Request.Route.TenantID, RunID: r.Request.RunID, AttemptID: g.AttemptID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, TotalTokens: result.TotalTokens})
 	}

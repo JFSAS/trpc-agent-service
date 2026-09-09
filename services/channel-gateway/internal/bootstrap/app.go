@@ -168,6 +168,9 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		ledger = ledger.WithAccountUseGuard(accountGuardBridge{store: catalogStore, ingress: true}).WithTelegramGuard(telegramGuardBridge{receptionpg.New(pool, catalogStore)})
 	}
 	acceptor := admissionapp.New(ledger, routeBridge{routing}, traces.Tracer("channel-gateway"))
+	if controlClient != nil {
+		acceptor.WithUsagePolicies(controlClient)
+	}
 	stream, err := n.JS.Stream(ctx, transport.RouteStream)
 	if err != nil {
 		return fail(err)

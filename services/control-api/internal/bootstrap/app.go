@@ -30,6 +30,7 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile"
 	profileapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/application"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/tenant"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/usagepolicy"
 	"github.com/nats-io/nats.go"
 )
 
@@ -57,6 +58,7 @@ type App struct {
 	runManagement   *runmanagement.Module
 	deployment      *deployment.Module
 	channelBinding  *channelbinding.Module
+	usagePolicy     *usagepolicy.Module
 }
 
 // New creates shared infrastructure and composes every Control API module.
@@ -113,6 +115,18 @@ func New(ctx context.Context, config Config) (*App, error) {
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("assemble tenant: %w", err)
+	}
+	var usagePolicyWorkloads []channelapp.WorkloadPrincipal
+	if config.Channel != nil {
+		usagePolicyWorkloads = config.Channel.principals()
+	}
+	usagePolicyModule, err := usagepolicy.NewModule(usagepolicy.Dependencies{
+		DB: pool, Routes: router, Authenticate: identityModule.AuthenticationMiddleware(),
+		Access: activeTenantMemberLookup{tenants: tenantModule.Service}, Workloads: usagePolicyWorkloads,
+	})
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("assemble tenant usage policy: %w", err)
 	}
 	if _, err := platformbackend.NewModule(platformbackend.Dependencies{Routes: router, Authenticate: identityModule.AuthenticationMiddleware(), TenantAccess: activeTenantMemberLookup{tenants: tenantModule.Service}, Catalog: backendCatalog}); err != nil {
 		pool.Close()
@@ -271,7 +285,10 @@ func New(ctx context.Context, config Config) (*App, error) {
 			pool.Close()
 			return nil, err
 		}
-		internalServer = httpserver.NewTLS(config.Channel.InternalAddress, channelModule.InternalHandler, tlsConfig)
+		internalMux := http.NewServeMux()
+		internalMux.Handle("GET /internal/v1/tenants/{tenant_id}/usage-policy", usagePolicyModule.InternalHandler)
+		internalMux.Handle("/", channelModule.InternalHandler)
+		internalServer = httpserver.NewTLS(config.Channel.InternalAddress, internalMux, tlsConfig)
 	}
 
 	var runtimeServer serverLifecycle
@@ -330,6 +347,7 @@ func New(ctx context.Context, config Config) (*App, error) {
 		runManagement:   runManagementModule,
 		deployment:      deploymentModule,
 		channelBinding:  channelModule,
+		usagePolicy:     usagePolicyModule,
 		internalServer:  internalServer,
 	}, nil
 }

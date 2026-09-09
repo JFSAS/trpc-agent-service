@@ -15,6 +15,7 @@ import (
 	"time"
 
 	proof "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
+	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 )
 
@@ -58,6 +59,9 @@ type Handler struct {
 	knowledgeImporter KnowledgeImporter
 	artifacts         ArtifactOperator
 	management        ManagementReader
+	usageManagement   interface {
+		Usage(context.Context, string) (governancev1.UsageSummary, error)
+	}
 	backendMigrations BackendMigrator
 	tracer            trace.Tracer
 	attempts          AttemptVerifier
@@ -102,6 +106,9 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 		finalCallers[id] = true
 	}
 	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, management: o.Management, backendMigrations: o.BackendMigrations, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
+	h.usageManagement, _ = o.Management.(interface {
+		Usage(context.Context, string) (governancev1.UsageSummary, error)
+	})
 	h.mux.HandleFunc("POST "+proof.AttemptVerifyPath, h.attempt)
 	h.mux.HandleFunc("POST "+proof.FinalVerifyPath, h.final)
 	if o.ReplyArtifacts != nil {
@@ -117,6 +124,9 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 		h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/runs", h.listRuns)
 		h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/runs/{run_id}", h.getRun)
 		h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/audit-events", h.listAudit)
+		if h.usageManagement != nil {
+			h.mux.HandleFunc("GET /internal/v1/management/tenants/{tenant_id}/usage-summary", h.usageSummary)
+		}
 	}
 	if o.BackendMigrations != nil {
 		h.mux.HandleFunc("POST "+proof.BackendMigrationPath, h.backendMigration)

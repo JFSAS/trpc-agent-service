@@ -101,6 +101,7 @@ type Result struct {
 	FinalText   string
 	Snapshot    []byte
 	Usage       Usage
+	UsageKnown  bool
 }
 
 type Executor struct {
@@ -294,6 +295,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 				}
 			}
 			if !evt.IsPartial && evt.Usage != nil {
+				result.UsageKnown = true
 				result.Usage.InputTokens += evt.Usage.PromptTokens
 				result.Usage.OutputTokens += evt.Usage.CompletionTokens
 				result.Usage.TotalTokens += evt.Usage.TotalTokens

@@ -199,6 +199,11 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 			return domain.Receipt{}, fmt.Errorf("%w: %v", domain.ErrRouteChanged, err)
 		}
 	}
+	if c.Policy != nil && c.Policy.Enabled {
+		if err = chargeUsageRate(ctx, tx, c.Route.TenantID, c.Input.SenderID, c.Policy.Requests.TenantPerMinute, c.Policy.Requests.UserPerMinute); err != nil {
+			return domain.Receipt{}, err
+		}
+	}
 	raw, err := json.Marshal(c.Receipt)
 	if err != nil {
 		return domain.Receipt{}, err

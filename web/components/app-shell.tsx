@@ -4,6 +4,7 @@ import {
   Bot,
   Building2,
   ChevronDown,
+  Gauge,
   Hexagon,
   LayoutDashboard,
   LogOut,
@@ -145,6 +146,12 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
                 <ScrollText size={18} /><span>审计记录</span>
               </Link>
               {activeTenant?.role === "OWNER" && <Link
+                className={pathname.startsWith(`/tenants/${tenantPath}/usage-governance`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/usage-governance`} aria-label="使用治理" title="使用治理"
+              >
+                <Gauge size={18} /><span>使用治理</span>
+              </Link>}
+              {activeTenant?.role === "OWNER" && <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/members`) ? "nav-link active" : "nav-link"}
                 href={`/tenants/${tenantPath}/members`} aria-label="成员管理" title="成员管理"
               >
@@ -197,6 +204,7 @@ function pageLabel(pathname: string) {
   if (/^\/tenants\/[^/]+\/runs\/[^/]+/.test(pathname)) return "运行详情";
   if (/^\/tenants\/[^/]+\/runs(?:\/|$)/.test(pathname)) return "运行记录";
   if (/^\/tenants\/[^/]+\/audit(?:\/|$)/.test(pathname)) return "审计记录";
+  if (/^\/tenants\/[^/]+\/usage-governance(?:\/|$)/.test(pathname)) return "使用治理";
   if (/^\/tenants\/[^/]+\/members/.test(pathname)) return "成员管理";
   if (/^\/tenants\/[^/]+/.test(pathname)) return "Agent 工作台";
   if (pathname.startsWith("/tenants")) return "选择租户";

@@ -41,6 +41,9 @@
     },
     "input": {
       "$ref": "#/$defs/Inbound"
+    },
+    "usage_policy": {
+      "$ref": "#/$defs/UsagePolicy"
     }
   },
   "$defs": {
@@ -320,6 +323,60 @@
           "type": "string",
           "format": "date-time",
           "maxLength": 40
+        }
+      }
+    },
+    "UsagePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "enabled",
+        "max_concurrent_runs",
+        "token_period_seconds",
+        "token_limit",
+        "token_reservation_per_run",
+        "input_micros_per_million_tokens",
+        "output_micros_per_million_tokens"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_concurrent_runs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "token_period_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "token_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "token_reservation_per_run": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "input_micros_per_million_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "output_micros_per_million_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       }
     }
