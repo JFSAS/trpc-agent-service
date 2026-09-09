@@ -96,7 +96,7 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 		return domain.RuntimeResult{}, application.ErrRuntimeFailed
 	}
 	for i, t := range p.Tools {
-		request.Tools = append(request.Tools, trpcagent.MCPToolConfig{Resource: t.Resource, Tool: a.mcpServices[i].Tool()})
+		request.Tools = append(request.Tools, trpcagent.MCPToolConfig{Resource: t.Resource, Capability: t.Capability, Tool: a.mcpServices[i].Tool()})
 	}
 	if p.Knowledge != nil {
 		if a.knowledgeStore == nil {

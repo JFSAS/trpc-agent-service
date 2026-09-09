@@ -147,6 +147,9 @@ func (a *executionAssembly) failure() error {
 		}
 	}
 	for _, s := range a.tools {
+		if s.approvalFailed.Load() {
+			return ErrApproval
+		}
 		if s.failed.Load() {
 			return ErrMemoryTool
 		}
@@ -229,6 +232,7 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 		bindings := map[string]string{}
 		names := []string{}
 		var ordinary []tool.Tool
+		approvalTools := map[string]approvalTool{}
 		for _, t := range n.Tools {
 			if nilCapabilityService(t.Tool) || t.Tool.Declaration() == nil {
 				return nil, ErrMCP
@@ -240,6 +244,9 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 			bindings[alias] = "tools/" + t.Resource
 			ordinary = append(ordinary, boundMCPTool{CallableTool: t.Tool, name: alias, state: a.mcp})
 			names = append(names, alias)
+			if t.Capability == approvalCapability {
+				approvalTools[alias] = approvalTool{resource: t.Resource, capability: t.Capability}
+			}
 		}
 		if n.Knowledge != nil {
 			bindings[sdkKnowledgeName] = "knowledge/" + n.Knowledge.Resource
@@ -306,6 +313,12 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 			}
 			ts := newMemoryToolState(names, req.MaxToolCalls, e.Tracer)
 			ts.sharedCalls = &a.calls
+			if len(approvalTools) > 0 {
+				if e.Approvals == nil {
+					return nil, ErrApproval
+				}
+				ts.approval = &approvalState{store: e.Approvals, tenantID: req.TenantID, runID: req.RunID, attemptID: req.AttemptID, nodeID: id, tools: approvalTools}
+			}
 			a.tools[id] = ts
 			options = append(options, llmagent.WithToolCallbacks(ts.callbacks()))
 		}

@@ -16,12 +16,14 @@ var ErrMemoryTool = errors.New("memory tool execution failed")
 // These callbacks enforce the existing published call budget and observe SDK
 // errors. They do not implement tool CRUD, parse arguments, or export contents.
 type memoryToolState struct {
-	allowed     map[string]bool
-	limit       int64
-	calls       atomic.Int64
-	sharedCalls *atomic.Int64
-	failed      atomic.Bool
-	tracer      trace.Tracer
+	allowed        map[string]bool
+	limit          int64
+	calls          atomic.Int64
+	sharedCalls    *atomic.Int64
+	failed         atomic.Bool
+	approvalFailed atomic.Bool
+	tracer         trace.Tracer
+	approval       *approvalState
 }
 
 func newMemoryToolState(names []string, limit int64, tracer trace.Tracer) *memoryToolState {
@@ -43,6 +45,12 @@ func (s *memoryToolState) callbacks() *tool.Callbacks {
 				return nil, ErrMemoryTool
 			}
 			ctx, _ = telemetrytrace.Start(s.tracer, ctx, "worker.tool.call", trace.WithAttributes(attribute.String("app.tool.name", a.ToolName)))
+			if s.approval != nil {
+				result, err := s.approval.before(ctx, a)
+				if err != nil || result != nil {
+					return result, err
+				}
+			}
 			return &tool.BeforeToolResult{Context: ctx}, nil
 		}},
 		AfterTool: []tool.AfterToolCallbackStructured{func(ctx context.Context, a *tool.AfterToolArgs) (*tool.AfterToolResult, error) {
@@ -51,6 +59,12 @@ func (s *memoryToolState) callbacks() *tool.Callbacks {
 				err = ErrMemoryTool
 			}
 			telemetrytrace.End(trace.SpanFromContext(ctx), err)
+			if s.approval != nil {
+				if approvalErr := s.approval.after(ctx, a); approvalErr != nil {
+					s.approvalFailed.Store(true)
+					return nil, approvalErr
+				}
+			}
 			// Preserve SDK tool-level errors for the model's correction loop.
 			// Only selection/budget violations fail the whole Attempt here.
 			return nil, nil

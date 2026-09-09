@@ -106,6 +106,7 @@ type Result struct {
 
 type Executor struct {
 	Tracer        trace.Tracer
+	Approvals     ApprovalStore
 	CapacityBytes int
 	DrainTimeout  time.Duration
 	beforeAppend  func(*event.Event) error

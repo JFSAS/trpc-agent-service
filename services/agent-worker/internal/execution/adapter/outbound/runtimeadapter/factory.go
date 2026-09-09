@@ -25,6 +25,7 @@ import (
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/domain"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/toolapproval"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -32,9 +33,10 @@ import (
 var ErrAlreadyPrepared = errors.New("attempt credential initialization already started")
 
 type Options struct {
-	ArtifactPool *pgxpool.Pool
-	Tracer       trace.Tracer
-	BaseURL      string
+	ArtifactPool  *pgxpool.Pool
+	ApprovalStore *toolapproval.Store
+	Tracer        trace.Tracer
+	BaseURL       string
 	// Client is a borrowed mTLS client configured by bootstrap with trust roots
 	// and the Workload certificate. The factory never closes the shared transport.
 	Client                *http.Client
@@ -46,6 +48,7 @@ type Options struct {
 	Observer              application.Observer
 }
 type Factory struct {
+	approvals        *toolapproval.Store
 	openRedisSession func(context.Context, sessionstore.RedisTarget, string, int) (candidateStore, error)
 	options          Options
 	client           *http.Client
@@ -74,6 +77,7 @@ func New(o Options) (*Factory, error) {
 	// redirect target, including same-origin redirects.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	f := &Factory{options: o, client: &client, started: make(map[attemptKey]time.Time)}
+	f.approvals = o.ApprovalStore
 	f.openStore = func(ctx context.Context, dsn string, t sessionstore.Target, capacity int) (candidateStore, error) {
 		return sessionstore.Open(ctx, dsn, t, capacity)
 	}
@@ -238,7 +242,7 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 		}
 		return nil, err
 	}
-	return &attempt{nodeModelKeys: nodeModelKeys, sequenceKnowledge: sequenceKnowledge, mcpServices: toolServices, knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
+	return &attempt{nodeModelKeys: nodeModelKeys, sequenceKnowledge: sequenceKnowledge, mcpServices: toolServices, knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, Approvals: f.approvals, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {

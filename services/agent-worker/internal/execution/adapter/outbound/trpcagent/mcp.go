@@ -13,8 +13,9 @@ var ErrMCPDependency = errors.New("MCP dependency unavailable")
 var ErrMCPAuthentication = errors.New("MCP authentication rejected")
 
 type MCPToolConfig struct {
-	Resource string
-	Tool     tool.CallableTool
+	Resource   string
+	Capability string
+	Tool       tool.CallableTool
 }
 type mcpState struct {
 	mu     sync.Mutex

@@ -5,18 +5,19 @@ package httpadapter
 import (
 	"context"
 	"errors"
-	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
-	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
-	"go.opentelemetry.io/otel/trace"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"time"
 
+	approvalv1 "github.com/liuzengh/trpc-agent-service/api/runtime/approval/v1"
 	proof "github.com/liuzengh/trpc-agent-service/api/runtime/execution/v1"
 	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
+	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/platform/tracecontext"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -40,12 +41,17 @@ type ManagementReader interface {
 type BackendMigrator interface {
 	Execute(context.Context, proof.BackendMigrationRequest) (proof.BackendMigrationResponse, error)
 }
+type ApprovalManager interface {
+	List(context.Context, string, int, int) (approvalv1.Page, error)
+	Decide(context.Context, string, string, string, string, string, string) (approvalv1.DecisionResponse, error)
+}
 type Options struct {
 	ReplyArtifacts                       ReplyArtifactReader
 	Knowledge                            KnowledgeImporter
 	Artifacts                            ArtifactOperator
 	Management                           ManagementReader
 	BackendMigrations                    BackendMigrator
+	Approvals                            ApprovalManager
 	Tracer                               trace.Tracer
 	ControlPrincipals, GatewayPrincipals []string
 	Timeout                              time.Duration
@@ -63,6 +69,7 @@ type Handler struct {
 		Usage(context.Context, string) (governancev1.UsageSummary, error)
 	}
 	backendMigrations BackendMigrator
+	approvals         ApprovalManager
 	tracer            trace.Tracer
 	attempts          AttemptVerifier
 	finals            FinalVerifier
@@ -105,7 +112,7 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 	for id := range gateway {
 		finalCallers[id] = true
 	}
-	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, management: o.Management, backendMigrations: o.BackendMigrations, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
+	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, management: o.Management, backendMigrations: o.BackendMigrations, approvals: o.Approvals, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
 	h.usageManagement, _ = o.Management.(interface {
 		Usage(context.Context, string) (governancev1.UsageSummary, error)
 	})
@@ -130,6 +137,10 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 	}
 	if o.BackendMigrations != nil {
 		h.mux.HandleFunc("POST "+proof.BackendMigrationPath, h.backendMigration)
+	}
+	if o.Approvals != nil {
+		h.mux.HandleFunc("GET /internal/v1/approvals/tenants/{tenant_id}/operations", h.listApprovals)
+		h.mux.HandleFunc("POST /internal/v1/approvals/tenants/{tenant_id}/operations/{operation_id}/decision", h.decideApproval)
 	}
 	return h, nil
 }

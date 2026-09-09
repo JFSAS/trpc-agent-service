@@ -101,6 +101,18 @@ policy; schema is fixed to `runtime_session`. Credentials cannot add driver
 options, change identity, or select another schema. A missing prepared store
 returns `ErrPreparation`.
 
+## Side-effect approval callback
+
+A selected MCP resource with exact capability `test.ticket.status.update` is wrapped by the
+pinned SDK BeforeTool/AfterTool callbacks. BeforeTool canonicalizes the closed ticket-status
+arguments, persists the tenant/run/attempt/invocation/tool-call identity and blocks only that
+active SDK invocation. A database CAS from APPROVED to EXECUTING is required before the MCP
+call. AfterTool persists bounded JSON results; provider or persistence uncertainty becomes
+UNKNOWN and is not mapped to the ordinary dependency retry. Cancellation expires an undecided
+request. Startup reconciliation is scoped to the configured worker identity, and Scheduled
+excludes UNKNOWN approval runs, so recovery cannot replay the whole Agent turn. Control owns
+member/OWNER authorization; callback text or model output never grants approval.
+
 ## Gates
 
 ```sh

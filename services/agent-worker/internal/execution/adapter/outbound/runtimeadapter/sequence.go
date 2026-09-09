@@ -233,7 +233,7 @@ func (a *attempt) populateSequence(req *trpcagent.Request) error {
 	req.Nodes = make(map[string]trpcagent.NodeConfig, len(p.Nodes))
 	tools := map[string]trpcagent.MCPToolConfig{}
 	for i, t := range p.Tools {
-		tools[t.Resource] = trpcagent.MCPToolConfig{Resource: t.Resource, Tool: a.mcpServices[i].Tool()}
+		tools[t.Resource] = trpcagent.MCPToolConfig{Resource: t.Resource, Capability: t.Capability, Tool: a.mcpServices[i].Tool()}
 	}
 	for id, n := range p.Nodes {
 		out := trpcagent.NodeConfig{Kind: n.Kind, Body: n.Body, MaxIterations: n.MaxIterations, Children: append([]string(nil), n.Children...), Instruction: n.Instruction, Model: trpcagent.Model{Endpoint: n.ModelEndpoint, Name: n.ModelName, APIKey: a.nodeModelKeys[id], Temperature: n.Temperature, MaxOutputTokens: n.MaxOutputTokens}, Artifact: n.Artifact, AddSessionSummary: n.AddSessionSummary}

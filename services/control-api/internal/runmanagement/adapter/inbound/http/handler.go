@@ -2,11 +2,14 @@ package httpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	approvalv1 "github.com/liuzengh/trpc-agent-service/api/runtime/approval/v1"
 	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 	identityapp "github.com/liuzengh/trpc-agent-service/services/control-api/internal/identity/application"
@@ -17,6 +20,8 @@ type Service interface {
 	ListRuns(ctx context.Context, tenant, user string, offset, limit int) (managementv1.RunPage, error)
 	GetRun(ctx context.Context, tenant, user, runID string) (managementv1.RunDetail, error)
 	ListAudit(ctx context.Context, tenant, user string, offset, limit int) (managementv1.AuditPage, error)
+	ListApprovals(ctx context.Context, tenant, user string, offset, limit int) (approvalv1.Page, error)
+	DecideApproval(ctx context.Context, tenant, user, operation string, request approvalv1.DecisionRequest) (approvalv1.DecisionResponse, error)
 }
 
 type Handler struct{ service Service }
@@ -28,6 +33,56 @@ func (h *Handler) Register(routes gin.IRoutes) {
 	routes.GET("/v1/tenants/:tenant_id/runs/:run_id", h.getRun)
 	routes.GET("/v1/tenants/:tenant_id/audit-events", h.listAudit)
 	routes.GET("/v1/tenants/:tenant_id/usage-summary", h.getUsage)
+	routes.GET("/v1/tenants/:tenant_id/tool-approvals", h.listApprovals)
+	routes.POST("/v1/tenants/:tenant_id/tool-approvals/:operation_id/decision", h.decideApproval)
+}
+
+func (h *Handler) listApprovals(c *gin.Context) {
+	id, ok := identity(c)
+	if !ok {
+		return
+	}
+	offset, limit, ok := page(c)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "INVALID_PAGE"}})
+		return
+	}
+	result, err := h.service.ListApprovals(c.Request.Context(), c.Param("tenant_id"), id.UserID, offset, limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) decideApproval(c *gin.Context) {
+	id, ok := identity(c)
+	if !ok {
+		return
+	}
+	if c.Request.URL.RawQuery != "" || c.ContentType() != "application/json" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "INVALID_APPROVAL_DECISION"}})
+		return
+	}
+	var request approvalv1.DecisionRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "INVALID_APPROVAL_DECISION"}})
+		return
+	}
+	result, err := h.service.DecideApproval(c.Request.Context(), c.Param("tenant_id"), id.UserID, c.Param("operation_id"), request)
+	if err != nil {
+		if errors.Is(err, application.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "APPROVAL_NOT_FOUND"}})
+			return
+		}
+		fail(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, result)
 }
 
 func identity(c *gin.Context) (identityapp.IdentityContext, bool) {
@@ -130,6 +185,8 @@ func fail(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "RUN_NOT_FOUND"}})
 	case errors.Is(err, application.ErrInvalidPage):
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "INVALID_PAGE"}})
+	case errors.Is(err, application.ErrConflict):
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "APPROVAL_CONFLICT"}})
 	default:
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"code": "RUN_MANAGEMENT_UNAVAILABLE"}})
 	}

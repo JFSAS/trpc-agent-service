@@ -36,6 +36,7 @@ tRPC Agent Service 把这些环节组织成一条明确的发布与运行流程�
 | Channel 管理 | 配置 Telegram / 企业微信账号，进行接入预检，管理接入与消息路由 |
 | Worker 执行 | 消费运行请求，使用固定 Manifest 执行 Agent，持久化会话与执行结果并生成回复意图 |
 | 普通 MCP 工具 | 配置 Streamable HTTP 服务及明确选中的工具，按节点需求匹配并调用 |
+| 危险工具二次确认 | 对测试工单状态修改固定目标和参数摘要，由租户 OWNER 在管理 Web 批准或拒绝 |
 | 多 Agent 编排 | 使用 Sequence、有显式汇总的 Parallel、固定轮数 Loop 组合 LLM 节点 |
 | 会话与数据能力 | 显式配置 Session Summary、PostgreSQL / Redis Memory、S3 Artifact 与 Qdrant Knowledge |
 | 本地全栈启动 | 用统一入口启动管理、执行、渠道服务及 PG / NATS / Redis / Qdrant / MinIO |
@@ -113,7 +114,12 @@ sequenceDiagram
     M-->>W: 模型响应
 
     loop 模型请求工具调用时
-        W->>T: 调用已选工具
+        alt 测试工单状态修改需要二次确认
+            W->>W: 固定调用身份、目标与参数摘要
+            W-->>U: 管理 Web 展示待确认操作
+            U->>W: 经 Control API 批准或拒绝
+        end
+        W->>T: 仅在需要时批准后调用已选工具
         T-->>W: 工具结果
         W->>M: 携带工具结果继续推理
         M-->>W: 下一次调用或最终回答

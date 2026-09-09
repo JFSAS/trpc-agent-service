@@ -154,6 +154,57 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/tenants/{tenant_id}/tool-approvals:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: listToolApprovals
+      tags: [Operations]
+      summary: List exact side-effecting tool operations awaiting or carrying a decision
+      description: Active tenant members may read redacted operation summaries. Raw arguments and provider results are not returned.
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Tool approval page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolApprovalPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {description: Worker approval source unavailable}
+  /v1/tenants/{tenant_id}/tool-approvals/{operation_id}/decision:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: operation_id
+        in: path
+        required: true
+        schema: {type: string, pattern: '^tap_[0-9a-f]{64}$'}
+    post:
+      operationId: decideToolApproval
+      tags: [Operations]
+      summary: Approve or reject one exact test-ticket status operation
+      description: OWNER-only. expected_arguments_digest prevents a stale page or changed parameters from consuming an approval. Replaying the same decision is idempotent.
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolApprovalDecisionRequest'}
+      responses:
+        '200':
+          description: Durable decision or identical replay
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolApprovalDecisionResponse'}
+        '400': {description: Invalid decision}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {description: Approval not found in this tenant}
+        '409': {description: "Stale digest, opposite decision, expiry, or execution already started"}
+        '503': {description: Worker approval source unavailable}
   /v1/tenants/{tenant_id}/runtime-backends:
     parameters:
       - $ref: '#/components/parameters/TenantID'
@@ -2829,6 +2880,56 @@ components:
         offset: {type: integer, minimum: 0}
         limit: {type: integer, minimum: 1, maximum: 100}
         total: {type: integer, minimum: 0}
+    ToolApproval:
+      type: object
+      additionalProperties: false
+      required: [operation_id, tenant_id, run_id, attempt_id, node_id, tool_name, tool_resource, capability, target, parameter_summary, arguments_digest, status, requested_at, expires_at]
+      properties:
+        operation_id: {type: string, pattern: '^tap_[0-9a-f]{64}$'}
+        tenant_id: {type: string, minLength: 1}
+        run_id: {type: string, minLength: 1}
+        attempt_id: {type: string, minLength: 1}
+        node_id: {type: string, minLength: 1}
+        tool_name: {type: string, minLength: 1}
+        tool_resource: {type: string, minLength: 1}
+        capability: {type: string, enum: [test.ticket.status.update]}
+        target: {type: string, minLength: 1}
+        parameter_summary: {type: string, minLength: 1}
+        arguments_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        status: {type: string, enum: [PENDING, APPROVED, REJECTED, EXPIRED, EXECUTING, SUCCEEDED, UNKNOWN]}
+        requested_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        decided_by: {type: string}
+        decided_at: {type: string, format: date-time}
+        decision_reason: {type: string}
+        execution_started_at: {type: string, format: date-time}
+        execution_finished_at: {type: string, format: date-time}
+        result_summary: {type: string}
+        result_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    ToolApprovalPage:
+      type: object
+      additionalProperties: false
+      required: [operations, offset, limit, total]
+      properties:
+        operations: {type: array, items: {$ref: '#/components/schemas/ToolApproval'}}
+        offset: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    ToolApprovalDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [action, expected_arguments_digest]
+      properties:
+        action: {type: string, enum: [approve, reject]}
+        reason: {type: string, maxLength: 500}
+        expected_arguments_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    ToolApprovalDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [operation, outcome]
+      properties:
+        operation: {$ref: '#/components/schemas/ToolApproval'}
+        outcome: {type: string, enum: [DECIDED, REPLAY]}
     ErrorResponse:
       type: object
       additionalProperties: false

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 
+	approvalv1 "github.com/liuzengh/trpc-agent-service/api/runtime/approval/v1"
 	governancev1 "github.com/liuzengh/trpc-agent-service/api/runtime/governance/v1"
 	managementv1 "github.com/liuzengh/trpc-agent-service/api/runtime/management/v1"
 )
@@ -14,15 +15,23 @@ var (
 	ErrNotFound    = errors.New("run not found")
 	ErrInvalidPage = errors.New("run management page invalid")
 	ErrUnavailable = errors.New("run management unavailable")
+	ErrConflict    = errors.New("tool approval conflict")
 )
 
 type TenantAccess interface {
 	IsActiveMember(context.Context, string, string) (bool, error)
 }
+type OwnerAccess interface {
+	IsActiveOwner(context.Context, string, string) (bool, error)
+}
 type RuntimeReader interface {
 	ListRuns(context.Context, string, int, int) (managementv1.RunPage, error)
 	GetRun(context.Context, string, string) (managementv1.RunDetail, error)
 	ListAudit(context.Context, string, int, int) (managementv1.AuditPage, error)
+}
+type ApprovalRuntime interface {
+	ListApprovals(context.Context, string, int, int) (approvalv1.Page, error)
+	DecideApproval(context.Context, string, string, string, approvalv1.DecisionRequest) (approvalv1.DecisionResponse, error)
 }
 type ControlAuditReader interface {
 	List(context.Context, string, int, int) (managementv1.AuditPage, error)
@@ -39,6 +48,56 @@ func New(access TenantAccess, runtime RuntimeReader, audit ControlAuditReader) (
 		return nil, ErrUnavailable
 	}
 	return &Service{access: access, runtime: runtime, audit: audit}, nil
+}
+
+func (s *Service) ListApprovals(ctx context.Context, tenant, user string, offset, limit int) (approvalv1.Page, error) {
+	if !validPage(offset, limit) {
+		return approvalv1.Page{}, ErrInvalidPage
+	}
+	if err := s.authorize(ctx, tenant, user); err != nil {
+		return approvalv1.Page{}, err
+	}
+	approvals, ok := s.runtime.(ApprovalRuntime)
+	if !ok {
+		return approvalv1.Page{}, ErrUnavailable
+	}
+	page, err := approvals.ListApprovals(ctx, tenant, offset, limit)
+	if err != nil {
+		return approvalv1.Page{}, ErrUnavailable
+	}
+	return page, nil
+}
+
+func (s *Service) DecideApproval(ctx context.Context, tenant, user, operation string, request approvalv1.DecisionRequest) (approvalv1.DecisionResponse, error) {
+	if tenant == "" || user == "" || operation == "" || !approvalv1.ValidDigest(request.ExpectedArgumentsDigest) || (request.Action != "approve" && request.Action != "reject") || len(request.Reason) > 500 {
+		return approvalv1.DecisionResponse{}, ErrConflict
+	}
+	owners, ok := s.access.(OwnerAccess)
+	if !ok {
+		return approvalv1.DecisionResponse{}, ErrForbidden
+	}
+	ok, err := owners.IsActiveOwner(ctx, tenant, user)
+	if err != nil {
+		return approvalv1.DecisionResponse{}, ErrUnavailable
+	}
+	if !ok {
+		return approvalv1.DecisionResponse{}, ErrForbidden
+	}
+	approvals, ok := s.runtime.(ApprovalRuntime)
+	if !ok {
+		return approvalv1.DecisionResponse{}, ErrUnavailable
+	}
+	response, err := approvals.DecideApproval(ctx, tenant, operation, user, request)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return approvalv1.DecisionResponse{}, ErrNotFound
+		}
+		if errors.Is(err, ErrConflict) {
+			return approvalv1.DecisionResponse{}, ErrConflict
+		}
+		return approvalv1.DecisionResponse{}, ErrUnavailable
+	}
+	return response, nil
 }
 
 func (s *Service) authorize(ctx context.Context, tenant, user string) error {

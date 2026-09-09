@@ -172,6 +172,14 @@ export type UsageSummary = {
   reserved_tokens: number; unknown_usage_count: number;
   pending_usage_count: number; estimated_cost_micros: number;
 };
+export type ToolApproval = {
+  operation_id: string; tenant_id: string; run_id: string; attempt_id: string;
+  node_id: string; tool_name: string; tool_resource: string; capability: string;
+  target: string; parameter_summary: string; arguments_digest: string; status: string;
+  requested_at: string; expires_at: string; decided_by?: string; decided_at?: string;
+  decision_reason?: string; execution_started_at?: string; execution_finished_at?: string;
+  result_summary?: string; result_digest?: string;
+};
 
 export class ControlApiError extends Error {
   constructor(
@@ -403,5 +411,16 @@ export const controlApi = {
   },
   getUsageSummary(tenantId: string) {
     return request<UsageSummary>(`/v1/tenants/${encodeURIComponent(tenantId)}/usage-summary`);
+  },
+  listToolApprovals(tenantId: string, page: { offset: number; limit: number }) {
+    const query = new URLSearchParams({ offset: String(page.offset), limit: String(page.limit) });
+    return request<{ operations: ToolApproval[]; offset: number; limit: number; total: number }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/tool-approvals?${query}`,
+    );
+  },
+  decideToolApproval(tenantId: string, operationId: string, input: { action: "approve" | "reject"; reason?: string; expected_arguments_digest: string }) {
+    return request<{ operation: ToolApproval; outcome: string }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/tool-approvals/${encodeURIComponent(operationId)}/decision`, json("POST", input),
+    );
   },
 };

@@ -70,6 +70,8 @@
   Control/Worker 业务审计聚合；明确区分 Worker Reply 交接和 Gateway 实际送达。
 - [租户使用治理 V1](tenant-usage-governance-v1.md)：Control 管理单一当前策略，Gateway
   落实 IM allowlist 和共享限流，Worker 落实跨副本并发、Token 预留/结算及未知用量投影。
+- [危险工具二次确认 V1](tool-approval-v1.md)：只对测试工单状态修改提供管理 Web 确认；
+  固定租户/调用/目标/参数摘要，CAS 防重复执行，并对 UNKNOWN 与 Worker 重启禁止整轮重跑。
 - [Channel Gateway 四 Module 入门说明](channel-gateway/module-introduction.md)：先理解四类事实和调用关系，再读详细规范。
 - [Channel Gateway 四个业务 Module](channel-gateway/module-boundaries.md)：解释单一 Gateway
   Workload 内 routing、admission、connection、delivery 的职责追踪、目录分工、深接口、事务 seam 和故障时序。

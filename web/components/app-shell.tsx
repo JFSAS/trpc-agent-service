@@ -12,6 +12,7 @@ import {
   Radio,
   ScrollText,
   ShieldCheck,
+  ShieldAlert,
   SlidersHorizontal,
   Users,
   Workflow,
@@ -140,6 +141,12 @@ export function AppShell({ user, capabilities = [], children }: AppShellProps) {
                 <Workflow size={18} /><span>运行记录</span>
               </Link>
               <Link
+                className={pathname.startsWith(`/tenants/${tenantPath}/approvals`) ? "nav-link active" : "nav-link"}
+                href={`/tenants/${tenantPath}/approvals`} aria-label="工具审批" title="工具审批"
+              >
+                <ShieldAlert size={18} /><span>工具审批</span>
+              </Link>
+              <Link
                 className={pathname.startsWith(`/tenants/${tenantPath}/audit`) ? "nav-link active" : "nav-link"}
                 href={`/tenants/${tenantPath}/audit`} aria-label="审计记录" title="审计记录"
               >
@@ -203,6 +210,7 @@ function pageLabel(pathname: string) {
   if (/^\/tenants\/[^/]+\/channels(?:\/|$)/.test(pathname)) return "渠道接入";
   if (/^\/tenants\/[^/]+\/runs\/[^/]+/.test(pathname)) return "运行详情";
   if (/^\/tenants\/[^/]+\/runs(?:\/|$)/.test(pathname)) return "运行记录";
+  if (/^\/tenants\/[^/]+\/approvals(?:\/|$)/.test(pathname)) return "工具审批";
   if (/^\/tenants\/[^/]+\/audit(?:\/|$)/.test(pathname)) return "审计记录";
   if (/^\/tenants\/[^/]+\/usage-governance(?:\/|$)/.test(pathname)) return "使用治理";
   if (/^\/tenants\/[^/]+\/members/.test(pathname)) return "成员管理";

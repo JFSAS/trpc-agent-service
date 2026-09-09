@@ -55,6 +55,15 @@ Memory、MinIO/PG Artifact、Qdrant 双 resource/tenant scope 矩阵，实际发
 组合 Plan 的 Knowledge 正式导入仍读取旧单叶字段导致403的问题；真实模型未验边界
 和最终统一 Go/Web 结果在矩阵中逐项列明。
 
+## 2026-09-10 危险工具二次确认增量
+
+[危险工具二次确认 V1](../tool-approval-v1.md) 只治理 Capability
+`test.ticket.status.update`：Worker 在真实 SDK Before/After Tool 回调之间持久等待，Control
+提供租户 OWNER 决定，Web 显示目标与参数摘要。批准通过摘要和调用身份绑定；重复决定只重放
+结果，工具结果未知及所属 Worker 重启均进入 UNKNOWN，调度器不以新 Attempt 重跑整轮 Agent。
+当前自动化覆盖真实 PostgreSQL 状态机及 Web/HTTP/SDK 接缝；真实外部测试工单服务仍待联合验收。
+这不是通用 Shell、任意 MCP 工具或 IM 卡片审批。
+
 ## 1. 本轮交付
 
 | 位置 | 新增的实现 |
