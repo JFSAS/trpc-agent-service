@@ -295,13 +295,19 @@ type ManifestEmbeddingResource struct {
 	Credential CredentialUse `json:"credential"`
 }
 
+type ArtifactCredentials struct {
+	AccessKeyID     CredentialUse `json:"access_key_id"`
+	SecretAccessKey CredentialUse `json:"secret_access_key"`
+}
+
 type ManifestStorageResource struct {
-	MetadataContract string             `json:"metadata_contract,omitempty"`
-	Backend          *datav1.Snapshot   `json:"backend,omitempty"`
-	AdapterVersion   string             `json:"adapter_version"`
-	Kind             string             `json:"kind"`
-	Destination      StorageDestination `json:"destination"`
-	Credential       CredentialUse      `json:"credential"`
+	Credentials      *ArtifactCredentials `json:"credentials,omitempty"`
+	MetadataContract string               `json:"metadata_contract,omitempty"`
+	Backend          *datav1.Snapshot     `json:"backend,omitempty"`
+	AdapterVersion   string               `json:"adapter_version"`
+	Kind             string               `json:"kind"`
+	Destination      StorageDestination   `json:"destination"`
+	Credential       CredentialUse        `json:"credential"`
 }
 
 type ResolvedRequirements struct {

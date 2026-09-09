@@ -1004,6 +1004,9 @@
         },
         "metadata_contract": {
           "const": "worker-artifact-metadata-v1"
+        },
+        "credential_present": {
+          "type": "boolean"
         }
       }
     },

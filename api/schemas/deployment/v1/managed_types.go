@@ -7,6 +7,9 @@ import (
 )
 
 func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
+	if r.Credentials != nil && r.Kind != "managed_artifact" {
+		return nil, ErrInvalidManifest
+	}
 	if (r.Kind == "managed_artifact" && r.MetadataContract != ArtifactMetadataContract) || (r.Kind != "managed_artifact" && r.MetadataContract != "") {
 		return nil, ErrInvalidManifest
 	}
@@ -23,12 +26,13 @@ func (r ManifestStorageResource) MarshalJSON() ([]byte, error) {
 			credential = &c
 		}
 		return json.Marshal(struct {
-			Credential       *CredentialUse   `json:"credential,omitempty"`
-			MetadataContract string           `json:"metadata_contract,omitempty"`
-			Adapter          string           `json:"adapter_version"`
-			Kind             string           `json:"kind"`
-			Backend          *datav1.Snapshot `json:"backend"`
-		}{credential, r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
+			Credentials      *ArtifactCredentials `json:"credentials,omitempty"`
+			Credential       *CredentialUse       `json:"credential,omitempty"`
+			MetadataContract string               `json:"metadata_contract,omitempty"`
+			Adapter          string               `json:"adapter_version"`
+			Kind             string               `json:"kind"`
+			Backend          *datav1.Snapshot     `json:"backend"`
+		}{r.Credentials, credential, r.MetadataContract, r.AdapterVersion, r.Kind, r.Backend})
 	}
 	if r.Backend != nil {
 		return nil, ErrInvalidManifest
@@ -60,6 +64,20 @@ func (r ManifestKnowledgeResource) MarshalJSON() ([]byte, error) {
 // consume them. Platform authorization and operational readiness are separate.
 func validateManagedResourceRoles(c ManifestContent) error {
 	for name, r := range c.Resources.Storage {
+		if r.Credentials != nil {
+			if r.Kind != "managed_artifact" || r.Backend == nil {
+				return ErrInvalidManifest
+			}
+			d, err := r.Backend.Digest()
+			if err != nil {
+				return ErrInvalidManifest
+			}
+			for purpose, u := range map[string]CredentialUse{"access_key_id": r.Credentials.AccessKeyID, "secret_access_key": r.Credentials.SecretAccessKey} {
+				if u.Purpose != purpose || u.AudienceDigest != d || !regexp.MustCompile(`^crd_[0-9a-f]{32}$`).MatchString(u.CredentialID) {
+					return ErrInvalidManifest
+				}
+			}
+		}
 		role := ""
 		switch r.Kind {
 		case "managed_session":

@@ -36,9 +36,6 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		return reject("invalid session summary configuration")
 	}
 	for _, node := range c.AgentPlan.Nodes {
-		if node.Artifact != nil {
-			return reject("artifact is deferred")
-		}
 		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
 			return reject("summary consumption requires enabled runtime summary")
 		}
@@ -73,11 +70,14 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	sessionKey, ok := c.StorageRoles["session"]
 	session, exists := c.Resources.Storage[sessionKey]
 	storageCount := 1
+	if node.Artifact != nil {
+		storageCount++
+	}
 	if node.Memory != nil {
 		storageCount++
 	}
 	if !ok || !exists || len(c.StorageRoles) != storageCount || len(c.Resources.Storage) != storageCount {
-		return reject("storage must equal explicit Session and Memory closure")
+		return reject("storage must equal explicit data capability closure")
 	}
 	expectedHosts := []string{}
 	switch session.Kind {
@@ -141,13 +141,43 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
+	if node.Artifact != nil {
+		a := node.Artifact
+		if a.Validate() != nil || c.Execution.MaxToolCalls < 1 {
+			return reject("invalid artifact configuration")
+		}
+		key, ok := c.StorageRoles["artifact"]
+		resource, exists := c.Resources.Storage[key]
+		if !ok || !exists || key != a.Resource || key != "artifact" || resource.Kind != "managed_artifact" || resource.AdapterVersion != "managed-artifact-v1" || resource.MetadataContract != ArtifactMetadataContract || resource.Backend == nil || resource.Credentials == nil || resource.Credential != (CredentialUse{}) {
+			return reject("artifact adapter binding")
+		}
+		b := resource.Backend
+		d, err := b.Digest()
+		if err != nil || b.ValidateForRole("artifact") != nil || b.TenantID != c.TenantID {
+			return reject("fixed artifact backend")
+		}
+		for purpose, u := range map[string]CredentialUse{"access_key_id": resource.Credentials.AccessKeyID, "secret_access_key": resource.Credentials.SecretAccessKey} {
+			if u.CredentialID == "" || u.Purpose != purpose || u.AudienceDigest != d {
+				return reject("artifact credential audience")
+			}
+			if prior, ok := credentials[u.CredentialID]; ok && prior != u {
+				return reject("credential closure")
+			}
+			credentials[u.CredentialID] = u
+		}
+		host, err := b.EndpointHost()
+		if err != nil {
+			return reject("artifact endpoint")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(host))
+	}
 	for key := range selectedModels {
 		model, exists := c.Resources.Models[key]
 		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
 			return reject("model adapter")
 		}
-		if key == node.ModelResource && node.Memory != nil && len(node.Memory.Tools) > 0 && !slices.Contains(model.Capabilities, "tool_call") {
-			return reject("memory tools require model tool_call capability")
+		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil) && !slices.Contains(model.Capabilities, "tool_call") {
+			return reject("data tools require model tool_call capability")
 		}
 		endpoint, err := url.Parse(model.BaseURL)
 		if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(model.BaseURL, "#") || endpoint.Hostname() == "" {

@@ -1670,6 +1670,62 @@
         },
         "metadata_contract": {
           "const": "worker-artifact-metadata-v1"
+        },
+        "credentials": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "access_key_id",
+            "secret_access_key"
+          ],
+          "properties": {
+            "access_key_id": {
+              "$ref": "#/$defs/access_key_id_credential"
+            },
+            "secret_access_key": {
+              "$ref": "#/$defs/secret_access_key_credential"
+            }
+          }
+        }
+      }
+    },
+    "access_key_id_credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credential_id",
+        "purpose",
+        "audience_digest"
+      ],
+      "properties": {
+        "credential_id": {
+          "$ref": "#/$defs/credential_id"
+        },
+        "purpose": {
+          "const": "access_key_id"
+        },
+        "audience_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "secret_access_key_credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credential_id",
+        "purpose",
+        "audience_digest"
+      ],
+      "properties": {
+        "credential_id": {
+          "$ref": "#/$defs/credential_id"
+        },
+        "purpose": {
+          "const": "secret_access_key"
+        },
+        "audience_digest": {
+          "$ref": "#/$defs/digest"
         }
       }
     }
