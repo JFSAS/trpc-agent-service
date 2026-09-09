@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/artifactstore"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/knowledgestore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 )
 
 type attempt struct {
+	knowledgeStore  *knowledgestore.Store
 	artifactStore   *artifactstore.Store
 	memoryStore     memoryStore
 	memoryCandidate *memorystore.Candidate
@@ -86,6 +88,12 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	p := a.plan
 	g := a.grant
 	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, MaxToolCalls: p.MaxToolCalls, AcceptedSnapshot: history}
+	if p.Knowledge != nil {
+		if a.knowledgeStore == nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		request.Knowledge = &trpcagent.KnowledgeConfig{Resource: p.Knowledge.Resource, Service: a.knowledgeStore}
+	}
 	if p.Artifact != nil {
 		if a.artifactStore == nil {
 			return domain.RuntimeResult{}, application.ErrRuntimeFailed
@@ -198,6 +206,10 @@ func (a *attempt) Close() {
 		return
 	}
 	a.closed = true
+	if a.knowledgeStore != nil {
+		a.knowledgeStore.Close()
+		a.knowledgeStore = nil
+	}
 	if a.artifactStore != nil {
 		a.artifactStore.Close()
 		a.artifactStore = nil

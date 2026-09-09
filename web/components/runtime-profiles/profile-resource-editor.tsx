@@ -187,7 +187,15 @@ export function ProfileResourceEditor({ tenantId = "", config, credentials, cred
     const knowledge = own(config.knowledge, name) ?? {};
     const embedding = knowledge.embedding ?? {};
     form = <>
-      {knowledge.kind === "managed_knowledge" ? <ManagedBackendSelect tenantId={tenantId} role="knowledge" value={knowledge} disabled={disabled} readOnly={readOnly} onChange={(selection) => updateResource({ ...knowledge, ...selection })} /> : <FormSection title="Qdrant 连接" description="使用已有 Collection；此页面不上传文件或创建索引。">
+      {knowledge.kind === "managed_knowledge" ? <ManagedBackendSelect tenantId={tenantId} role="knowledge" value={knowledge} disabled={disabled} readOnly={readOnly} onChange={(selection) => updateResource({ ...knowledge, ...selection })}
+        renderSelection={(selected) => {
+          const editable = selected?.kind === "qdrant";
+          const state = own(resourceStates, "qdrant_api_key");
+          return <>
+            {(editable || state) && <CredentialField id={fieldID("qdrant_api_key")} label="Qdrant API Key" state={state} action={own(resourceActions, "qdrant_api_key")} onChange={(action) => updateCredential("qdrant_api_key", action)} isOwner={isOwner} disabled={disabled} readOnly={readOnly || !editable} />}
+            {editable ? <p>更换固定 backend 或 revision 后需显式替换 Qdrant 凭据。Embedding 凭据独立配置；连接目标由平台目录固定。</p> : !readOnly && <p>当前目录未确认该绑定为可选 Qdrant 后端，草稿 Qdrant 凭据编辑暂停，已有状态保留；已发布版本轮换沿用固定关联。</p>}
+          </>;
+        }} /> : <FormSection title="Qdrant 连接" description="使用已有 Collection；此页面不上传文件或创建索引。">
         <div className={styles.row}><TextField id={fieldID("host")} label="Qdrant 主机" value={knowledge.host} onChange={(host) => updateResource({ ...knowledge, host })} {...textProps} disabled={protectedAudience("qdrant_api_key")} /><NumericField id={fieldID("port")} label="Qdrant 端口" value={knowledge.port} onChange={(port) => updateResource({ ...knowledge, port })} {...textProps} disabled={protectedAudience("qdrant_api_key")} min={1} max={65535} /></div>
         <label className={styles.toggle}><input id={fieldID("tls")} type="checkbox" checked={knowledge.tls ?? false} disabled={readOnly || protectedAudience("qdrant_api_key")} onChange={(event) => updateResource({ ...knowledge, tls: event.target.checked })} />启用 Qdrant TLS</label>
         {audienceHint("qdrant_api_key") && <p className={styles.hint}>{audienceHint("qdrant_api_key")}</p>}

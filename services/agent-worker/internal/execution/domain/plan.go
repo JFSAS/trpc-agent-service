@@ -8,6 +8,7 @@ import (
 // Plan is the runtime-ready projection of one fully validated immutable
 // Manifest. It carries only the V1 closure, never mutable Profile values.
 type Plan struct {
+	Knowledge                                                  *KnowledgePlan
 	Artifact                                                   *ArtifactPlan
 	Memory                                                     *MemoryPlan
 	MaxToolCalls                                               int64
@@ -41,6 +42,14 @@ type MemoryPlan struct {
 	Credential   CredentialUse
 	Tools        []string
 	PreloadLimit int
+}
+
+type KnowledgePlan struct {
+	Resource                          string
+	Backend                           datav1.Snapshot
+	Credential, EmbeddingCredential   CredentialUse
+	EmbeddingModel, EmbeddingEndpoint string
+	Dimensions                        int64
 }
 
 type ArtifactPlan struct {
@@ -90,6 +99,9 @@ func (p Plan) Uses() []CredentialUse {
 	}
 	if p.Artifact != nil {
 		uses = append(uses, p.Artifact.AccessKeyID, p.Artifact.SecretAccessKey)
+	}
+	if p.Knowledge != nil {
+		uses = append(uses, p.Knowledge.Credential, p.Knowledge.EmbeddingCredential)
 	}
 	return uses
 }

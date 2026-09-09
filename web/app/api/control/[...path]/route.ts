@@ -1,12 +1,13 @@
 import type { NextRequest } from "next/server";
+import { KNOWLEDGE_MAX_REQUEST_BYTES } from "../../../../lib/knowledge-api";
 import { ARTIFACT_MAX_BYTES } from "../../../../lib/artifact-api";
 
 export const dynamic = "force-dynamic";
 
 const upstream = (process.env.CONTROL_API_BASE ?? "http://127.0.0.1:8080").replace(/\/$/, "");
 
-async function artifactBody(request: NextRequest): Promise<ArrayBuffer | null> {
-  if (Number(request.headers.get("content-length")) > ARTIFACT_MAX_BYTES) { await request.body?.cancel(); return null; }
+async function boundedBody(request: NextRequest, limit: number): Promise<ArrayBuffer | null> {
+  if (Number(request.headers.get("content-length")) > limit) { await request.body?.cancel(); return null; }
   const reader = request.body?.getReader();
   if (!reader) return new ArrayBuffer(0);
   const chunks: Uint8Array[] = [];
@@ -16,7 +17,7 @@ async function artifactBody(request: NextRequest): Promise<ArrayBuffer | null> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > ARTIFACT_MAX_BYTES) { await reader.cancel(); return null; }
+      if (size > limit) { await reader.cancel(); return null; }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
@@ -29,6 +30,7 @@ async function artifactBody(request: NextRequest): Promise<ArrayBuffer | null> {
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   const artifactRoute = path.length === 9 && path[0] === "v1" && path[1] === "tenants" && path[3] === "deployments" && path[5] === "revisions" && path[7] === "artifacts";
+  const knowledgeImport = request.method === "POST" && path.length === 10 && path[0] === "v1" && path[1] === "tenants" && path[3] === "deployments" && path[5] === "revisions" && path[7] === "knowledge" && path[9] === "import";
   const target = `${upstream}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
   const headers = new Headers();
   for (const name of ["accept", "content-type", "cookie", "idempotency-key"]) {
@@ -43,18 +45,18 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   let body: ArrayBuffer | undefined;
   if (!["GET", "HEAD"].includes(request.method)) {
     const artifactUpload = request.method === "PUT" && artifactRoute;
-    if (artifactUpload) {
+    if (artifactUpload || knowledgeImport) {
       try {
-        const bytes = await artifactBody(request);
-        if (bytes === null) return Response.json({ error: { code: "ARTIFACT_TOO_LARGE", message: "Artifact HTTP transport limit is 16 MiB" } }, { status: 413, headers: { "cache-control": "no-store" } });
+        const bytes = await boundedBody(request, knowledgeImport ? KNOWLEDGE_MAX_REQUEST_BYTES : ARTIFACT_MAX_BYTES);
+        if (bytes === null) return Response.json({ error: { code: knowledgeImport ? "KNOWLEDGE_TOO_LARGE" : "ARTIFACT_TOO_LARGE", message: knowledgeImport ? "Knowledge JSON HTTP limit is 2 MiB" : "Artifact HTTP transport limit is 16 MiB" } }, { status: 413, headers: { "cache-control": "no-store" } });
         body = bytes;
       } catch {
-        return Response.json({ error: { code: "ARTIFACT_BODY_UNAVAILABLE", message: "Artifact request body could not be read" } }, { status: 400, headers: { "cache-control": "no-store" } });
+        return Response.json({ error: { code: knowledgeImport ? "KNOWLEDGE_BODY_UNAVAILABLE" : "ARTIFACT_BODY_UNAVAILABLE", message: "Request body could not be read" } }, { status: 400, headers: { "cache-control": "no-store" } });
       }
     } else body = await request.arrayBuffer();
   }
   try {
-    const response = await fetch(target, { method: request.method, headers, body, cache: "no-store", redirect: "manual", ...(artifactRoute ? { signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]) } : {}) });
+    const response = await fetch(target, { method: request.method, headers, body, cache: "no-store", redirect: "manual", ...((artifactRoute || knowledgeImport) ? { signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]) } : {}) });
     const outgoing = new Headers({ "cache-control": "no-store" });
     const contentType = response.headers.get("content-type");
     if (contentType) outgoing.set("content-type", contentType);

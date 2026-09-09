@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own one isolated stack for real browser Memory, Session or Artifact publication."""
+"""Own one isolated stack for real browser Memory, Session, Artifact or Knowledge publication."""
 import argparse
 import copy
 import json
@@ -114,17 +114,75 @@ def run_artifact_browser_rounds(h, publication, marker, coordination, web, timeo
     assert versions[0]['content_sha256'] == uploaded['sha256'] and versions[0]['content_length'] == len(raw)
     evidence.update(result='PASS', gui_upload='PASS', browser_upload=uploaded, worker_used_gui_manifest=True, rounds=[seed, follower], storage={'metadata': metadata, 'objects': objects}, next_run_loaded_gui_bytes=True, http_download_exact=True, model_requests=h.model.snapshot(), model_outputs=h.model.output_snapshot())
 
+
+KNOWLEDGE_GUI_NAME = 'gui-reference.txt'
+KNOWLEDGE_GUI_TEXT = 'GUI imported canary LILY-526.'
+
+def verify_knowledge_browser_import(marker, publication):
+    assert marker['result'] == 'PASS' and marker['http_status'] == 200
+    assert marker['deployment_id'] == publication['deployment_id'] and marker['revision_number'] == publication['revision_number']
+    assert marker['manifest_id'] == publication['manifest_id'] and marker['resource'] == 'docs'
+    assert marker['name'] == KNOWLEDGE_GUI_NAME
+    assert marker['text_sha256'] == hashlib.sha256(KNOWLEDGE_GUI_TEXT.encode()).hexdigest()
+    assert type(marker['documents']) is int and marker['documents'] == 1
+
+def run_knowledge_browser_round(h, publication, marker, coordination, web, timeout, evidence, save):
+    from knowledge_joint_fixture import VECTOR_NAME, CALLABLE_NAME
+    from faults import submit, run, head
+    view = publication['manifest_view']
+    assert view['sources']['agent']['agent_id'] == marker['agent_id'] and view['sources']['agent']['version_number'] == marker['agent_version_number'] == 2
+    assert view['sources']['profile']['profile_id'] == marker['profile_id'] and view['sources']['profile']['revision_number'] == marker['profile_revision_number'] == 2
+    h.wait(lambda: h.sql('SELECT content_digest FROM worker.runtime_manifests WHERE manifest_id=' + h.quote(h.manifest_id)) == [[h.manifest_digest]], 'GUI Knowledge Manifest durable Worker projection')
+    before = h.knowledge_state()
+    assert before == []
+    ready = dict(result='READY', name=KNOWLEDGE_GUI_NAME, text=KNOWLEDGE_GUI_TEXT, resource='docs', deployment_id=h.deployment_id, revision_number=h.revision_number, manifest_id=h.manifest_id)
+    (coordination / 'knowledge-ready.json').write_text(json.dumps(ready, indent=2) + '\n')
+    evidence['gui_import'] = 'PENDING'; save()
+    print('KNOWLEDGE_GUI_IMPORT_READY=' + str(coordination / 'knowledge-ready.json'), flush=True)
+    imported = wait_browser_marker(coordination / 'gui-knowledge.json', web, timeout)
+    verify_knowledge_browser_import(imported, publication)
+    after_import = h.knowledge_state()
+    assert len(after_import) == 1
+    point = after_import[0]
+    assert point['payload']['document']['name'] == KNOWLEDGE_GUI_NAME and point['payload']['document']['content'] == KNOWLEDGE_GUI_TEXT
+    assert point['vector'] == {VECTOR_NAME: [1, 0, 0]}
+    imported_embeddings = h.model.embeddings()
+    assert len(imported_embeddings) == 1 and KNOWLEDGE_GUI_TEXT in json.dumps(imported_embeddings[0])
+    h.gui_knowledge_expected = dict(name=KNOWLEDGE_GUI_NAME, text=KNOWLEDGE_GUI_TEXT)
+    run_id = submit(h, 'knowledge-gui-query', '42')
+    delivery = h.wait_delivery(run_id)
+    result = wait_success(h, run_id)
+    actual = run(h, run_id); accepted = head(h, actual)
+    route = json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id=' + h.quote(run_id))[0][0])['Route']
+    assert (route['ManifestRef'], route['ManifestDigest'], route['DeploymentRevisionID']) == (h.manifest_id, h.manifest_digest, h.revision_id)
+    assert (accepted['accepted_ref'], accepted['accepted_digest']) == (result['candidate']['candidate_ref'], result['candidate']['content_digest'])
+    assert result['candidate']['parent_ref'] == ''
+    calls, outputs, embeddings = h.model.snapshot(), h.model.output_snapshot(), h.model.embeddings()
+    assert len(calls) == 2 and len(outputs) == 1 and len(embeddings) == 2
+    assert all([item['function']['name'] for item in call['tools']] == [CALLABLE_NAME] for call in calls)
+    assert all(call['model'] == h.model_name and call['max_completion_tokens'] == view['execution']['max_output_tokens'] for call in calls)
+    documents = outputs[0]['tool_results'][0]['documents']
+    assert len(documents) == 1 and documents[0]['text'] == KNOWLEDGE_GUI_TEXT and documents[0]['id'] == point['payload']['document']['id']
+    assert delivery['final_text'] == 'knowledge final: ' + KNOWLEDGE_GUI_TEXT
+    assert h.knowledge_state() == after_import, 'search must not mutate imported Knowledge'
+    evidence.update(result='PASS', gui_import='PASS', browser_import=imported, worker_used_gui_manifest=True, run_id=run_id, run=actual, route=route, candidate=result['candidate'], completion=result['completion'], head=accepted, delivery=delivery, initial_knowledge=before, imported_knowledge=after_import, final_knowledge=h.knowledge_state(), model_requests=calls, model_outputs=outputs, embedding_requests=embeddings, imported_bytes_retrieved=True, external_embedding_verified=False)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--coordination', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--backend', choices=('postgresql', 'redis'), default='postgresql')
-    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact'), default='memory')
+    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact', 'knowledge'), default='memory')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     harness = WebHarness
     model_fixture = MemoryModelFixture
+    if args.scenario == 'knowledge':
+        from knowledge_joint_fixture import KnowledgeHarness, KnowledgeModelFixture
+        class KnowledgeWebHarness(WebPublicationMixin, KnowledgeHarness):
+            pass
+        harness, model_fixture = KnowledgeWebHarness, KnowledgeModelFixture
     if args.scenario == 'artifact':
         from artifact_joint_fixture import ArtifactHarness, ArtifactModelFixture
         class ArtifactWebHarness(WebPublicationMixin, ArtifactHarness):
@@ -144,7 +202,7 @@ def main():
             pass
         harness = RedisWebHarness
     h = harness(root, args.artifacts)
-    backend_id = 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
+    backend_id = 'joint-knowledge-qdrant' if args.scenario == 'knowledge' else 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
     web = None
     web_log = None
     evidence = {'result': 'PENDING', 'gui': 'PENDING', 'external_model': 'DETERMINISTIC_HTTP_FIXTURE', 'shared_services_changed': False}
@@ -180,7 +238,8 @@ def main():
                     raise RuntimeError('isolated Web readiness timeout') from None
                 time.sleep(.5)
         access = Path(h.work) / 'gui-access.json'
-        secrets = {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
+        secrets = {} if args.scenario == 'knowledge' else {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
+        if args.scenario == 'knowledge': secrets = {'qdrant_api_key': h.qdrant_key, 'embedding_api_key': h.model.embedding_key}
         access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, **secrets, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
         access.chmod(0o600)
         args.coordination.mkdir(parents=True, exist_ok=True)
@@ -206,10 +265,14 @@ def main():
         elif args.scenario == 'session':
             assert view['runtime']['summary']['enabled'] and node['add_session_summary']
             selected_storage = view['storage_roles']['session']
+        elif args.scenario == 'knowledge':
+            assert node['knowledge_resources'] == ['docs']
+            assert view['resources']['knowledge']['docs']['backend']['backend_id'] == backend_id
         else:
             assert node['artifact'] == {'enabled': True, 'resource': 'artifact'}
             selected_storage = view['storage_roles']['artifact']
-        assert view['resources']['storage'][selected_storage]['backend']['backend_id'] == backend_id
+        if args.scenario != 'knowledge':
+            assert view['resources']['storage'][selected_storage]['backend']['backend_id'] == backend_id
         h.revision_id = publication['id']
         h.manifest_id, h.manifest_digest = publication['manifest_id'], publication['manifest_digest']
         evidence.update(gui='PASS', publication=publication, browser=marker)
@@ -226,6 +289,8 @@ def main():
             assert len(state) == 1 and 'persistent orchid memory' in json.dumps(state)
             assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id=' + h.quote(run_id)) == [['APPLIED']]
             evidence.update(result='PASS', worker_used_gui_manifest=True, run_id=run_id, delivery=delivery, memory=state, completion=result['completion'])
+        elif args.scenario == 'knowledge':
+            run_knowledge_browser_round(h, publication, marker, args.coordination, web, args.timeout, evidence, save)
         elif args.scenario == 'artifact':
             run_artifact_browser_rounds(h, publication, marker, args.coordination, web, args.timeout, evidence, save)
         else:

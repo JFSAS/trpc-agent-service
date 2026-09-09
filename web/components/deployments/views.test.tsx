@@ -24,6 +24,17 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("Deployment list and immutable views", () => {
+  it.each(["selected", "unused", "legacy", "mismatched"])("only exposes fixed selected managed Knowledge imports: %s", async (mode) => {
+    const view = structuredClone(revision.manifest_view);
+    view.resources.knowledge.docs = { kind: mode === "legacy" ? "qdrant_openai" : "managed_knowledge" };
+    view.agent_plan.nodes[view.agent_plan.root].knowledge_resources = mode === "unused" ? [] : ["docs"];
+    mocks.getRevision.mockResolvedValue({ ...revision, deployment_id: mode === "mismatched" ? "other" : "d", manifest_view: view });
+    render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={1} />);
+    await screen.findByText("发布技术信息");
+    if (mode === "selected") expect(screen.getByRole("region", { name: "Knowledge 文本导入" })).toBeInTheDocument();
+    else expect(screen.queryByRole("region", { name: "Knowledge 文本导入" })).toBeNull();
+  });
+
   it.each([true, false])("shows the Artifact panel only for an explicitly enabled node and fixed published storage role: %s", async (enabled) => {
     const view = structuredClone(revision.manifest_view);
     view.agent_plan.nodes[view.agent_plan.root].artifact = { enabled, resource: "artifact" };

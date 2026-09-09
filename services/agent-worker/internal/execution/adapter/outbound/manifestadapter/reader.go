@@ -63,6 +63,11 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 		backend := storage.Backend.Clone()
 		p.SessionBackend = &backend
 	}
+	if len(node.KnowledgeResources) == 1 {
+		name := node.KnowledgeResources[0]
+		r := content.Resources.Knowledge[name]
+		p.Knowledge = &domain.KnowledgePlan{Resource: name, Backend: r.Backend.Clone(), Credential: use(*r.Credential), EmbeddingCredential: use(r.Embedding.Credential), EmbeddingModel: r.Embedding.Model, EmbeddingEndpoint: r.Embedding.BaseURL, Dimensions: r.Embedding.Dimensions}
+	}
 	if node.Artifact != nil {
 		r := content.Resources.Storage[node.Artifact.Resource]
 		p.Artifact = &domain.ArtifactPlan{Backend: r.Backend.Clone(), AccessKeyID: use(r.Credentials.AccessKeyID), SecretAccessKey: use(r.Credentials.SecretAccessKey)}

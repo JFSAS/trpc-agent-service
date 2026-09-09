@@ -171,3 +171,13 @@ it("forwards the legacy create interpreter only on the Account POST and exposes 
   await PATCH(new NextRequest(`http://console.test/api/control/${path.join("/")}/a`, { method: "PATCH", body: "{}", headers: { "X-Channel-Create-Contract": "webhook-v1" } }), { params: Promise.resolve({ path: [...path, "a"] }) });
   expect(new Headers(fetch.mock.calls[1][1]?.headers).get("X-Channel-Create-Contract")).toBeNull();
 });
+
+describe("Knowledge text import proxy",()=>{
+ const path=["v1","tenants","t","deployments","d","revisions","2","knowledge","docs","import"];
+ it("rejects streamed JSON over 2MiB before forwarding",async()=>{
+  const f=vi.spyOn(globalThis,"fetch").mockResolvedValue(Response.json({documents:1}));const bytes=new Uint8Array(2*1024*1024+1);const request=new NextRequest("http://console.test/api/control/"+path.join("/"),{method:"POST",body:bytes,headers:{"content-type":"application/json"}});const r=await POST(request,{params:Promise.resolve({path})});expect(r.status).toBe(413);expect(f).not.toHaveBeenCalled();
+ });
+ it("forwards only original owner cookie and exact JSON, with client abort to upstream",async()=>{
+  const cancel=new AbortController();const f=vi.spyOn(globalThis,"fetch").mockResolvedValue(Response.json({documents:1}));const body=JSON.stringify({name:"note.txt",text:"hello"});const r=await POST(new NextRequest("http://console.test/api/control/"+path.join("/"),{method:"POST",body,signal:cancel.signal,headers:{cookie:"session=opaque","content-type":"application/json","x-tenant-id":"spoof","x-user-id":"spoof"}}),{params:Promise.resolve({path})});expect(await r.json()).toEqual({documents:1});expect(new TextDecoder().decode(f.mock.calls[0][1]?.body as ArrayBuffer)).toBe(body);expect(new Headers(f.mock.calls[0][1]?.headers).has("x-tenant-id")).toBe(false);const signal=f.mock.calls[0][1]?.signal;expect(signal).toBeDefined();cancel.abort();expect(signal?.aborted).toBe(true);
+ });
+});

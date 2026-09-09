@@ -60,6 +60,7 @@ type MemoryConfig struct {
 	PreloadLimit int
 }
 type Request struct {
+	Knowledge                             *KnowledgeConfig
 	Artifact                              *ArtifactConfig
 	Memory                                *MemoryConfig
 	MaxToolCalls                          int64
@@ -144,6 +145,12 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	defer transport.CloseIdleConnections()
 	httpState := &modelTransport{base: transport}
 	m := newFixedModel(req.Model, maxTokens, httpState)
+	if req.Knowledge != nil {
+		m, err = WrapKnowledgeModel(m, "knowledge/"+req.Knowledge.Resource)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	var summaryModel *summaryUsageModel
 	var local *overlay
 	if req.Summary == nil {
@@ -173,6 +180,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	var memoryAttempt *MemoryAttempt
 	var toolState *memoryToolState
 	var artifactState *artifactTools
+	var knowledgeState *tracedKnowledge
 	cfg := CapabilityConfig{AddSessionSummary: req.Summary != nil && req.Summary.AddSessionSummary}
 	services := CapabilityServices{}
 	names := []string{}
@@ -204,7 +212,16 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		services.ArtifactTools = artifactState.tools()
 		names = append(names, ArtifactToolNames...)
 	}
-	if req.Memory != nil || req.Artifact != nil {
+	if req.Knowledge != nil {
+		if req.Knowledge.Service == nil || req.MaxToolCalls < 1 {
+			return Result{}, ErrKnowledge
+		}
+		knowledgeState = &tracedKnowledge{service: req.Knowledge.Service, tracer: e.Tracer}
+		cfg.Knowledge = true
+		services.Knowledge = knowledgeState
+		names = append(names, sdkKnowledgeName)
+	}
+	if req.Memory != nil || req.Artifact != nil || req.Knowledge != nil {
 		options, optionErr := BuildCapabilityOptions(cfg, services)
 		if optionErr != nil {
 			return Result{}, optionErr
@@ -250,6 +267,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 						return Result{}, summaryModel.err()
 					}
 					return Result{}, err
+				}
+				if knowledgeState != nil && knowledgeState.failed.Load() {
+					return Result{}, ErrKnowledge
 				}
 				if artifactState != nil && artifactState.failed.Load() {
 					return Result{}, ErrArtifact

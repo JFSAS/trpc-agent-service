@@ -197,12 +197,12 @@ func New(ctx context.Context, c Config) (*App, error) {
 	reply.Tracer = a.tracing.Tracer("agent-worker")
 	a.reply = reply
 	queries := proofQueries{ledger: a.ledger, manifests: reader}
-	handler, err := httpadapter.New(queries, queries, httpadapter.Options{Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
+	handler, err := httpadapter.New(queries, queries, httpadapter.Options{Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
 	if err != nil {
 		return nil, err
 	}
 	a.healthServer = &http.Server{Addr: c.HealthAddress, Handler: a.healthHandler(), ReadHeaderTimeout: c.Timing.OperationTimeout.Value()}
-	a.proofServer = &http.Server{Addr: c.InternalAddress, Handler: handler, ReadHeaderTimeout: c.Timing.OperationTimeout.Value(), ReadTimeout: c.Timing.ProofTimeout.Value(), WriteTimeout: c.Timing.ProofTimeout.Value() + c.Timing.OperationTimeout.Value(), MaxHeaderBytes: 64 * 1024}
+	a.proofServer = &http.Server{Addr: c.InternalAddress, Handler: handler, ReadHeaderTimeout: c.Timing.OperationTimeout.Value(), ReadTimeout: c.Timing.ProofTimeout.Value(), WriteTimeout: max(time.Minute, c.Timing.ProofTimeout.Value()) + c.Timing.OperationTimeout.Value(), MaxHeaderBytes: 64 * 1024}
 	trpcagent.BindLogging(a.observation.SDKLog)
 	if c.Tracing != nil {
 		trpcagent.BindTracing(a.tracing.Provider())
