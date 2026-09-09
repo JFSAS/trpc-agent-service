@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own one isolated stack for real browser Memory, Session, Artifact or Knowledge publication."""
+"""Own one isolated stack for real browser Memory, Session, Artifact, Knowledge or MCP publication."""
 import argparse
 import copy
 import json
@@ -167,17 +167,89 @@ def run_knowledge_browser_round(h, publication, marker, coordination, web, timeo
     assert h.knowledge_state() == after_import, 'search must not mutate imported Knowledge'
     evidence.update(result='PASS', gui_import='PASS', browser_import=imported, worker_used_gui_manifest=True, run_id=run_id, run=actual, route=route, candidate=result['candidate'], completion=result['completion'], head=accepted, delivery=delivery, initial_knowledge=before, imported_knowledge=after_import, final_knowledge=h.knowledge_state(), model_requests=calls, model_outputs=outputs, embedding_requests=embeddings, imported_bytes_retrieved=True, external_embedding_verified=False)
 
+
+MCP_GUI_CAPABILITY = 'mcp.search'
+
+def verify_mcp_browser_publication(publication, marker, server_url):
+    from mcp_joint_fixture import SELECTED
+    view = publication['manifest_view']
+    assert publication['deployment_id'] == marker['deployment_id']
+    assert publication['revision_number'] == marker['revision_number'] == 2
+    assert view['sources']['agent']['agent_id'] == marker['agent_id'] and view['sources']['agent']['version_number'] == marker['agent_version_number'] == 2
+    assert view['sources']['profile']['profile_id'] == marker['profile_id'] and view['sources']['profile']['revision_number'] == marker['profile_revision_number'] == 2
+    node = view['agent_plan']['nodes'][view['agent_plan']['root']]
+    assert node['tool_resources'] == ['search'] and node['callable_entries'] == ['tools/search']
+    assert set(view['resources']['tools']) == {'search'}, 'Manifest must contain only the selected MCP resource'
+    assert marker['profile_credential_reopen'] == {'result': 'PASS', 'profile_id': marker['profile_id'], 'profile_revision_number': 2, 'action': 'keep', 'input_empty': True, 'original_token_absent': True}, 'browser must reopen the published Profile and assert write-only credentials'
+    resource = view['resources']['tools']['search']
+    assert resource['kind'] == 'mcp_streamable_http' and resource['capability'] == MCP_GUI_CAPABILITY
+    assert (resource['server_url'], resource['toolset_name'], resource['tool_name']) == (server_url, 'joint_mcp', SELECTED)
+    assert resource['auth'] == {'kind': 'bearer', 'credential_present': True}
+    return resource
+
+def verify_mcp_browser_exchange(calls, events, final_text, model_name, max_output_tokens):
+    from mcp_joint_fixture import ANSWER, NORMAL, SELECTED, assert_declaration, tool_text
+    assert len(calls) == 2
+    values, call_ids = [], set()
+    for call in calls:
+        assert_declaration(call)
+        assert call['model'] == model_name and call['max_completion_tokens'] == max_output_tokens and 'max_tokens' not in call
+        messages = call['messages']
+        start = max(i for i, message in enumerate(messages) if message.get('role') == 'user' and message.get('content') == NORMAL)
+        for message in messages[start + 1:]:
+            if message.get('role') == 'tool' and message['tool_call_id'] not in call_ids:
+                call_ids.add(message['tool_call_id'])
+                values.append(tool_text(message['content']))
+    assert values == [ANSWER], 'SDK must consume exactly the real selected MCP result'
+    executed = [event for event in events if event['method'] == 'tool_execution']
+    assert len(executed) == 1
+    assert executed[0]['authenticated'] and executed[0]['name'] == SELECTED and executed[0]['query'] == 'orchid' and not executed[0].get('is_error', False)
+    assert final_text == ANSWER, 'Final must preserve the actual multiline MCP response'
+    return values
+
+def run_mcp_browser_round(h, publication, marker, evidence):
+    from mcp_joint_fixture import NORMAL, SELECTED, UNSELECTED
+    from faults import submit, run, head, rows
+    verify_mcp_browser_publication(publication, marker, h.mcp_url)
+    h.wait(lambda: h.sql('SELECT content_digest FROM worker.runtime_manifests WHERE manifest_id=' + h.quote(h.manifest_id)) == [[h.manifest_digest]], 'GUI MCP Manifest durable Worker projection')
+    state = h.mcp_state()
+    assert state['registered_tools'] == [SELECTED, UNSELECTED]
+    server_offset, model_offset = len(state['events']), len(h.model.snapshot())
+    run_id = submit(h, NORMAL, '42')
+    delivery = h.wait_delivery(run_id)
+    result = wait_success(h, run_id)
+    actual = run(h, run_id)
+    accepted = head(h, actual)
+    route = json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id=' + h.quote(run_id))[0][0])['Route']
+    assert (route['ManifestRef'], route['ManifestDigest'], route['DeploymentRevisionID']) == (h.manifest_id, h.manifest_digest, h.revision_id)
+    assert actual['attempts'] == 1
+    assert (accepted['accepted_ref'], accepted['accepted_digest']) == (result['candidate']['candidate_ref'], result['candidate']['content_digest'])
+    assert result['candidate']['parent_ref'] == '' and result['candidate']['parent_digest'] == ''
+    calls, state = h.model.snapshot()[model_offset:], h.mcp_state()
+    events = state['events'][server_offset:]
+    values = verify_mcp_browser_exchange(calls, events, delivery['final_text'], h.model_name, publication['manifest_view']['execution']['max_output_tokens'])
+    receipts = rows(h, 'SELECT stream_id,stream_sequence,outcome,reason,intent_id,run_id FROM gateway.gateway_reply_transport_receipts WHERE run_id=' + h.quote(run_id))
+    parts = rows(h, 'SELECT p.part_id,p.body,p.state FROM gateway.gateway_delivery_parts p JOIN gateway.gateway_delivery_intents i USING(intent_id) WHERE i.run_id=' + h.quote(run_id) + ' ORDER BY p.part_index')
+    assert len(receipts) == 1 and receipts[0]['outcome'] == 'ACCEPTED'
+    assert parts and all(part['state'] == 'ACCEPTED' for part in parts) and ''.join(part['body'] for part in parts) == delivery['final_text']
+    evidence.update(result='PASS', worker_used_gui_manifest=True, mcp_server='ACTUAL_TRPC_MCP_GO_V0.0.10', im='REAL_CHANNEL_LAB', embedding='NOT_USED', run_id=run_id, run=actual, route=route, candidate=result['candidate'], completion=result['completion'], head=accepted, delivery=delivery, model_requests=calls, tool_results=values, mcp_events=events, mcp_state=state, gateway_receipts=receipts, gateway_parts=parts)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--coordination', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--backend', choices=('postgresql', 'redis'), default='postgresql')
-    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact', 'knowledge'), default='memory')
+    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact', 'knowledge', 'mcp'), default='memory')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     harness = WebHarness
     model_fixture = MemoryModelFixture
+    if args.scenario == 'mcp':
+        from mcp_joint_fixture import MCPHarness
+        class MCPWebHarness(WebPublicationMixin, MCPHarness):
+            pass
+        harness = MCPWebHarness
     if args.scenario == 'knowledge':
         from knowledge_joint_fixture import KnowledgeHarness, KnowledgeModelFixture
         class KnowledgeWebHarness(WebPublicationMixin, KnowledgeHarness):
@@ -201,8 +273,8 @@ def main():
         class RedisWebHarness(WebPublicationMixin, RedisMemoryHarness):
             pass
         harness = RedisWebHarness
-    h = harness(root, args.artifacts)
-    backend_id = 'joint-knowledge-qdrant' if args.scenario == 'knowledge' else 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
+    h = harness(root, args.artifacts, **({'model_name': 'joint-mcp-fixture'} if args.scenario == 'mcp' else {}))
+    backend_id = None if args.scenario == 'mcp' else 'joint-knowledge-qdrant' if args.scenario == 'knowledge' else 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
     web = None
     web_log = None
     evidence = {'result': 'PENDING', 'gui': 'PENDING', 'external_model': 'DETERMINISTIC_HTTP_FIXTURE', 'shared_services_changed': False}
@@ -211,9 +283,12 @@ def main():
         target.write_text(h.redact(json.dumps(evidence, indent=2, ensure_ascii=False)) + '\n')
     try:
         h.provision()
-        h.model.close()
-        h.model = model_fixture(h)
-        h.urls['model'] = h.model.url
+        if args.scenario == 'mcp':
+            h.prepare_mcp()
+        else:
+            h.model.close()
+            h.model = model_fixture(h)
+            h.urls['model'] = h.model.url
         h.control_start(gateway_fixture.prepare(h))
         h.seed()
         h.start_worker()
@@ -238,8 +313,11 @@ def main():
                     raise RuntimeError('isolated Web readiness timeout') from None
                 time.sleep(.5)
         access = Path(h.work) / 'gui-access.json'
-        secrets = {} if args.scenario == 'knowledge' else {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
+        secrets = {} if args.scenario in ('knowledge', 'mcp') else {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
         if args.scenario == 'knowledge': secrets = {'qdrant_api_key': h.qdrant_key, 'embedding_api_key': h.model.embedding_key}
+        if args.scenario == 'mcp':
+            from mcp_joint_fixture import SELECTED
+            secrets = {'mcp_bearer_token': h.mcp_token, 'mcp_server_url': h.mcp_url, 'mcp_tool_name': SELECTED, 'mcp_toolset_name': 'joint_mcp', 'mcp_capability': MCP_GUI_CAPABILITY}
         access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, **secrets, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
         access.chmod(0o600)
         args.coordination.mkdir(parents=True, exist_ok=True)
@@ -265,13 +343,15 @@ def main():
         elif args.scenario == 'session':
             assert view['runtime']['summary']['enabled'] and node['add_session_summary']
             selected_storage = view['storage_roles']['session']
+        elif args.scenario == 'mcp':
+            verify_mcp_browser_publication(publication, marker, h.mcp_url)
         elif args.scenario == 'knowledge':
             assert node['knowledge_resources'] == ['docs']
             assert view['resources']['knowledge']['docs']['backend']['backend_id'] == backend_id
         else:
             assert node['artifact'] == {'enabled': True, 'resource': 'artifact'}
             selected_storage = view['storage_roles']['artifact']
-        if args.scenario != 'knowledge':
+        if args.scenario not in ('knowledge', 'mcp'):
             assert view['resources']['storage'][selected_storage]['backend']['backend_id'] == backend_id
         h.revision_id = publication['id']
         h.manifest_id, h.manifest_digest = publication['manifest_id'], publication['manifest_digest']
@@ -289,6 +369,8 @@ def main():
             assert len(state) == 1 and 'persistent orchid memory' in json.dumps(state)
             assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id=' + h.quote(run_id)) == [['APPLIED']]
             evidence.update(result='PASS', worker_used_gui_manifest=True, run_id=run_id, delivery=delivery, memory=state, completion=result['completion'])
+        elif args.scenario == 'mcp':
+            run_mcp_browser_round(h, publication, marker, evidence)
         elif args.scenario == 'knowledge':
             run_knowledge_browser_round(h, publication, marker, args.coordination, web, args.timeout, evidence, save)
         elif args.scenario == 'artifact':

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -47,19 +48,33 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if !ok || len(c.AgentPlan.Nodes) != 1 || node.Kind != "llm" || len(node.Children) > 0 || node.Body != "" || node.MaxIterations != 0 {
 		return reject("exactly one llm root is required")
 	}
-	if len(node.ToolResources) > 0 || len(c.Resources.Tools) > 0 || len(c.ResolvedRequirements.Tools) > 0 {
-		return reject("external tools are deferred")
+	if len(c.Resources.Tools) != len(node.ToolResources) || len(c.ResolvedRequirements.Tools) != len(node.ToolResources) {
+		return reject("selected MCP tool closure")
+	}
+	selectedTools := map[string]bool{}
+	callables := []string{}
+	for _, name := range node.ToolResources {
+		if selectedTools[name] {
+			return reject("duplicate tool selection")
+		}
+		selectedTools[name] = true
+		callables = append(callables, "tools/"+name)
+	}
+	boundTools := map[string]bool{}
+	for _, name := range c.ResolvedRequirements.Tools {
+		if !selectedTools[name] || boundTools[name] {
+			return reject("tool requirement binding")
+		}
+		boundTools[name] = true
 	}
 	// V1 binds one SDK Knowledge service. Reject multiple references explicitly;
 	// never silently pick the first resource or search an undeclared namespace.
-	if len(node.KnowledgeResources) > 1 || len(c.Resources.Knowledge) != len(node.KnowledgeResources) || len(c.ResolvedRequirements.Knowledge) != len(node.KnowledgeResources) || len(node.CallableEntries) != len(node.KnowledgeResources) {
+	if len(node.KnowledgeResources) > 1 || len(c.Resources.Knowledge) != len(node.KnowledgeResources) || len(c.ResolvedRequirements.Knowledge) != len(node.KnowledgeResources) {
 		return reject("single explicit knowledge resource closure")
 	}
 	if len(node.KnowledgeResources) == 1 {
 		key := node.KnowledgeResources[0]
-		if node.CallableEntries[0] != "knowledge/"+key {
-			return reject("knowledge callable authority")
-		}
+		callables = append(callables, "knowledge/"+key)
 		for _, bound := range c.ResolvedRequirements.Knowledge {
 			if bound != key {
 				return reject("knowledge requirement binding")
@@ -67,6 +82,12 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 	}
 
+	slices.Sort(callables)
+	actualCallables := append([]string(nil), node.CallableEntries...)
+	slices.Sort(actualCallables)
+	if !slices.Equal(callables, actualCallables) {
+		return reject("selected callable authority")
+	}
 	selectedModels := map[string]bool{node.ModelResource: true}
 	if c.Runtime != nil {
 		selectedModels[c.Runtime.Summary.ModelResource] = true
@@ -222,12 +243,42 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		expectedHosts = append(expectedHosts, strings.ToLower(host), strings.ToLower(ep.Hostname()))
 	}
+
+	for name := range selectedTools {
+		r, exists := c.Resources.Tools[name]
+		if !exists || r.Kind != "mcp_streamable_http" || r.AdapterVersion != "mcp-web-search-v1" || !regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`).MatchString(r.ToolName) || !regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`).MatchString(r.ToolsetName) || !regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,127}$`).MatchString(r.Capability) || c.Execution.MaxToolCalls < 1 {
+			return reject("selected MCP adapter")
+		}
+		endpoint, err := url.Parse(r.ServerURL)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(r.ServerURL, "#") {
+			return reject("fixed MCP endpoint")
+		}
+		switch r.Auth.Kind {
+		case "none":
+			if r.Auth.Credential != nil {
+				return reject("MCP no-auth credential")
+			}
+		case "bearer":
+			u := r.Auth.Credential
+			if u == nil || u.CredentialID == "" || u.Purpose != "bearer_token" || u.AudienceDigest != CredentialAudienceDigest(r.Kind, r.ServerURL, r.Auth.Kind) {
+				return reject("MCP credential audience")
+			}
+			if previous, ok := credentials[u.CredentialID]; ok && previous != *u {
+				return reject("credential closure")
+			}
+			credentials[u.CredentialID] = *u
+		default:
+			return reject("MCP authentication kind")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(endpoint.Hostname()))
+	}
+
 	for key := range selectedModels {
 		model, exists := c.Resources.Models[key]
 		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
 			return reject("model adapter")
 		}
-		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(node.KnowledgeResources) > 0) && !slices.Contains(model.Capabilities, "tool_call") {
+		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(node.KnowledgeResources) > 0 || len(node.ToolResources) > 0) && !slices.Contains(model.Capabilities, "tool_call") {
 			return reject("data tools require model tool_call capability")
 		}
 		endpoint, err := url.Parse(model.BaseURL)

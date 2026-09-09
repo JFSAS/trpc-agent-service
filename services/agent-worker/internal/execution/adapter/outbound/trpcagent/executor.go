@@ -28,6 +28,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session/summary"
+	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
 const SDKVersion = "v1.11.2"
@@ -60,6 +61,7 @@ type MemoryConfig struct {
 	PreloadLimit int
 }
 type Request struct {
+	Tools                                 []MCPToolConfig
 	Knowledge                             *KnowledgeConfig
 	Artifact                              *ArtifactConfig
 	Memory                                *MemoryConfig
@@ -145,8 +147,19 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	defer transport.CloseIdleConnections()
 	httpState := &modelTransport{base: transport}
 	m := newFixedModel(req.Model, maxTokens, httpState)
+	bindings := map[string]string{}
+	for _, t := range req.Tools {
+		alias := mcpToolAlias(t.Resource)
+		if _, dup := bindings[alias]; dup {
+			return Result{}, ErrCallable
+		}
+		bindings[alias] = "tools/" + t.Resource
+	}
 	if req.Knowledge != nil {
-		m, err = WrapKnowledgeModel(m, "knowledge/"+req.Knowledge.Resource)
+		bindings[sdkKnowledgeName] = "knowledge/" + req.Knowledge.Resource
+	}
+	if len(bindings) > 0 {
+		m, err = WrapCallableModel(m, bindings)
 		if err != nil {
 			return Result{}, err
 		}
@@ -183,7 +196,20 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	var knowledgeState *tracedKnowledge
 	cfg := CapabilityConfig{AddSessionSummary: req.Summary != nil && req.Summary.AddSessionSummary}
 	services := CapabilityServices{}
+	mcpRuntime := &mcpState{}
 	names := []string{}
+	var ordinary []tool.Tool
+	for _, t := range req.Tools {
+		if nilCapabilityService(t.Tool) || t.Tool.Declaration() == nil || req.MaxToolCalls < 1 {
+			return Result{}, ErrMCP
+		}
+		alias := mcpToolAlias(t.Resource)
+		ordinary = append(ordinary, boundMCPTool{CallableTool: t.Tool, name: alias, state: mcpRuntime})
+		names = append(names, alias)
+	}
+	if len(ordinary) > 0 {
+		agentOptions = append(agentOptions, llmagent.WithTools(ordinary))
+	}
 	if req.Memory != nil {
 		if req.Memory.BoundKey.AppName != req.TenantID || req.MaxToolCalls < 1 {
 			return Result{}, ErrMemoryScope
@@ -221,7 +247,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		services.Knowledge = knowledgeState
 		names = append(names, sdkKnowledgeName)
 	}
-	if req.Memory != nil || req.Artifact != nil || req.Knowledge != nil {
+	if req.Memory != nil || req.Artifact != nil || req.Knowledge != nil || len(req.Tools) > 0 {
 		options, optionErr := BuildCapabilityOptions(cfg, services)
 		if optionErr != nil {
 			return Result{}, optionErr
@@ -240,6 +266,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		}
 	}()
 	runCtx, cancel := context.WithCancel(ctx)
+	mcpRuntime.cancel = cancel
 	defer cancel()
 	events, err := r.Run(runCtx, local.key.UserID, local.key.SessionID, model.NewUserMessage(req.InputText), agent.WithDetachedCancel(false))
 	if err != nil {
@@ -255,6 +282,10 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			}
 			return Result{}, ctx.Err()
 		case evt, ok := <-events:
+			if failure := mcpRuntime.failure(); failure != nil {
+				observed = failure
+				cancel()
+			}
 			if !ok {
 				if ctx.Err() != nil {
 					return Result{}, ctx.Err()
@@ -302,7 +333,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 			if evt == nil || evt.Response == nil {
 				continue
 			}
-			if evt.Error != nil {
+			if evt.Error != nil && observed == nil {
 				observed = ErrModel
 				if httpState.retryable() {
 					observed = ErrRetryableModel

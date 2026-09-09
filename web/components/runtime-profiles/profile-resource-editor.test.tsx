@@ -177,7 +177,7 @@ describe("Runtime Profile resource forms", () => {
     await selectCategory("Tools"); expect(screen.getByLabelText("Tool Name")).toBeDisabled();
     expect(changed).not.toHaveBeenCalled();
   });
-  it("shows unsupported draft values faithfully and permits explicit supported-kind and capability repair", async () => {
+  it("shows unsupported draft values faithfully and permits explicit kind repair and free capability editing", async () => {
     const changed = vi.fn(); const user = userEvent.setup();
     const config = { ...initial, models: { primary: { ...initial.models.primary, kind: "unsupported_kind", capabilities: ["chat", "unsupported_cap"] } }, tools: { search: { ...initial.tools.search, capability: "other.action", auth: { kind: "custom_auth" } } } };
     render(<Harness config={config} changed={changed} />);
@@ -188,9 +188,31 @@ describe("Runtime Profile resource forms", () => {
     expect(changed.mock.lastCall?.[0].models.primary.capabilities).toEqual(["chat"]);
     await selectCategory("Tools");
     expect(screen.getByLabelText("认证方式")).toHaveValue("custom_auth");
-    expect(screen.getByLabelText("Capability · 固定")).toHaveValue("other.action");
-    await user.click(screen.getByRole("button", { name: "使用 web.search" }));
-    expect(changed.mock.lastCall?.[0].tools.search.capability).toBe("web.search");
+    expect(screen.getByLabelText("Capability")).toHaveValue("other.action");
+    expect(screen.queryByRole("button", { name: "使用 web.search" })).toBeNull();
+    await user.clear(screen.getByLabelText("Capability"));
+    await user.type(screen.getByLabelText("Capability"), "mcp.search");
+    expect(changed.mock.lastCall?.[0].tools.search.capability).toBe("mcp.search");
+  });
+  it("validates the existing Agent capability grammar without rewriting invalid draft input", async () => {
+    const changed = vi.fn(); render(<Harness changed={changed} />); await selectCategory("Tools");
+    const field = screen.getByLabelText("Capability");
+    for (const capability of ["mcp.search", "a" + "x".repeat(127), "internal.read_v2-checked"]) {
+      fireEvent.change(field, { target: { value: capability } });
+      expect(changed.mock.lastCall?.[0].tools.search.capability).toBe(capability);
+      expect(screen.queryByText(/Capability 须以小写字母开头/)).toBeNull();
+    }
+    for (const capability of ["", "Upper.read", "has space", "a".repeat(129)]) {
+      fireEvent.change(field, { target: { value: capability } });
+      expect(field).toHaveValue(capability);
+      expect(screen.getByText(/Capability 须以小写字母开头/)).toBeInTheDocument();
+    }
+    expect(changed.mock.lastCall?.[0].tools.search.server_url).toBe(initial.tools.search.server_url);
+    expect(changed.mock.lastCall?.[1]).toEqual({});
+  });
+  it("keeps immutable MCP capability read-only", async () => {
+    const changed = vi.fn();render(<Harness readOnly changed={changed} />);await selectCategory("Tools");
+    expect(screen.getByLabelText("Capability")).toHaveAttribute("readonly");expect(changed).not.toHaveBeenCalled();
   });
   it("focuses capability-array and credential diagnostics without exposing internal associations", () => {
     const changed = vi.fn();

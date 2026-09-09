@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Boxes, BrainCircuit, Database, KeyRound, Plus, Search, Trash2 } from "lucide-react";
 import type { CredentialAction, CredentialActions, CredentialState, CredentialStates, KnowledgeConfig, ModelConfig, ProfileConfig, ResourceCategory, StorageConfig, ToolConfig } from "../../lib/runtime-profile-api";
+import { isAgentCapability } from "../../lib/agent-spec-v1";
 import { managedProfileIssues } from "../../lib/managed-profile";
 import { NumberInput } from "../agents/editor-inputs";
 import { Button } from "../ui";
@@ -180,7 +181,7 @@ export function ProfileResourceEditor({ tenantId = "", config, credentials, cred
         <div className={styles.row}><label className={styles.field} htmlFor={fieldID("auth-kind")}><span>认证方式</span><select id={fieldID("auth-kind")} value={tool.auth?.kind ?? ""} disabled={readOnly || protectedAudience("bearer_token")} onChange={(event) => {
           const kind = event.target.value;
           onChange({ ...config, tools: { ...config.tools, [name]: { ...tool, auth: { kind } } } }, kind === "none" ? dropResourceActions(credentials, "tools", name) : credentials);
-        }}><option value="">请选择认证方式</option><option value="none">none · 无认证</option><option value="bearer">bearer · Token 认证</option>{tool.auth?.kind && !["none", "bearer"].includes(tool.auth.kind) && <option value={tool.auth.kind}>{tool.auth.kind} · 不支持</option>}</select></label><div className={styles.field}><label htmlFor={fieldID("capability")}>Capability · 固定</label><input id={fieldID("capability")} value={tool.capability ?? ""} readOnly tabIndex={0} />{tool.capability !== "web.search" && !readOnly && <Button type="button" variant="secondary" disabled={disabled} onClick={() => updateResource({ ...tool, capability: "web.search" })}>使用 web.search</Button>}</div></div>
+        }}><option value="">请选择认证方式</option><option value="none">none · 无认证</option><option value="bearer">bearer · Token 认证</option>{tool.auth?.kind && !["none", "bearer"].includes(tool.auth.kind) && <option value={tool.auth.kind}>{tool.auth.kind} · 不支持</option>}</select></label><TextField id={fieldID("capability")} label="Capability" value={tool.capability} onChange={(capability) => updateResource({ ...tool, capability })} {...textProps} hint={isAgentCapability(tool.capability ?? "") ? "必须与 Agent 对应 Tool Requirement 的 capability 完全一致；不是远端工具名称。" : "Capability 须以小写字母开头，仅含小写字母、数字、_、. 或 -，最长 128 个字符；发布仍以服务端校验为准。"} placeholder="例如 mcp.search" /></div>
       </FormSection>{tool.auth?.kind === "bearer" && credential("bearer_token", "Bearer Token")}
     </>;
   } else if (name && category === "knowledge") {

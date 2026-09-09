@@ -83,8 +83,8 @@ func TestPublicationKeepsDeploymentFieldsAndFutureToolProtocolsOutsideV1(t *test
 		{"unregistered tool kind", func(root map[string]any) {
 			root["tools"].(map[string]any)["search"].(map[string]any)["kind"] = "future_tool"
 		}},
-		{"arbitrary MCP capability", func(root map[string]any) {
-			root["tools"].(map[string]any)["search"].(map[string]any)["capability"] = "custom.operation"
+		{"malformed MCP capability", func(root map[string]any) {
+			root["tools"].(map[string]any)["search"].(map[string]any)["capability"] = "Custom Operation"
 		}},
 		{"arbitrary SDK options", func(root map[string]any) {
 			root["tools"].(map[string]any)["search"].(map[string]any)["sdk_options"] = map[string]any{}
@@ -120,4 +120,25 @@ func publishBoundarySpec(t *testing.T, spec domain.Spec) domain.CanonicalSpec {
 		t.Fatalf("publication report = %#v", report)
 	}
 	return canonical
+}
+
+func TestPublicationAcceptsExplicitMCPCapabilityGrammar(t *testing.T) {
+	schema := compilePublicSchema(t)
+	for _, capability := range []string{"web.search", "calculator.add", "mcp.search", "files.read"} {
+		t.Run(capability, func(t *testing.T) {
+			document := toolDocument(capability)
+			validateWithPublicSchema(t, schema, document, true)
+			canonical, report := domain.ValidateForPublication(document, 1)
+			if !report.Valid {
+				t.Fatal(report)
+			}
+			var stored domain.Spec
+			if err := json.Unmarshal(canonical.Document, &stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored.Tools["search"].Capability != capability {
+				t.Fatal("capability rewritten")
+			}
+		})
+	}
 }

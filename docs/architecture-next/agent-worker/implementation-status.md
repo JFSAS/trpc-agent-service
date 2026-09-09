@@ -26,6 +26,18 @@ Worker 装配逐包完成：
 各包的实际模型、存储、GUI 和失败语义以对应文档为准；不把旧 Telegram 证据延伸为
 新能力 Telegram 验收。各包功能完成也不自动等于四能力组合已通过。
 
+## 2026-09-09 普通工具与编排增量
+
+数据能力开发交付已完成，真实外部 Embedding 配置是单列遗留验收。
+新任务从 [普通 MCP 工具](mcp-v1.md) 开始：既有 AgentSpec/Profile/Manifest 字段
+驱动单 LLM 的显式 selected callable，保留正式 Session/Final 接受链路。
+Control Capability 与既有 Agent 语法对齐，历史 `web.search` 仍有效。
+
+MCP 已取得真实 Streamable HTTP server、正式 HTTP 发布 + Channel Lab 两轮 fixture
+（含业务 IsError 纠正和下一轮历史消费），以及一轮真实 DeepSeek 选择并使用工具返回。
+具体 GUI 与代码包验收记录见 MCP 文档；上述不代表真实 Telegram 或 live 错误纠正。
+后续按 Sequence → Parallel + 显式汇总 → Loop 逐包实现，复用 SDK，不另建调度平台。
+
 ## 1. 本轮交付
 
 | 位置 | 新增的实现 |

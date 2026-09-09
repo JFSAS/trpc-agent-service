@@ -1779,7 +1779,7 @@ components:
           $ref: "#/components/schemas/RuntimeProfileToolAuthConfig"
         capability:
           type: "string"
-          description: "Publication remains fixed to web.search, not an arbitrary MCP capability."
+          description: "Publication requires the AgentSpec capability grammar ^[a-z][a-z0-9_.-]{0,127}$ and exact requirement matching; this declaration does not attest server behavior."
     RuntimeProfileEmbeddingConfig:
       type: "object"
       additionalProperties: false

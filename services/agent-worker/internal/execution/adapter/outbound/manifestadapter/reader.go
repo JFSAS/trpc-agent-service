@@ -59,6 +59,14 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 		return domain.CredentialUse{CredentialID: u.CredentialID, Purpose: u.Purpose, AudienceDigest: u.AudienceDigest}
 	}
 	p := domain.Plan{TenantID: m.TenantID, ManifestID: m.ManifestID, ManifestDigest: m.ContentDigest, DeploymentRevisionID: m.DeploymentRevisionID, ProfileID: content.Sources.Profile.ProfileID, ProfileRevision: content.Sources.Profile.RevisionNumber, MaxToolCalls: content.Execution.MaxToolCalls, NodeID: content.AgentPlan.Root, Instruction: node.Instruction, ModelEndpoint: model.BaseURL, ModelName: model.Model, MaxRunSeconds: content.Execution.MaxRunSeconds, MaxOutputTokens: content.Execution.MaxOutputTokens, ModelCredential: use(model.Credential), SessionCredential: use(storage.Credential), SessionTarget: domain.StorageTarget{Host: storage.Destination.Host, Port: uint16(storage.Destination.Port), Database: storage.Destination.Database, Username: storage.Destination.Username, SSLMode: storage.Destination.SSLMode}}
+	for _, name := range node.ToolResources {
+		r := content.Resources.Tools[name]
+		t := domain.ToolPlan{Resource: name, ServerURL: r.ServerURL, ToolsetName: r.ToolsetName, ToolName: r.ToolName, AuthKind: r.Auth.Kind, Capability: r.Capability}
+		if r.Auth.Credential != nil {
+			t.Credential = use(*r.Auth.Credential)
+		}
+		p.Tools = append(p.Tools, t)
+	}
 	if storage.Kind == "managed_session" {
 		backend := storage.Backend.Clone()
 		p.SessionBackend = &backend

@@ -12,14 +12,16 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
-var ErrKnowledgeCallable = errors.New("knowledge callable binding invalid")
+var ErrCallable = errors.New("callable binding invalid")
+var ErrKnowledgeCallable = ErrCallable
 var knowledgeEntryPattern = regexp.MustCompile(`^knowledge/[a-z][a-z0-9_-]{0,63}$`)
+var callableEntryPattern = regexp.MustCompile(`^(knowledge|tools)/[a-z][a-z0-9_-]{0,63}$`)
 
 const sdkKnowledgeName = "knowledge_search"
 
 type knowledgeCallableModel struct {
-	inner    model.Model
-	provider string
+	inner     model.Model
+	providers map[string]string
 }
 
 // WrapKnowledgeModel keeps the actual WithKnowledge SDK tool unchanged. Only
@@ -29,9 +31,28 @@ func WrapKnowledgeModel(inner model.Model, resource string) (model.Model, error)
 	if inner == nil || !knowledgeEntryPattern.MatchString(resource) {
 		return nil, ErrKnowledgeCallable
 	}
-	sum := sha256.Sum256([]byte(resource))
-	return &knowledgeCallableModel{inner: inner, provider: "fn_" + hex.EncodeToString(sum[:])[:60]}, nil
+	return WrapCallableModel(inner, map[string]string{sdkKnowledgeName: resource})
 }
+
+// WrapCallableModel maps only explicit logical Manifest entries at the provider
+// boundary. SDK execution and persisted history retain stable internal names.
+func WrapCallableModel(inner model.Model, bindings map[string]string) (model.Model, error) {
+	if inner == nil || len(bindings) == 0 {
+		return nil, ErrCallable
+	}
+	mapped := map[string]string{}
+	seen := map[string]bool{}
+	for alias, entry := range bindings {
+		if alias == "" || !callableEntryPattern.MatchString(entry) || seen[entry] {
+			return nil, ErrCallable
+		}
+		seen[entry] = true
+		sum := sha256.Sum256([]byte(entry))
+		mapped[alias] = "fn_" + hex.EncodeToString(sum[:])[:60]
+	}
+	return &knowledgeCallableModel{inner: inner, providers: mapped}, nil
+}
+
 func (m *knowledgeCallableModel) Info() model.Info { return m.inner.Info() }
 
 type providerDeclaration struct {
@@ -56,17 +77,19 @@ func (m *knowledgeCallableModel) GenerateContent(ctx context.Context, req *model
 			return nil, ErrKnowledgeCallable
 		}
 		provider := name
-		if name == sdkKnowledgeName {
-			provider = m.provider
+		if fixed, ok := m.providers[name]; ok {
+			provider = fixed
 		}
-		if provider == m.provider && name != sdkKnowledgeName {
-			return nil, ErrKnowledgeCallable
+		if _, collision := allowed[provider]; collision {
+			return nil, ErrCallable
 		}
 		copy.Tools[provider] = providerDeclaration{Tool: t, name: provider}
 		allowed[provider] = name
 	}
-	if _, ok := allowed[m.provider]; !ok {
-		return nil, ErrKnowledgeCallable
+	for alias, provider := range m.providers {
+		if allowed[provider] != alias {
+			return nil, ErrCallable
+		}
 	}
 	copy.Messages = append([]model.Message(nil), req.Messages...)
 	for i := range copy.Messages {
@@ -76,16 +99,16 @@ func (m *knowledgeCallableModel) GenerateContent(ctx context.Context, req *model
 				return nil, ErrKnowledgeCallable
 			}
 		}
-		if message.ToolName == sdkKnowledgeName {
-			message.ToolName = m.provider
+		if provider, ok := m.providers[message.ToolName]; ok {
+			message.ToolName = provider
 		}
 		message.ToolCalls = append([]model.ToolCall(nil), message.ToolCalls...)
 		for j := range message.ToolCalls {
 			if _, ok := req.Tools[message.ToolCalls[j].Function.Name]; !ok {
 				return nil, ErrKnowledgeCallable
 			}
-			if message.ToolCalls[j].Function.Name == sdkKnowledgeName {
-				message.ToolCalls[j].Function.Name = m.provider
+			if provider, ok := m.providers[message.ToolCalls[j].Function.Name]; ok {
+				message.ToolCalls[j].Function.Name = provider
 			}
 		}
 	}

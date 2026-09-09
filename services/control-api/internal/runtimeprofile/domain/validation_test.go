@@ -418,7 +418,7 @@ func TestCapabilityRulesAndDerivedCapabilities(t *testing.T) {
 			"RUNTIME_PROFILE_SPEC_CAPABILITY_KIND_MISMATCH", "/models/primary/capabilities/1"},
 		{"duplicate model capability", modelDocument("https://example.com", "crd_0123456789abcdef0123456789abcdef", []string{"chat", "chat"}), false,
 			"RUNTIME_PROFILE_SPEC_DUPLICATE_CAPABILITY", "/models/primary/capabilities/1"},
-		{"unsupported tool capability", toolDocument("files.read"), false,
+		{"invalid tool capability", toolDocument("Files Read"), false,
 			"RUNTIME_PROFILE_SPEC_CAPABILITY_KIND_MISMATCH", "/tools/search/capability"},
 	}
 	for _, test := range tests {

@@ -357,7 +357,8 @@ func WorkerV1PlatformExecutionContract() PlatformExecutionContract {
 	c.StorageAdapters[profiledomain.StorageKindManagedArtifact] = AdapterContract{Version: StorageAdapterManagedArtifactV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedSession] = AdapterContract{Version: StorageAdapterManagedSessionV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedMemory] = AdapterContract{Version: StorageAdapterManagedMemoryV1}
-	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{}
+	// The historical adapter ID describes the MCP transport, not a web.search restriction.
+	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{profiledomain.ToolKindMCPStreamableHTTP: {Version: ToolAdapterMCPWebSearchV1}}
 	c.KnowledgeAdapters = map[profiledomain.KnowledgeKind]KnowledgeAdapterContract{profiledomain.KnowledgeKindManaged: {Version: KnowledgeAdapterManagedV1, CreatesCallable: true}}
 	digest, err := c.CalculateDigest()
 	if err != nil {

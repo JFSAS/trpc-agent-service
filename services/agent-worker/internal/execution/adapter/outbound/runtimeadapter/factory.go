@@ -95,6 +95,7 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
 	}
+	p.Tools = append([]domain.ToolPlan(nil), p.Tools...)
 	if p.Knowledge != nil {
 		fixed := *p.Knowledge
 		fixed.Backend = fixed.Backend.Clone()
@@ -199,7 +200,21 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 			return nil, err
 		}
 	}
-	return &attempt{knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
+	toolServices, err := f.prepareTools(ctx, g, p, batch)
+	if err != nil {
+		store.Close()
+		if ms != nil {
+			ms.Close()
+		}
+		if as != nil {
+			as.Close()
+		}
+		if ks != nil {
+			ks.Close()
+		}
+		return nil, err
+	}
+	return &attempt{mcpServices: toolServices, knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {
@@ -236,6 +251,9 @@ func (f *Factory) start(g domain.Grant) error {
 }
 
 func requiredUses(p domain.Plan) ([]domain.CredentialUse, error) {
+	if err := validateToolPlans(p); err != nil {
+		return nil, err
+	}
 	if err := validateKnowledgePlan(p); err != nil {
 		return nil, err
 	}
