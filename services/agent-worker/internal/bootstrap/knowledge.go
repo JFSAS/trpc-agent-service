@@ -31,6 +31,14 @@ func (q knowledgeQueries) ImportKnowledge(ctx context.Context, r proof.Knowledge
 		return out, httpadapter.ErrUnavailable
 	}
 	k := p.Knowledge
+	if len(p.Nodes) > 0 {
+		// Composite plans carry the exact selected resource union, not the
+		// legacy single-leaf pointer or the Profile's full resource catalog.
+		k = nil
+		if selected, ok := p.Knowledges[r.Resource]; ok {
+			k = &selected
+		}
+	}
 	if p.TenantID != r.TenantID || p.ManifestID != r.ManifestRef || p.ManifestDigest != r.ManifestDigest || p.DeploymentRevisionID != r.DeploymentRevisionID || k == nil || k.Resource != r.Resource {
 		return out, httpadapter.ErrAttemptDenied
 	}

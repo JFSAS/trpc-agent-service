@@ -102,3 +102,10 @@ helper 单测只证明断言及脚手架，不替代上述公开发布与正式�
 下一包沿已有 `loop.body/max_iterations` 接入 SDK `cycleagent`，不扩展用户契约。
 真实 Telegram 和实时外部模型故障注入不由本 Parallel 正常 live 验收代替。外部
 Embedding 可用配置仍是独立遗留项，与本包普通工具和并发编排解耦。
+
+## 后续已完成的真实数据后端回归
+
+本包最初的共享 Memory SDK 测试之后，已另行完成 PG/Redis 正式 Memory、MinIO/PG
+Artifact 并行保存及失败副作用、Qdrant 双 resource/tenant scope 回归。组合 Knowledge
+导入旧单叶字段接缝已最小修复。具体实际后端、生产修复和未验边界见
+[最终矩阵](orchestration-acceptance-v1.md)，不将有限矩阵扩大为任意组合通过。

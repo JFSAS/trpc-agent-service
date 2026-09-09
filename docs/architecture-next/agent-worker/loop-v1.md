@@ -90,3 +90,7 @@ Gateway receipt 与 Delivery part ACCEPTED，Channel Lab 单条回复等于实�
 必要真实后端组合；现有共享 Memory SDK 无丢写测试不是 PG/Redis/Artifact 并行存储
 验收。外部 Embedding 的明确可用配置仍单列，不以确定性 embedding fixture 宣称
 真实外部语义检索验收。真实 Telegram 与 live 故障注入不由本包正常 live 代替。
+
+后续 Parallel 的必要真实后端回归现已完成，含正式 Memory 接受/读回/失败不应用、
+Artifact 版本/即时副作用及 Knowledge 双 resource/tenant scope，详见
+[最终矩阵](orchestration-acceptance-v1.md)。本页的两次 live 场景 FAIL 保持不变。

@@ -3,8 +3,14 @@
 Worker 将 Gateway 已固定的请求推进为可恢复的执行结果，并通过持久 ReplyIntent 将 Final
 交还 Gateway。它不管理 Draft、不轮询最新 Profile，也不直接发送 Telegram 消息。
 
-**当前代码范围**：单根 `llm`、`openai_compatible`、PostgreSQL 正式 Session、Final 文本。
-已接入实际 tRPC-Agent-Go v1.11.2；Memory、组合、Tools/Knowledge、累计 Token 预算均后置。
+**当前代码范围**：显式 `llm / sequence / parallel / loop` 单父执行树、
+`openai_compatible`、PostgreSQL/managed Redis 正式 Session 与同后端 Summary、
+PostgreSQL/Redis Memory、Artifact、Knowledge，以及选定的 MCP Streamable HTTP 工具。
+均由 AgentSpec → Profile → 固定 Manifest → 实际 tRPC-Agent-Go v1.11.2 装配，
+不是默认给所有节点授权。Parallel 需要显式后继汇总，Loop 使用既有 body/迭代次数。
+累计 Token 预算仍后置，数据服务保留各自接受/即时副作用边界，不新增跨库事务。
+各后端与真实模型的实际验收范围见[编排最终矩阵](../../docs/architecture-next/agent-worker/orchestration-acceptance-v1.md)，
+特别是 Loop 的额外真实模型指令遵循场景仍保留 FAIL，不将其等同于核心运行链路失败。
 `max_output_tokens` 仍是既有单次输出契约；没有 `max_total_output_tokens` 或隐式 16384 限额。
 节点 `generation.max_output_tokens` 保留现有 Schema 的 `262144` 上界；该上界不套用到
 仅要求正整数的 `execution.max_output_tokens`。节点未配置时，SDK 使用已发布执行值；

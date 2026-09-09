@@ -46,7 +46,10 @@ race 已验；PG/Redis Memory、Artifact 等真实后端并行组合仍留后续
 接线、定向 race、正式成功/终轮失败/恢复及 GUI 差异输出验收。真实模型两次场景均因
 额外引用/标记指令未满足而保留 FAIL；第二次已证两次调用、完整前轮上下文、正式
 接受与 Gateway/Lab 交付，不能因同文本响应独立证明末轮选择。无新增退出 DSL 或
-隐式预算。后续单独补 Parallel 真实数据后端组合及统一相关回归。
+隐式预算。[最终相关回归](orchestration-acceptance-v1.md) 已完成 Parallel 的真实 PG/Redis
+Memory、MinIO/PG Artifact、Qdrant 双 resource/tenant scope 矩阵，实际发现并修复
+组合 Plan 的 Knowledge 正式导入仍读取旧单叶字段导致403的问题；真实模型未验边界
+和最终统一 Go/Web 结果在矩阵中逐项列明。
 
 ## 1. 本轮交付
 
