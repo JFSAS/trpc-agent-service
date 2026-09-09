@@ -1,139 +1,350 @@
 # tRPC Agent Service
 
-面向多租户的生产级 Agent SaaS 平台。仓库正在从远端基线重新建设，采用独立
-Workload、服务本地 `internal/`、领域模块和不可变运行快照组织代码。
+**把 Agent 从一份定义，变成可配置、可发布、可在聊天渠道中使用的服务。**
 
-## 默认本地全栈启动
+面向自托管场景的多租户 Agent 服务平台，基于 Go 与 tRPC-Agent-Go 构建执行服务，
+使用 Next.js 提供管理控制台和独立文档站。你可以在 Web 中定义 Agent、配置模型与运行资源、
+发布固定版本，再通过 Telegram、企业微信或本地 Channel Lab 与它交互。
 
-```sh
+[开始使用](docs/user-guide/v1/README.md) · [部署平台](deploy/compose/MANAGED_LOCAL.md) · [用户参考](docs/site/README.md) · [架构设计](docs/architecture-next/README.md) · [API 契约](api/README.md)
+
+> **项目状态**：处于持续开发中的 V1。本文是项目入口，不是稳定性承诺或某个部署实例的健康报告。
+> 配置字段、执行能力与迁移要求以所使用提交的代码、契约及部署文档为准。
+
+## 为什么使用它
+
+将一个 Agent 接到真实用户面前，不只需要调用模型，还需要管理配置、凭据、版本、会话和消息渠道。
+tRPC Agent Service 把这些环节组织成一条明确的发布与运行流程：
+
+- **在控制台管理，而不只在脚本里运行**：提供账号、租户、成员、Agent、运行配置、部署和渠道页面。
+- **把行为与资源分开**：Agent 声明要做什么，Runtime Profile 配置模型、工具、知识资源和存储。
+- **固定版本，显式升级**：Deployment 绑定已发布的 AgentVersion 与 ProfileRevision，生成不可变运行快照。
+- **让同一个 Agent 接入不同渠道**：由 Channel Account 管理机器人接入，由 Channel Binding 指向明确的部署版本。
+- **先在本地验证消息链路**：Channel Lab 提供 Telegram 风格的本地模拟服务和聊天界面，不必先准备公网 Webhook。
+- **保留清晰的服务边界**：管理、执行和渠道交付分别由独立 Go 服务负责，通过版本化契约协作。
+
+适合希望自托管 Agent 服务、为团队管理多个 Agent，或研究 Agent 从配置到执行全过程的使用者与开发者。
+
+## 核心能力
+
+| 能力 | 你可以做什么 |
+| --- | --- |
+| 身份与多租户 | 登录、管理平台用户与租户、维护 OWNER / MEMBER 成员关系 |
+| Agent 编辑与版本 | 编辑 AgentSpec、声明资源需求、保存 Draft、校验并发布不可变版本 |
+| Runtime Profile | 配置模型及运行资源，单独管理凭据，发布可复用的资源配置版本 |
+| Deployment | 选择 Agent 和 Profile 的明确版本，完成匹配、校验、编译与发布 |
+| Channel 管理 | 配置 Telegram / 企业微信账号，进行接入预检，管理接入与消息路由 |
+| Worker 执行 | 消费运行请求，使用固定 Manifest 执行 Agent，持久化会话与执行结果并生成回复意图 |
+| 普通 MCP 工具 | 配置 Streamable HTTP 服务及明确选中的工具，按节点需求匹配并调用 |
+| 多 Agent 编排 | 使用 Sequence、有显式汇总的 Parallel、固定轮数 Loop 组合 LLM 节点 |
+| 会话与数据能力 | 显式配置 Session Summary、PostgreSQL / Redis Memory、S3 Artifact 与 Qdrant Knowledge |
+| 本地全栈启动 | 用统一入口启动管理、执行、渠道服务及 PG / NATS / Redis / Qdrant / MinIO |
+| 本地联调 | 使用 Channel Lab 验证消息收发；可选确定性 Echo 模型或接入实际模型 |
+| 独立文档站 | 阅读图文教程和主题参考，可静态部署，并从控制台“帮助文档”跳转 |
+
+**资源能填写，不等于当前 Worker 已支持执行。** 新能力需要同时具备 Agent 声明、Profile 配置、
+Deployment 编译和 Worker 实现。不要仅根据编辑器选项判断某个组合已经可用；具体边界参见
+[Worker 实施状态](docs/architecture-next/agent-worker/implementation-status.md)。
+
+当前已交付的数据能力、普通工具及编排的验证范围见
+[编排与组合验收记录](docs/architecture-next/agent-worker/orchestration-acceptance-v1.md)。
+Knowledge 的外部 Embedding 配置与语义检索验收仍需单独完成；Loop 的真实模型输出要求
+仍有未通过记录。确定性模型、本地 Lab 和真实 IM 的结果分别记录，不概括为所有组合均已验收。
+
+## 工作原理
+
+[![tRPC Agent Service 系统架构：Control API 配置与发布、Channel Gateway 接入与交付、Agent Worker 执行，以及事件与持久化层](docs/assets/readme/system-architecture-research-v1.png)](docs/assets/readme/system-architecture-research-v1.png)
+
+*点击图片查看大图。实线表示消息与调用，虚线表示配置与授权，相同编号表示跨区域连接。
+这是概念图，不是完整数据库或部署清单；当前本地全栈还包含 Memory schema 和独立数据后端，
+具体布局见 [Managed Local V1](deploy/compose/MANAGED_LOCAL.md)。*
+
+### 从定义到发布
+
+```text
+Agent Draft                     Runtime Profile Draft
+    │ 定义行为与资源需求             │ 配置模型、资源与凭据
+    ▼                               ▼
+AgentVersion                    ProfileRevision
+    └──────────────┬────────────────┘
+                   │ 同类别、同名资源匹配与服务端校验
+                   ▼
+          DeploymentRevision
+          + RuntimeManifest
+                   │ 绑定明确的发布版本
+                   ▼
+             Channel Binding
+```
+
+- **Agent** 回答“如何工作”；**Runtime Profile** 回答“使用哪些资源”。
+- **Deployment** 固定两者的已发布版本，不自动追随最新 Draft 或最新版本。
+- **Channel Account** 管理机器人身份与接入；**Channel Binding** 管理消息送往哪个部署。
+- 编辑、发布新版本与切换线上目标是不同操作。升级或回退时，需要明确选择目标版本。
+
+### 从消息到回复
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant IM as IM 平台
+    participant G as Gateway
+    participant N as JetStream
+    participant W as Worker
+    participant C as Control API
+    participant M as 模型
+    participant T as 工具
+
+    Note over U,T: 第一阶段：消息接入
+
+    U->>IM: 发送消息
+    IM->>G: 接入消息
+    G->>G: 固定路由与部署版本<br/>持久化准入记录、Outbox
+    G-)N: 发布 RunRequested
+    N-)W: 投递运行请求
+
+    Note over U,T: 第二阶段：授权与执行
+
+    W->>W: 加载并校验固定 Manifest
+    W->>C: 请求执行授权与运行凭据
+    C-->>W: 返回授权结果与所需凭据
+    W->>W: 加载会话、装配 SDK
+    W->>M: 上下文与已选工具定义
+    M-->>W: 模型响应
+
+    loop 模型请求工具调用时
+        W->>T: 调用已选工具
+        T-->>W: 工具结果
+        W->>M: 携带工具结果继续推理
+        M-->>W: 下一次调用或最终回答
+    end
+
+    W->>W: 持久化结果、接纳 Completion<br/>提交会话状态与 Reply Outbox
+
+    Note over U,T: 第三阶段：回复投递
+
+    W-)N: 发布 ReplyIntent
+    N-)G: 投递回复意图
+    G->>W: 校验已提交的 Final
+    W-->>G: Completion 证明
+    G->>G: 持久化投递意图
+    G->>IM: 发送回复
+
+    par 记录投递结果
+        IM-->>G: 平台接受发送
+        G->>G: 保存投递回执
+    and 客户端展示
+        IM-->>U: 展示回复
+    end
+
+    Note over U,G: 平台接受发送不等于用户已读
+```
+
+Control API 负责管理与发布，以及向运行服务提供授权后的配置与凭据。
+Web 控制台只连接 Control API；文档站不依赖管理 API、登录会话或运行数据库。
+
+| 组件 | 职责 | 入口 |
+| --- | --- | --- |
+| Control API | 身份、租户、Agent、Profile、Deployment、Channel 管理与发布 | [服务文档](services/control-api/README.md) |
+| Channel Gateway | 机器人连接、消息路由、运行准入与回复交付 | [模块说明](docs/architecture-next/channel-gateway/module-introduction.md) |
+| Agent Worker | Manifest 消费、Agent 执行、会话与结果持久化 | [服务文档](services/agent-worker/README.md) |
+| Web Console | 面向使用者的管理界面 | [前端说明](web/README.md) |
+| Documentation Site | 项目主页、教程与参考文档的静态站点 | [站点说明](site/README.md) |
+| Channel Lab | 本地 Telegram 风格模拟服务与聊天界面 | [使用说明](tools/channel-lab/README.md) |
+
+## 快速开始
+
+按你的目标选择入口；**预览文档或启动 Channel Lab 不需要先部署整个平台**。
+
+### 1. 已有平台账号：发布自己的 Agent
+
+1. 登录控制台并选择租户。
+2. 创建 Agent，填写指令，声明模型与所需资源槽位；校验并发布 Agent Version。
+3. 创建 Runtime Profile，配置与槽位同名的资源及必要凭据；校验并发布 Profile Revision。
+4. 创建 Deployment，选择上述两个已发布版本，校验并发布。
+5. 创建渠道账号，配置 Telegram 或企业微信，完成接入预检。
+6. 将 Channel Binding 指向明确的 Deployment Revision，启用接入与消息路由。
+7. 发送消息，确认收到真实回复；再发送第二轮消息，检查需要的会话连续性。
+
+完整逐页教程见 [V1 部署与使用指南](docs/user-guide/v1/README.md)。
+Telegram 可选择长轮询，接收消息不要求公网回调地址，但仍需服务能够访问 Telegram。
+
+### 2. 本地预览主页与文档
+
+准备 Git、Node.js 和 npm。前端依赖版本以各工程的 `package.json` 与锁文件为准。
+
+```bash
+git clone https://github.com/JFSAS/trpc-agent-service.git
+cd trpc-agent-service
+
+npm --prefix site ci
+npm --prefix site run dev -- --hostname 127.0.0.1 --port 13642
+```
+
+浏览器打开 `http://127.0.0.1:13642`。这是独立文档站，不会启动后端或修改业务数据。
+
+### 3. 本地体验 Channel Lab
+
+准备 Docker 与 Docker Compose，从仓库根目录执行：
+
+```bash
+docker compose -p channel-lab-dev \
+  -f deploy/compose/compose.channel-lab.yaml \
+  --profile testing up -d --build
+```
+
+浏览器打开 `http://127.0.0.1:18090`，创建测试 Bot、选择用户并发送消息。
+**单独启动 Lab 不会生成 Agent 回复**；需要按 [Channel Lab 指南](tools/channel-lab/README.md)
+连接 Gateway、Worker 和已发布的部署。Lab 验收与真实 Telegram / 企业微信验收应分别记录。
+
+### 4. 自行部署完整平台（推荐入口）
+
+准备 Docker Engine、支持 `!reset` 的 Docker Compose v2、Go 1.25+（使用 `go.mod`
+指定的工具链）、Python 3.11+ 和 OpenSSL。从仓库根目录执行：
+
+```bash
 ./scripts/compose-managed.sh up
 ```
 
-一次启动 Web、Control、Worker、Gateway、PG/NATS 和 Redis/Qdrant/MinIO，自动生成并
-复用仓库外的私密服务配置。默认 Web 为 `http://127.0.0.1:23000`，新项目独立于既有
-运行环境；模型、Embedding 与 IM 仍需显式配置。准备条件、端口、后端授权及同卷重启
-验收见 [Managed Local V1](deploy/compose/MANAGED_LOCAL.md)。
+首次执行会构建镜像、生成独立配置与内部证书，并启动 **Web、Control、Worker、Gateway、
+PostgreSQL、NATS、Redis、Qdrant、MinIO**。无需额外 profile，也不需要单独启动 Web。
+Go 服务在宿主构建，Web 在镜像构建阶段安装依赖并完成构建。
 
-## 当前状态
+- **管理控制台**：`http://127.0.0.1:23000`，未登录时进入登录页面。
+- **默认 Compose 项目**：`trpc-agent-managed-local`，使用自己的网络与持久卷。
+- **配置目录**：`~/.local/share/trpc-agent-service/managed-local`，位于仓库之外。
+- **首次登录**：用户名见配置目录的 `metadata.json`，初始密码见
+  `secrets/bootstrap_password`；首次登录按提示修改密码，之后使用修改后的密码。
 
-Control API 的首个可运行版本已经覆盖七个核心子领域：
+启动成功只表示平台基础设施就绪。**聊天模型、Embedding 和 Telegram / 企业微信等渠道
+仍需你显式配置**；启动脚本不会替你创建 Agent、发布 Deployment 或接管现有机器人。
+文档站与 Channel Lab 是前面单独说明的入口，不在此默认服务组合中。
 
-- Identity：登录、Session 校验、`/me`、登出和强制首次修改密码。
-- Admin：Platform Operator 授权、全局用户管理、Tenant 开通和首个 Operator 引导。
-- Tenant：Tenant 查询、Owner 添加或移除已有平台用户、Membership 授权。
-- Agent：Agent 管理、单一 Draft、AgentSpec 校验和不可变 Version 发布。
-- Runtime Profile：可复用运行资源配置、单一 Draft、RuntimeProfileSpec 校验和不可变
-  ProfileRevision 发布、Profile 私有加密凭据、Draft COW 与显式 live 更新。
-- Deployment：确定 AgentVersion + ProfileRevision 的同名匹配与纯 Compiler、
-  DeploymentRevision + RuntimeManifest 原子发布、八个管理 HTTP 操作与
-  同事务 `PENDING` PostgreSQL Outbox。
-- ChannelAccount / ChannelBinding：账户与私有凭据、精确部署目标、11 个管理操作、
-  内部 mTLS 供应、路由 Outbox Relay 和运行观测。
-- PostgreSQL `0001_baseline.sql`、Gin 进程组装、OpenAPI 和真实 PostgreSQL 集成测试。
+先登录并创建租户。对于尚未发布业务的独立新环境，需要使用托管数据后端时，
+用控制台中的实际 Tenant ID 授权目录访问：
 
-Runtime Profile 当前 V1 实现四个资源 Kind、11 个管理 HTTP 操作、独立 Write/Read DTO、
-强延迟发布幂等和 Tenant 隔离。Deployment Control Publication 已实现关闭的
-Schema / Event 契约、Application、PostgreSQL 原子发布、Gin/Bootstrap 接线和真实
-PostgreSQL 集成测试。Profile 消费方法与可选内部取值 Adapter 已有代码，
-通过显式 `CONTROL_RUNTIME_CONFIG_FILE` 注册 Worker mTLS 取值/导出路由与 Manifest Relay。ChannelAccount / ChannelBinding
-及其路由专用 Relay 已实现；Gateway 的 Control 接入已有实现，真实 Telegram
-收信到持久 RunRequested 已通过联合验收。Worker V1 已新增执行、正式 Session、Manifest 分发和
-Reply 接线；真实 PG/NATS/SDK fixture 已通过，真实模型/Telegram 联合验收仍待完成，Local IM 后置。
-实现与历史验收不等于实例当前在线，运行健康需独立检查。
-Gateway 的 Routing / Admission / Connection / Delivery 四个 Module 同处一个 Go Workload；
-当前默认 Control 来源已接托管凭据、Telegram 动态注册、运行观测和有界 Delivery Runner，
-由 Runner 独占 Maintenance；显式 fixture 来源只独立维护。Gateway 共有 11 个迁移
-（0001–0011，新增 Reply transport receipt），精确边界见[实施状态](docs/architecture-next/channel-gateway/implementation-status.md)。
-Control API 启动必需外部 `CONTROL_PROFILE_CREDENTIAL_KEY`；配置要求及本地命令见
-[Compose 启动说明](deploy/compose/README.md)。
-
-## Deployment V1（Control Publication 已实现）
-
-设计入口见 [`Deployment V1`](docs/architecture-next/control-api/deployment.md)：
-
-```text
-AgentVersion + ProfileRevision
-        ↓ 同类别同名匹配、校验与编译
-DeploymentRevision + RuntimeManifest
+```bash
+./scripts/compose-managed.sh grant --tenant-id ACTUAL_TENANT_ID
 ```
 
-V1 不引入 Environment 管理对象或用户 Slot → Resource 映射表。测试与生产使用不同
-ProfileRevision；平台执行限制由静态配置契约提供。Manifest 只固定实际需要的资源、
-Storage 运行角色和节点工具分配；Worker 使用该不可变快照，不跟随最新 Profile。
+该操作更新静态后端目录与发布契约，并重启 Control、Worker；**不要直接对已承载业务的
+环境套用**。Knowledge 还需按实际 Embedding 配置维度、Collection 等参数，具体选项与
+首次初始化顺序见 [Managed Local V1](deploy/compose/MANAGED_LOCAL.md)。
+完成授权后，在 Profile 中选择后端并填写相应用途的凭据，再按前面的发布流程配置 Agent。
 
-凭据交互采用用户直接在 Profile 填写、Profile 内部加密保存的方式。
-Deployment 已通过 `ProfileCredentialChecker` 检查实际进入 Manifest 的凭据元数据与
-使用权，Manifest、Outbox、Event、Receipt 和公开响应均不含真实值。八个
-Deployment 管理路由已在 Control API 注册；发布事务到达持久化 `PENDING`
-Outbox，显式启用的 Manifest Relay 负责后续耐久分发。项目尚未稳定发布，不维护开发期 ref-only 兼容，也不建设独立
-Secret 产品。
+常用维护命令：
 
-ChannelBinding 生效版本切换、路由 Relay 与 Gateway 固定投影已接通；Worker 的 Manifest
-正文获取/校验、Attempt 授权、单 LLM、正式 Session 与 ReplyIntent 已有实现。当前主线是
-[Worker 首版联合验收](docs/architecture-next/agent-worker/implementation-status.md)。
-Manifest 发布事件的 Distribution 与 Channel 路由分发分别验收，不从收信成功推断 Run 已执行。
-产品侧的同名表单、托管 Session Storage、模板/连接测试和技术字段隐藏记录在
-[产品易用性 TODO](docs/architecture-next/control-api/product-usability-todo.md)，均未因列入 TODO 而实现。
+```bash
+./scripts/compose-managed.sh config          # 校验配置，不输出展开后的秘密
+./scripts/compose-managed.sh status          # 查看服务状态
+./scripts/compose-managed.sh stop            # 停止服务，保留容器和持久卷
+./scripts/compose-managed.sh up --skip-build # 已完成首次构建时，复用镜像与配置启动
+```
 
-## Database V1
+请保留配置目录和持久卷，不通过删除配置目录来“重置”已有数据库的身份与密码。
+端口调整、独立项目、后端授权、外部服务配置及同卷重启检查，见
+[完整本地全栈指南](deploy/compose/MANAGED_LOCAL.md)。
+手动组合 Compose、内部通信和数据库迁移的进阶说明分别见
+[Worker V1 部署](deploy/compose/WORKER_V1.md) 与
+[数据库部署与迁移](docs/architecture-next/operations/database-v1.md)。
 
-部署采用同一 PostgreSQL/database 的 control、gateway、worker、runtime_session 四个 Schema，
-分别使用独立迁移/运行角色。Control/Gateway/Worker 双连接启动、
-Session 显式迁移与幂等权限 provision 已实现；数据库隔离验证不代替真实渠道闭环。见 [Database V1](docs/architecture-next/operations/database-v1.md)。
-既有 public 表或旧 channel_gateway 库会触发显式升级门禁，不自动迁移/删除原有数据。
+## 文档导航
 
-## 生产 Workload
+### 面向使用者
 
-| Workload | 职责 | 状态 |
-| --- | --- | --- |
-| `control-api` | 身份/租户、Agent/Profile/Deployment、ChannelAccount/ChannelBinding | 管理、发布、账户供应与路由 Relay 已实现 |
-| `channel-gateway` | IM Webhook、Run Admission、运行投影和回复投递 | 四 Module、Control 接入与 Runner 已实现；真实 Telegram 入站已验收，Reply Consumer/完成证明已接线，完整回复联合验收待完成 |
-| `agent-worker` | 消费 Run、执行 Agent、完成 Run、产生 ReplyIntent | [Worker V1](services/agent-worker/README.md) 已有执行与部署代码；真实 PG/NATS/SDK fixture 通过，真实模型/Telegram 联合验收待完成；组合/Memory/累计 Token 后置 |
-| `local-im-provider` | 与外部 IM Adapter 统一的本地调试服务 | 待设计 |
-| `control-web` | Control 管理界面，仅连接 Control API | 已有账号/租户、Agent、Profile、Deployment 页面；本工作树未接入 Channel 页面 |
-| `local-im-web` | Local IM 调试客户端，仅连接 Local IM Provider | 待重构 |
+| 我想…… | 阅读 |
+| --- | --- |
+| 从头部署并使用一个 Agent | [完整图文教程](docs/user-guide/v1/README.md) |
+| 离线阅读或打印教程 | [独立 HTML 指南](docs/user-guide/v1/部署与使用指南.html) |
+| 理解 Agent、Profile、Deployment 与 Channel | [核心概念](docs/site/concepts.md) |
+| 编辑 Agent、管理版本 | [Agent 与版本](docs/site/agent.md) |
+| 配置模型、资源与凭据 | [运行配置与资源](docs/site/runtime-profile.md) |
+| 发布、升级和回退 | [部署与生命周期](docs/site/deployment.md) |
+| 接入 Telegram 或企业微信 | [渠道接入](docs/site/channels.md) |
+| 管理用户、租户和权限 | [账号与权限](docs/site/administration.md) |
+
+### 面向开发者与部署维护者
+
+- [文档总索引](docs/README.md) · [架构入口](docs/architecture-next/README.md) · [架构约束](docs/architecture-next/constraints.md)
+- [API 与协议入口](api/README.md)：OpenAPI、JSON Schema、事件与运行时协议。
+- [一键本地全栈](deploy/compose/MANAGED_LOCAL.md) · [Compose 配置](deploy/compose/README.md) · [完整 Worker 部署](deploy/compose/WORKER_V1.md)
+- [数据库隔离与迁移](docs/architecture-next/operations/database-v1.md) · [运行追踪](deploy/compose/TRACING_V1.md)
+- [站点构建与 GitHub Pages](site/README.md)：用户文档独立构建，管理 Web 通过 `DOCS_SITE_URL` 跳转。
+
+网站只发布 `docs/site/` 的六篇用户参考和 `docs/user-guide/v1/` 的教程，
+不会自动发布 `docs/architecture-next/` 的内部设计与历史验收记录。
 
 ## 仓库结构
 
 ```text
-├── services/                 # 独立构建的生产 Workload
-│   ├── control-api/
-│   ├── channel-gateway/      # Routing / Admission / Connection / Delivery Final
-│   └── agent-worker/         # Manifest / Execution / 正式 Session / Reply Relay
-├── api/                      # OpenAPI、Schema、版本化事件源文件
-├── gen/                      # 仅存放协议生成代码
-├── platform/im/wecom/        # 公开 Go 企微 P0 协议库；Gateway 已进程内直接装配
-├── docs/architecture-next/   # 当前规范性架构文档
-├── tests/                    # 跨包集成与端到端测试
-└── go.mod                    # 单一根 Go Module
+.
+├── services/
+│   ├── control-api/         # 管理、授权、发布与配置供应
+│   ├── channel-gateway/     # 接入、路由、准入与消息交付
+│   └── agent-worker/        # Agent 执行、会话、结果与回复意图
+├── web/                    # Next.js 管理控制台
+├── site/                   # 独立主页与文档站，静态导出
+├── api/                    # OpenAPI、Schema、事件与运行时契约
+├── gen/                    # 协议生成代码
+├── platform/               # 公共协议与基础能力
+├── deploy/                 # Compose、服务部署及基础设施配置
+├── tools/channel-lab/       # 本地消息联调环境
+├── scripts/                # 构建辅助、迁移与验收脚本
+├── tests/                  # 跨模块测试
+├── docs/
+│   ├── architecture-next/  # 领域设计、实施说明与架构决策
+│   ├── site/               # 网站参考文档的 Markdown 源文件
+│   └── user-guide/v1/      # 完整教程、插图及离线 HTML
+├── .env.example            # 环境配置模板
+├── go.mod                  # 根 Go Module 与工具链版本
+└── justfile                # 常用开发与验证命令
 ```
 
-公开技术库 `platform/im/wecom` 已有纯 Go 企微 P0 协议 Client 与本地真实 WebSocket
-测试；Gateway 已进程内直接引用，不新增独立 Connector 服务。Telegram 入站已直接
-引用第三方 Go SDK；出站与注册也在同一进程中使用该 SDK。
-公开包接口与职责见 [Go Connector 设计](docs/architecture-next/channel-gateway/public-go-connector.md)。
-当前可按账户配置启动 Connection 与企微入站。Delivery Final、Sender lookup、原 ReplyOrigin
-已另有源码与本地纵切；Control 模式已启动生产调度，ReplyIntent Consumer 与 Worker
-完成证明已接入；真实模型/Telegram 的完整回复验收仍待完成。Helm 在全部生产 Workload 完成后
-进入 FINAL-INTEGRATION，不增加独立 Connector 部署单元。
-精确当前验证以实施状态最新章节为准。
+## 开发与验证
 
-## 当前验证命令
+以下命令从仓库根目录运行。Go 命令使用 `go.mod` 指定的工具链；Web 和文档站分别安装依赖。
 
 ```bash
-just test
-just vet
-just vuln
-just build
+# Go 单元测试与静态检查
+go test ./...
+go vet ./services/... ./api/... ./platform/...
 
-# Gateway 源码验证入口，不表示完整 Agent E2E 已通过
-just gateway-build
-just gateway-test
+# 管理控制台
+npm --prefix web ci
+npm --prefix web run lint
+npm --prefix web test -- --maxWorkers=2
+npm --prefix web run build
+
+# 文档站：内容生成、测试、静态构建与链接检查
+npm --prefix site ci
+npm --prefix site test
+npm --prefix site run build
+npm --prefix site run verify
+
+# Channel Lab
+python3 -m unittest discover -s tools/channel-lab/tests -v
 ```
 
-Control API 的详细目录说明见
-[`services/control-api/README.md`](services/control-api/README.md)。架构约束见
-[`docs/architecture-next/constraints.md`](docs/architecture-next/constraints.md)。
-Runtime Profile V1 已实现契约见
-[`Runtime Profile V1`](docs/architecture-next/control-api/runtime-profile.md) 和
-[`RuntimeProfileSpec V1`](docs/architecture-next/control-api/runtime-profile-spec.md)。
+也可安装 `just`，运行 `just --list` 查看快捷入口。
+需要数据库、消息队列或外部账号的集成测试应按各服务文档准备环境；普通测试中的跳过项不算完成集成验收。
+
+修改文档正文后运行 `npm --prefix site run docs:sync`。该命令同时更新在线页面和离线 HTML；
+若新增网站主题，还需登记生成列表和导航。详见 [文档维护](docs/site/README.md)。
+
+## 参与贡献
+
+欢迎通过 [Issues](https://github.com/JFSAS/trpc-agent-service/issues) 反馈问题、提出改进，
+或提交 [Pull Request](https://github.com/JFSAS/trpc-agent-service/pulls)。
+
+- **报告问题**：附上提交 SHA、复现步骤、预期与实际结果，以及去除凭据的必要日志。
+- **提交改动**：先阅读对应模块文档，尽量保持一个 PR 解决一个明确问题，并补充相关测试。
+- **涉及接口或配置**：同步更新 OpenAPI / Schema、消费端和使用说明，不只修改表单或单侧实现。
+- **涉及运行能力**：说明验证覆盖到了配置、发布、执行还是实际渠道回复，区分模拟服务和外部服务结果。
+- **提交信息**：使用 `feat(scope): ...`、`fix(scope): ...`、`docs(scope): ...` 等格式。
+
+数据库迁移、凭据和通信配置是部署的一部分。请勿将本地 `.env`、真实 Token、私钥或业务数据提交到仓库。
+
+## 许可证
+
+当前仓库根目录尚未包含 `LICENSE` 文件，项目的授权条款仍待明确。
+本文不将依赖项目的许可证视为本项目的许可证；正式分发或复用前，请先确认项目授权条款。
