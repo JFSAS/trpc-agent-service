@@ -100,7 +100,7 @@ class ChannelLabTest(unittest.TestCase):
 
 
 class LabGatewayTest(unittest.TestCase):
-    def fixture(self, directory):
+    def fixture(self, directory, final_text="fixed failure Final"):
         lab = Mock()
         lab.bot_id = 11
         lab.snapshot.return_value = [{'row_id': 1, 'bot_id': 11, 'chat_id': '42', 'message_id': 101, 'text': 'previous Final'}]
@@ -113,13 +113,62 @@ class LabGatewayTest(unittest.TestCase):
             if 'gateway_admissions' in query:
                 return [['run-one']]
             if 'gateway_delivery_intents' in query:
-                return [['intent-one', 'fixed failure Final', 'true', '1']]
+                # Reproduce Harness.sql's actual psql -At transport, including its
+                # row/column splitting. JSON is SQL framing, not altered Final text.
+                field = json.dumps(final_text, ensure_ascii=False) if 'to_json(string_agg(' in query else final_text
+                raw = 'intent-one\t' + field + '\ttrue\t1\n'
+                return [line.split('\t') for line in raw.splitlines() if line]
             if 'gateway_reply_transport_receipts' in query:
                 return [['1']]
             raise AssertionError(query)
         h.sql = sql
         real = SimpleNamespace(h=h, account_id='account-one', updates={}, update_bots={}, stop=Mock(), _webhook=Mock(side_effect=AssertionError('direct webhook forbidden')))
         return LabGateway(real), lab, statements
+
+    def test_durable_final_with_newlines_blank_lines_and_tabs_round_trips_exactly(self):
+        for text in ('first line\nsecond line', 'first\n\nlast\n', 'column one\tcolumn two', '中文 `code`\n\n\tindent\r\n"quoted" \\end'):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                gateway, lab, statements = self.fixture(directory, final_text=text)
+                run_id = gateway.send_text('real IM')
+                added = {'row_id': 2, 'bot_id': 11, 'chat_id': '42', 'message_id': 102, 'text': text}
+                lab.snapshot.return_value += [added]
+                # This is an already durable row, not a time-dependent service.
+                # A false predicate detects the framing bug without a 90s sleep.
+                def immediate(predicate, description, timeout=10):
+                    self.assertTrue(predicate(), description)
+                gateway.h.wait = immediate
+                result = gateway.wait_delivery(run_id)
+                self.assertEqual(result['final_text'], text)
+                self.assertEqual(result['outgoing_added'], [added])
+                self.assertEqual(gateway.wait_delivery(run_id), result)
+                stored = json.loads((Path(directory) / ('gateway-delivery-' + run_id + '.json')).read_text())
+                self.assertEqual(stored['final_text'], text)
+                self.assertEqual(result['parts'], 1)
+                self.assertTrue(all(query.startswith('SELECT ') for query in statements))
+
+    def test_sql_null_missing_receipt_and_actual_empty_string_are_distinct(self):
+        for mode in ('sql_null', 'json_null', 'not_received', 'empty_string'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                gateway, lab, _ = self.fixture(directory, final_text='')
+                run_id = gateway.send_text('real IM')
+                original_sql = gateway.h.sql
+                def sql(query):
+                    if 'gateway_delivery_intents' in query:
+                        if mode == 'sql_null': return [['intent-one', '', 'true', '1']]
+                        if mode == 'json_null': return [['intent-one', 'null', 'true', '1']]
+                        if mode == 'not_received': return []
+                    return original_sql(query)
+                gateway.h.sql = sql
+                def immediate(predicate, description, timeout=10):
+                    self.assertTrue(predicate(), description)
+                gateway.h.wait = immediate
+                if mode == 'empty_string':
+                    lab.snapshot.return_value += [{'row_id': 2, 'bot_id': 11, 'chat_id': '42', 'message_id': 102, 'text': ''}]
+                    self.assertEqual(gateway.wait_delivery(run_id)['final_text'], '')
+                else:
+                    with self.assertRaises((AssertionError, ValueError)): gateway.wait_delivery(run_id)
+                    self.assertNotIn('delivery', gateway.rounds[run_id])
+                    self.assertFalse((Path(directory) / ('gateway-delivery-' + run_id + '.json')).exists())
 
     def test_only_lab_chat_ingress_and_formal_admission_then_delta_delivery(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -181,11 +181,16 @@ class LabGateway:
         round_ = self.rounds[run_id]
         h, lab = self.h, self.h.gateway_fixture
         result = []
-        query = "SELECT i.intent_id,string_agg(p.body,'' ORDER BY p.part_index),bool_and(p.state='ACCEPTED')::text,count(*)::text FROM gateway.gateway_delivery_intents i JOIN gateway.gateway_delivery_parts p ON p.intent_id=i.intent_id WHERE i.run_id=" + original._literal(run_id) + ' GROUP BY i.intent_id'
+        query = "SELECT i.intent_id,to_json(string_agg(p.body,'' ORDER BY p.part_index))::text,bool_and(p.state='ACCEPTED')::text,count(*)::text FROM gateway.gateway_delivery_intents i JOIN gateway.gateway_delivery_parts p ON p.intent_id=i.intent_id WHERE i.run_id=" + original._literal(run_id) + ' GROUP BY i.intent_id'
         def accepted():
             result[:] = h.sql(query)
             return len(result) == 1 and result[0][2] == 'true'
         h.wait(accepted, 'real Gateway Delivery ACCEPTED by Channel Lab', timeout=90)
+        # Harness.sql splits psql rows and columns on newlines/tabs. Keep the
+        # durable Final in JSON framing across that boundary, then recover it
+        # byte-for-byte as text; NULL is not an empty accepted Final.
+        result[0][1] = json.loads(result[0][1])
+        assert isinstance(result[0][1], str), 'durable Final must be a JSON string, not SQL NULL'
         if 'delivery' in round_:
             self._verify_chat(round_['chat_id'])
             evidence = round_['delivery']
