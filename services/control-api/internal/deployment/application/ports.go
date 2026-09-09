@@ -93,20 +93,22 @@ type QueryStore interface {
 }
 
 type Dependencies struct {
-	ManagedBackends    ManagedBackendResolver
-	Publications       PublicationStore
-	Queries            QueryStore
-	TenantAccess       TenantAccess
-	AgentVersions      AgentVersionReader
-	ProfileRevisions   ProfileRevisionReader
-	ProfileCredentials ProfileCredentialChecker
-	Platform           domain.PlatformExecutionContract
-	NewDeploymentID    func() (string, error)
-	NewRevisionID      func() (string, error)
-	NewManifestID      func() (string, error)
-	NewEventID         func() (string, error)
-	Now                func() time.Time
-	MaxEventBytes      int
+	ArtifactBackend     ArtifactBackend
+	ArtifactCredentials ArtifactCredentialResolver
+	ManagedBackends     ManagedBackendResolver
+	Publications        PublicationStore
+	Queries             QueryStore
+	TenantAccess        TenantAccess
+	AgentVersions       AgentVersionReader
+	ProfileRevisions    ProfileRevisionReader
+	ProfileCredentials  ProfileCredentialChecker
+	Platform            domain.PlatformExecutionContract
+	NewDeploymentID     func() (string, error)
+	NewRevisionID       func() (string, error)
+	NewManifestID       func() (string, error)
+	NewEventID          func() (string, error)
+	Now                 func() time.Time
+	MaxEventBytes       int
 }
 
 type Service struct{ deps Dependencies }

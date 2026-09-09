@@ -26,7 +26,7 @@ const (
 	testUserID       = "usr_fixture_user"
 )
 
-func TestHandlerRegistersExactlyEightDeploymentRoutes(t *testing.T) {
+func TestHandlerRegistersDeploymentAndArtifactRoutes(t *testing.T) {
 	router := newTestRouter(&fakeDeploymentService{})
 	var got []string
 	for _, route := range router.Routes() {
@@ -40,10 +40,12 @@ func TestHandlerRegistersExactlyEightDeploymentRoutes(t *testing.T) {
 		"GET /v1/tenants/:tenant_id/deployments/:deployment_id",
 		"GET /v1/tenants/:tenant_id/deployments/:deployment_id/revisions",
 		"GET /v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number",
+		"GET /v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/artifacts/:filename",
 		"PATCH /v1/tenants/:tenant_id/deployments/:deployment_id",
 		"POST /v1/tenants/:tenant_id/deployments",
 		"POST /v1/tenants/:tenant_id/deployments/:deployment_id/revisions",
 		"POST /v1/tenants/:tenant_id/deployments/:deployment_id/validate",
+		"PUT /v1/tenants/:tenant_id/deployments/:deployment_id/revisions/:revision_number/artifacts/:filename",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("routes =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

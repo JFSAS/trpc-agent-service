@@ -1152,6 +1152,78 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/artifacts/{filename}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+      - $ref: '#/components/parameters/DeploymentRevisionNumber'
+      - name: filename
+        in: path
+        required: true
+        description: Single basename; slash, backslash, dot and dot-dot are rejected.
+        schema: {type: string, minLength: 1, maxLength: 255}
+      - name: run_id
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+    get:
+      operationId: loadDeploymentArtifact
+      summary: Download one Artifact through the fixed Run and Deployment Revision
+      description: Owner-only. Worker independently verifies Run tenant and Manifest identity and derives Session scope. No caller-selected backend or credentials are accepted.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - name: version
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0}
+      responses:
+        '200':
+          description: Raw file bytes, no-store and attachment disposition. Version starts at zero.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '400': {description: Invalid filename or closed query.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Owner or Run/Manifest authorization failed.}
+        '404': {description: Artifact or Deployment Revision not found.}
+        '413': {description: Artifact exceeds fixed backend or transport limit.}
+        '503': {description: "Worker, credentials or backend unavailable."}
+    put:
+      operationId: saveDeploymentArtifact
+      summary: Upload a new Artifact version through the fixed Run and Deployment Revision
+      description: Owner-only. Raw bytes are capped at 16 MiB and fixed backend MaxBytes. Version is allocated by Worker; version query is rejected. No automatic retries or implicit idempotency are provided.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+          text/plain:
+            schema: {type: string}
+      responses:
+        '200':
+          description: Saved Artifact metadata without content or credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [name, version, ref, mime_type, size_bytes, sha256]
+                properties:
+                  name: {type: string}
+                  version: {type: integer, minimum: 0}
+                  ref: {type: string}
+                  mime_type: {type: string}
+                  size_bytes: {type: integer, minimum: 0}
+                  sha256: {type: string}
+        '400': {description: Invalid filename or closed query.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Owner or Run/Manifest authorization failed.}
+        '404': {description: Deployment Revision not found.}
+        '413': {description: Artifact exceeds fixed backend or transport limit.}
+        '503': {description: "Worker, credentials or backend unavailable."}
 components:
   securitySchemes:
     cookieAuth:
