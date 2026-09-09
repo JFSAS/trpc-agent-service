@@ -178,7 +178,13 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	}()
 	runCtx, cancel := context.WithCancel(ctx)
 	assembly.mcp.cancel = cancel
-	defer cancel()
+	defer func() {
+		cancel()
+		if !assembly.wait(e.DrainTimeout) {
+			result = Result{}
+			err = errors.Join(err, ErrDrain)
+		}
+	}()
 	events, err := r.Run(runCtx, local.key.UserID, local.key.SessionID, model.NewUserMessage(req.InputText), agent.WithDetachedCancel(false))
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: SDK run initialization", ErrModel)

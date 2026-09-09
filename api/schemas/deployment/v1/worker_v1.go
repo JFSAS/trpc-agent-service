@@ -18,7 +18,7 @@ const WorkerV1PlatformVersion = "worker-v1"
 
 // WorkerV1PlanContract pins the supported ordered single-parent execution tree.
 // It participates in the release digest; it is not a runtime-configurable policy.
-const WorkerV1PlanContract = "llm-sequence-tree-v1"
+const WorkerV1PlanContract = "llm-sequence-parallel-tree-v1"
 
 // WorkerV1SessionRuntimeRole is the fixed append-only runtime principal from
 // Database V1 provisioning. Draft profiles and historical contracts stay generic.
@@ -323,12 +323,12 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 				return reject("llm cannot contain composition fields")
 			}
 			leaves = append(leaves, node)
-		case "sequence":
+		case "sequence", "parallel":
 			if len(node.Children) < 1 || len(node.Children) > 64 {
-				return reject("sequence requires 1..64 unique children")
+				return reject(node.Kind + " requires 1..64 unique children")
 			}
 			if node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil || node.Body != "" || node.MaxIterations != 0 {
-				return reject("sequence cannot contain llm or data options")
+				return reject(node.Kind + " cannot contain llm or data options")
 			}
 			for _, child := range node.Children {
 				if err := visit(child, depth+1); err != nil {
@@ -336,7 +336,7 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 				}
 			}
 		default:
-			return reject("only llm and sequence are supported")
+			return reject("only llm, sequence and parallel are supported")
 		}
 		return nil
 	}
@@ -346,7 +346,21 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 	if len(seen) != len(plan.Nodes) {
 		return nil, reject("all plan nodes must be reachable from root")
 	}
-	return leaves, nil
+	// A parallel branch has no single terminal author. Follow only the overall
+	// Final path after validating every branch above: the user must explicitly
+	// place a successor LLM (possibly through nested sequences). Never choose a
+	// parallel child by map/order/timing or inject a hidden summarizer.
+	for id := plan.Root; ; {
+		node := plan.Nodes[id]
+		switch node.Kind {
+		case "llm":
+			return leaves, nil
+		case "sequence":
+			id = node.Children[len(node.Children)-1]
+		case "parallel":
+			return nil, reject(fmt.Sprintf("terminal parallel node %q requires an explicit successor llm in sequence", id))
+		}
+	}
 }
 
 // Logical binding names can differ from resource names, but no missing, extra,

@@ -124,7 +124,7 @@ func TestWorkerSequenceRejectsNonTreeAndInactiveOptions(t *testing.T) {
 			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "sequence", Children: []string{"missing"}}
 		},
 		"empty sequence": func(c *ManifestContent) { c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "sequence"} },
-		"parallel": func(c *ManifestContent) {
+		"terminal parallel": func(c *ManifestContent) {
 			c.AgentPlan.Nodes["nested"] = ManifestNode{Kind: "parallel", Children: []string{"second"}}
 		},
 		"loop": func(c *ManifestContent) {

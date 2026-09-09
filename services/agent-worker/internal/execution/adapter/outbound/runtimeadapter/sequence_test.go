@@ -76,7 +76,7 @@ func TestSequenceRuntimeRejectsInvalidNodeClosure(t *testing.T) {
 			p.Nodes[p.NodeID] = n
 		},
 		"cycle":       func(p *domain.Plan) { n := p.Nodes[p.NodeID]; n.Children = []string{p.NodeID}; p.Nodes[p.NodeID] = n },
-		"unsupported": func(p *domain.Plan) { n := p.Nodes[p.NodeID]; n.Kind = "parallel"; p.Nodes[p.NodeID] = n },
+		"unsupported": func(p *domain.Plan) { n := p.Nodes[p.NodeID]; n.Kind = "loop"; p.Nodes[p.NodeID] = n },
 		"model audience": func(p *domain.Plan) {
 			n := p.Nodes["last"]
 			n.ModelEndpoint = "https://changed.invalid"

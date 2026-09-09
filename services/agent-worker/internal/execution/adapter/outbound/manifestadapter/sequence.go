@@ -18,7 +18,7 @@ func projectSequence(c protocol.ManifestContent, publication manifest.Publicatio
 	var visit func(string)
 	visit = func(id string) {
 		n := c.AgentPlan.Nodes[id]
-		if n.Kind == "sequence" {
+		if n.Kind == "sequence" || n.Kind == "parallel" {
 			nodes[id] = domain.NodePlan{Kind: n.Kind, Children: append([]string(nil), n.Children...)}
 			for _, child := range n.Children {
 				visit(child)

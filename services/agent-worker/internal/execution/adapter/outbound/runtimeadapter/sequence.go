@@ -69,7 +69,7 @@ func validateSequencePlan(p domain.Plan) error {
 			return false
 		}
 		seen[id] = true
-		if n.Kind == "sequence" {
+		if n.Kind == "sequence" || n.Kind == "parallel" {
 			if len(n.Children) < 1 || len(n.Children) > 64 || n.Instruction != "" || n.ModelName != "" || n.ModelEndpoint != "" || n.ModelCredential != (domain.CredentialUse{}) || n.Temperature != nil || n.MaxOutputTokens != nil || len(n.ToolResources) > 0 || n.KnowledgeResource != "" || n.Memory != nil || n.Artifact || n.AddSessionSummary {
 				return false
 			}
@@ -133,6 +133,16 @@ func validateSequencePlan(p domain.Plan) error {
 		return true
 	}
 	if !visit(p.NodeID, 1) || len(seen) != len(p.Nodes) || len(usedTools) != len(p.Tools) || len(usedKnowledge) != len(p.Knowledges) || memoryUsed != (p.Memory != nil) || artifactUsed != (p.Artifact != nil) {
+		return application.ErrManifestInvalid
+	}
+	// Parallel produces branch events, not a semantic root answer. Only an
+	// explicit subsequent LLM on the ordered terminal path may supply Final.
+	terminal := p.NodeID
+	for p.Nodes[terminal].Kind == "sequence" {
+		children := p.Nodes[terminal].Children
+		terminal = children[len(children)-1]
+	}
+	if p.Nodes[terminal].Kind != "llm" {
 		return application.ErrManifestInvalid
 	}
 	for _, t := range p.Tools {

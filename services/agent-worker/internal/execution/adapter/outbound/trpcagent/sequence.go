@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/chainagent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
+	"trpc.group/trpc-go/trpc-agent-go/agent/parallelagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/memory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
@@ -35,7 +38,6 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 		return nil, "", errors.New("execution node count exceeds schema limit")
 	}
 	seen := map[string]bool{}
-	terminal := ""
 	var visit func(string, int) error
 	visit = func(id string, depth int) error {
 		if depth > 16 {
@@ -47,7 +49,7 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 		}
 		seen[id] = true
 		switch n.Kind {
-		case "sequence":
+		case "sequence", "parallel":
 			if n.Instruction != "" || n.Model.Endpoint != "" || n.Model.Name != "" || n.Model.APIKey != "" || n.Model.Temperature != nil || n.Model.MaxOutputTokens != nil || len(n.Children) > 64 || len(n.Children) == 0 || n.Memory != nil || n.Artifact || n.Knowledge != nil || len(n.Tools) > 0 || n.AddSessionSummary {
 				return errors.New("invalid sequence configuration")
 			}
@@ -66,7 +68,6 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 			if n.Memory != nil && req.Memory == nil || n.Artifact && req.Artifact == nil || n.AddSessionSummary && req.Summary == nil {
 				return errors.New("node capability service missing")
 			}
-			terminal = id
 		default:
 			return errors.New("unsupported execution node kind")
 		}
@@ -78,7 +79,8 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 	if len(seen) != len(nodes) {
 		return nil, "", errors.New("unreachable execution node")
 	}
-	return nodes, terminal, nil
+	terminal, err := terminalLeaf(nodes, req.NodeID)
+	return nodes, terminal, err
 }
 func nodeOutputLimit(m Model, published int64) (int64, error) {
 	ep, err := url.Parse(m.Endpoint)
@@ -109,6 +111,7 @@ type executionAssembly struct {
 	mcp           *mcpState
 	transports    []*http.Transport
 	calls         atomic.Int64
+	lifecycle     sync.WaitGroup
 }
 
 func (a *executionAssembly) close() {
@@ -168,7 +171,7 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 	var build func(string) (agent.Agent, error)
 	build = func(id string) (agent.Agent, error) {
 		n := nodes[id]
-		if n.Kind == "sequence" {
+		if n.Kind == "sequence" || n.Kind == "parallel" {
 			children := make([]agent.Agent, 0, len(n.Children))
 			for _, child := range n.Children {
 				v, err := build(child)
@@ -177,7 +180,10 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 				}
 				children = append(children, v)
 			}
-			return isolatedChain{Agent: chainagent.New(id, chainagent.WithSubAgents(children))}, nil
+			if n.Kind == "parallel" {
+				return isolatedChain{Agent: parallelagent.New(id, parallelagent.WithSubAgents(children)), lifecycle: &a.lifecycle}, nil
+			}
+			return isolatedChain{Agent: chainagent.New(id, chainagent.WithSubAgents(children)), lifecycle: &a.lifecycle}, nil
 		}
 		limit, _ := nodeOutputLimit(n.Model, req.MaxOutputTokens)
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -266,13 +272,66 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 	return a, nil
 }
 
-// SDK v1.11.2 ChainAgent writes Agent/AgentName in its run goroutine while
+// SDK v1.11.2 composite agents write Agent/AgentName in its run goroutine while
 // Runner concurrently reads its original invocation for diagnostics. A public
 // clone isolates that mutable execution identity; Session and append notices
 // remain shared. Preserve Branch so this wrapper adds no history-filter level.
-type isolatedChain struct{ agent.Agent }
+type isolatedChain struct {
+	agent.Agent
+	lifecycle *sync.WaitGroup
+}
 
 func (a isolatedChain) Run(ctx context.Context, inv *agent.Invocation) (<-chan *event.Event, error) {
 	owned := inv.Clone(agent.WithInvocationAgent(a.Agent), agent.WithInvocationBranch(inv.Branch))
-	return a.Agent.Run(agent.NewInvocationContext(ctx, owned), owned)
+	if a.lifecycle == nil {
+		return a.Agent.Run(agent.NewInvocationContext(ctx, owned), owned)
+	}
+	a.lifecycle.Add(1)
+	upstream, err := a.Agent.Run(agent.NewInvocationContext(ctx, owned), owned)
+	if err != nil {
+		a.lifecycle.Done()
+		return nil, err
+	}
+	downstream := make(chan *event.Event)
+	go func() {
+		defer a.lifecycle.Done()
+		defer close(downstream)
+		for evt := range upstream {
+			select {
+			case downstream <- evt:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	return downstream, nil
+}
+
+// Parallel arrival order never defines the business result. The root's final
+// sequence path must finish at an explicit LLM outside the parallel block.
+func terminalLeaf(nodes map[string]NodeConfig, id string) (string, error) {
+	n := nodes[id]
+	switch n.Kind {
+	case "llm":
+		return id, nil
+	case "sequence":
+		return terminalLeaf(nodes, n.Children[len(n.Children)-1])
+	default:
+		return "", errors.New("parallel requires an explicit following LLM final")
+	}
+}
+
+// Runner may close its root stream immediately after a branch error, before
+// Parallel's sibling streams finish. Wait for the existing SDK composite streams
+// to close before releasing shared Attempt services; never add another scheduler.
+func (a *executionAssembly) wait(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() { a.lifecycle.Wait(); close(done) }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }

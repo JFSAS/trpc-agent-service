@@ -121,7 +121,7 @@ func TestWorkerSequenceCompileOrderedMultiResourceClosure(t *testing.T) {
 
 func TestWorkerSequenceCompileRejectsInvalidSecondLeafAndTopology(t *testing.T) {
 	for name, change := range map[string]func(*CompileInput){
-		"parallel": func(in *CompileInput) {
+		"terminal parallel": func(in *CompileInput) {
 			n := in.Agent.Spec.Nodes["nested"]
 			n.Kind = agentdomain.NodeKindParallel
 			in.Agent.Spec.Nodes["nested"] = n
@@ -206,7 +206,7 @@ func TestWorkerSequenceSingleLeafRequiresNewReleasePin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deploymentv1.WorkerV1PlanContract != "llm-sequence-tree-v1" {
+	if deploymentv1.WorkerV1PlanContract != "llm-sequence-parallel-tree-v1" {
 		t.Fatal("unexpected plan contract")
 	}
 	if err = deploymentv1.ValidateWorkerV1(wire, in.Platform.Digest); err != nil {
