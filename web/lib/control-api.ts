@@ -136,6 +136,7 @@ export type PublishAgentVersionResponse = {
 export type RunSummary = {
   run_id: string; session_id: string; status: string; stage: string;
   wait_reason?: string; failure_reason?: string; attempts: number;
+  usage_status: "UNAVAILABLE" | "PARTIAL" | "COMPLETE";
   input_tokens: number; output_tokens: number; total_tokens: number;
   memory_status?: string; reply_status: string; accepted_at: string;
   execution_deadline?: string;
