@@ -63,6 +63,10 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 		backend := storage.Backend.Clone()
 		p.SessionBackend = &backend
 	}
+	if node.Artifact != nil {
+		r := content.Resources.Storage[node.Artifact.Resource]
+		p.Artifact = &domain.ArtifactPlan{Backend: r.Backend.Clone(), AccessKeyID: use(r.Credentials.AccessKeyID), SecretAccessKey: use(r.Credentials.SecretAccessKey)}
+	}
 	if node.Memory != nil {
 		resource := content.Resources.Storage[node.Memory.Resource]
 		limit := 0

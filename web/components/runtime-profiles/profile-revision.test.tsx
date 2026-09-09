@@ -275,3 +275,24 @@ it("clears a published Redis Session password only with explicit confirmation an
   await waitFor(() => expect(api.updateCredential).toHaveBeenCalledTimes(1));
   expect(api.updateCredential.mock.calls[0][2]).toEqual({ target: { profile_revision_number: 3, category: "storage", resource_name: "session", purpose_field: "dsn_password", association_token: token }, expected_credential_revision: 2, action: "clear" });
 });
+
+it.each([
+  { purpose: "access_key_id", label: "新 S3 Access Key ID" },
+  { purpose: "secret_access_key", label: "新 S3 Secret Access Key" },
+])("rotates the published S3 $purpose with the original fixed association and no catalog lookup", async ({ purpose, label }) => {
+  const artifactRevision = { ...revision, config: { ...config, storage: { artifact: { kind: "managed_artifact", backend_id: "retired-s3", backend_revision: 1 } } }, credential_states: { storage: { artifact: { [purpose]: { configured: true, status: "active", credential_revision: 2, association_token: token } } } } };
+  api.getRevision.mockResolvedValue(artifactRevision);
+  const fetcher = vi.spyOn(globalThis, "fetch");const user = userEvent.setup();
+  render(<ProfileRevisionDetail tenantId="tenant-1" profileId="profile-1" revisionNumber={3} />);
+  await user.click(await screen.findByRole("button", { name: `更新 Storage / artifact / ${purpose}` }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText(label)).toHaveValue("");
+  expect(within(dialog).getByLabelText(label)).toHaveAttribute("type", "password");
+  await user.type(within(dialog).getByLabelText(label), "replacement-test-value");
+  await user.click(within(dialog).getByRole("button", { name: "确认更新凭证" }));
+  await screen.findByText("凭证已更新，配置 Revision 与 digest 未改变。");
+  expect(api.updateCredential.mock.calls[0][2]).toEqual({ target: { profile_revision_number: 3, category: "storage", resource_name: "artifact", purpose_field: purpose, association_token: token }, expected_credential_revision: 2, action: "replace", value: "replacement-test-value" });
+  expect(screen.getByTestId("resource-editor")).toHaveTextContent(JSON.stringify(artifactRevision.config));
+  expect(document.body.textContent).not.toContain("replacement-test-value");
+  expect(fetcher).not.toHaveBeenCalled();fetcher.mockRestore();
+});

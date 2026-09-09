@@ -15,8 +15,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	protocol "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/artifactstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
@@ -29,8 +31,9 @@ import (
 var ErrAlreadyPrepared = errors.New("attempt credential initialization already started")
 
 type Options struct {
-	Tracer  trace.Tracer
-	BaseURL string
+	ArtifactPool *pgxpool.Pool
+	Tracer       trace.Tracer
+	BaseURL      string
 	// Client is a borrowed mTLS client configured by bootstrap with trust roots
 	// and the Workload certificate. The factory never closes the shared transport.
 	Client                *http.Client
@@ -90,6 +93,11 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	defer func() { telemetrytrace.End(span, resultErr) }()
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
+	}
+	if p.Artifact != nil {
+		fixed := *p.Artifact
+		fixed.Backend = fixed.Backend.Clone()
+		p.Artifact = &fixed
 	}
 	if p.SessionBackend != nil {
 		fixed := p.SessionBackend.Clone()
@@ -160,7 +168,18 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 			return nil, err
 		}
 	}
-	return &attempt{memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
+	var as *artifactstore.Store
+	if p.Artifact != nil {
+		as, err = f.prepareArtifact(ctx, g, p, batch)
+		if err != nil {
+			store.Close()
+			if ms != nil {
+				ms.Close()
+			}
+			return nil, err
+		}
+	}
+	return &attempt{artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {
@@ -197,6 +216,9 @@ func (f *Factory) start(g domain.Grant) error {
 }
 
 func requiredUses(p domain.Plan) ([]domain.CredentialUse, error) {
+	if err := validateArtifactPlan(p); err != nil {
+		return nil, err
+	}
 	if err := validateSessionPlan(p); err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { GET, PATCH, POST, PUT } from "./route";
+import { ARTIFACT_MAX_BYTES } from "../../../../lib/artifact-api";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -114,6 +115,48 @@ describe("Control API same-origin proxy", () => {
     expect(await response.json()).toEqual(payload);
   });
 
+});
+
+it("bounds raw Artifact uploads before forwarding instead of buffering arbitrary bytes", async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ version: 0 }, { status: 201 }));
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "large.bin"];
+  const response = await PUT(new NextRequest(`http://console.test/api/control/${path.join("/")}?run_id=run_1`, { method: "PUT", body: new Uint8Array(ARTIFACT_MAX_BYTES + 1), headers: { "content-type": "application/octet-stream" } }), { params: Promise.resolve({ path }) });
+  expect(response.status).toBe(413);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("forwards exact Artifact bytes and cookie but no client identity headers", async () => {
+  const raw = new Uint8Array([0, 255, 1]);
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ name: "report.txt", version: 0 }, { status: 201 }));
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "report #1.txt"];
+  const response = await PUT(new NextRequest("http://console.test/api/control/v1/artifact?run_id=run_1", { method: "PUT", body: raw, headers: { "content-type": "text/plain", cookie: "session=opaque", "x-user-id": "forged", "x-tenant-id": "forged", authorization: "forged" } }), { params: Promise.resolve({ path }) });
+  expect(response.status).toBe(201);
+  expect(fetcher.mock.calls[0][0]).toContain("/artifacts/report%20%231.txt?run_id=run_1");
+  expect([...new Uint8Array(fetcher.mock.calls[0][1]?.body as ArrayBuffer)]).toEqual([...raw]);
+  expect(Object.fromEntries(new Headers(fetcher.mock.calls[0][1]?.headers))).toEqual({ "content-type": "text/plain", cookie: "session=opaque" });
+});
+
+it.each(["text/html", "image/svg+xml"])("forces Artifact %s into attachment delivery, never same-origin active content", async (mime) => {
+  const raw = "<svg onload=alert(document.domain)>";
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(raw, { headers: { "content-type": mime, "content-disposition": "inline" } }));
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "active.svg"];
+  const response = await GET(new NextRequest(`http://console.test/api/control/${path.join("/")}?run_id=run_1&version=0`), { params: Promise.resolve({ path }) });
+  expect(response.headers.get("content-disposition")).toBe("attachment");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(response.headers.get("content-type")).toBe(mime);
+  expect(await response.text()).toBe(raw);
+});
+
+it("propagates Artifact request cancellation to the upstream without widening forwarded headers", async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bytes"));
+  const controller = new AbortController();
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "file.txt"];
+  const response = await GET(new NextRequest(`http://console.test/api/control/${path.join("/")}`, { signal: controller.signal }), { params: Promise.resolve({ path }) });
+  const upstreamSignal = fetcher.mock.calls[0][1]?.signal;
+  expect(upstreamSignal).toBeDefined();expect(upstreamSignal?.aborted).toBe(false);
+  controller.abort();expect(upstreamSignal?.aborted).toBe(true);
+  await response.body?.cancel();
 });
 
 it("forwards the legacy create interpreter only on the Account POST and exposes the result contract", async () => {

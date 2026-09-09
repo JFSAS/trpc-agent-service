@@ -64,7 +64,7 @@ export function NodeDataFields({ node, replace, disabled }: { node: LLMNodeV1; r
       <small>留空：不预加载；0：显式关闭；-1：全加载；正整数：SDK adaptive 条目预算，不是 token 预算。</small>
     </>}
     <OptionalBoolean label="Artifact 服务" value={node.artifact?.enabled} disabled={disabled} onChange={(value) => setOptional("artifact", value)} />
-    <small>仅声明 SDK Artifact 服务可用性，不自动注入文件工具；元数据存储由 Worker 管理。</small>
+    <small>显式启用后装配 SDK artifact.Service，并提供 Worker 薄文件工具 artifact_save、artifact_load、artifact_list、artifact_delete（不是 SDK 内建工具）。内容存入 S3，元数据存入 Worker PostgreSQL；工具保存立即持久化，不随失败 Run 回滚。</small>
     <OptionalBoolean label="消费会话摘要" value={node.add_session_summary} disabled={disabled} onChange={(value) => setOptional("add_session_summary", value)} />
   </fieldset>;
 }

@@ -32,9 +32,10 @@ type CapabilityConfig struct {
 // never a raw backend underneath an Attempt wrapper. The caller owns lifecycle,
 // authorization, persistence, and any automatic-extraction policy.
 type CapabilityServices struct {
-	Memory    memory.Service
-	Artifact  artifact.Service
-	Knowledge knowledge.Knowledge
+	ArtifactTools []tool.Tool
+	Memory        memory.Service
+	Artifact      artifact.Service
+	Knowledge     knowledge.Knowledge
 }
 
 // CapabilityOptions composes with the caller's model/session options. Memory
@@ -99,6 +100,9 @@ func BuildCapabilityOptions(cfg CapabilityConfig, services CapabilityServices) (
 			}
 			selected = append(selected, candidate)
 		}
+	}
+	if cfg.Artifact {
+		selected = append(selected, services.ArtifactTools...)
 	}
 	var ms memory.Service
 	var as artifact.Service

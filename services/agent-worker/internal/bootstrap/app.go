@@ -105,7 +105,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	a.ledger.Tracer = a.tracing.Tracer("agent-worker/execution-v1")
 	a.projection = observedProjection{Projection: projectionpg.New(a.pool), observer: a.observation}
 	reader := manifestadapter.Reader{Tracer: a.tracing.Tracer("agent-worker/execution-v1"), Projection: a.projection, ContractDigest: c.PlatformContractDigest}
-	factory, err := runtimeadapter.New(runtimeadapter.Options{Tracer: a.tracing.Tracer("agent-worker/execution-v1"), BaseURL: c.ControlURL, Client: client, RequestTimeout: c.Timing.RequestTimeout.Value(), MaxResponseBytes: c.Limits.MaxCredentialResponseBytes, SnapshotCapacityBytes: c.Limits.MaxSnapshotBytes, DrainTimeout: c.Timing.SDKDrainTimeout.Value(), MaxTrackedAttempts: c.Limits.MaxTrackedAttempts, Observer: a.observation})
+	factory, err := runtimeadapter.New(runtimeadapter.Options{ArtifactPool: a.pool, Tracer: a.tracing.Tracer("agent-worker/execution-v1"), BaseURL: c.ControlURL, Client: client, RequestTimeout: c.Timing.RequestTimeout.Value(), MaxResponseBytes: c.Limits.MaxCredentialResponseBytes, SnapshotCapacityBytes: c.Limits.MaxSnapshotBytes, DrainTimeout: c.Timing.SDKDrainTimeout.Value(), MaxTrackedAttempts: c.Limits.MaxTrackedAttempts, Observer: a.observation})
 	if err != nil {
 		return nil, errors.New("configure Worker runtime adapter")
 	}
@@ -197,7 +197,7 @@ func New(ctx context.Context, c Config) (*App, error) {
 	reply.Tracer = a.tracing.Tracer("agent-worker")
 	a.reply = reply
 	queries := proofQueries{ledger: a.ledger, manifests: reader}
-	handler, err := httpadapter.New(queries, queries, httpadapter.Options{Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
+	handler, err := httpadapter.New(queries, queries, httpadapter.Options{Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
 	if err != nil {
 		return nil, err
 	}

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Own one isolated stack for real browser Memory or Redis Session publication."""
+"""Own one isolated stack for real browser Memory, Session or Artifact publication."""
 import argparse
 import copy
 import json
+import hashlib
 import os
 from pathlib import Path
 import signal
@@ -10,7 +11,8 @@ import socket
 import subprocess
 import sys
 import time
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
+from urllib.parse import quote, urlencode
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'worker-v1-joint'))
@@ -32,17 +34,102 @@ class WebPublicationMixin:
 class WebHarness(WebPublicationMixin, MemoryHarness):
     pass
 
+ARTIFACT_GUI_NAME = 'gui-upload.txt'
+ARTIFACT_GUI_BYTES = b'artifact GUI accepted bytes\n'
+
+def wait_browser_marker(path, web, timeout):
+    deadline = time.monotonic() + timeout
+    while not path.exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError('browser marker timeout: ' + path.name)
+        if web.poll() is not None:
+            raise RuntimeError('isolated Web exited during browser test')
+        time.sleep(1)
+    result = json.loads(path.read_text())
+    assert result['result'] == 'PASS'
+    return result
+
+def verify_artifact_browser_download(marker, artifacts, run_id):
+    assert marker['run_id'] == run_id and marker['name'] == ARTIFACT_GUI_NAME and marker['version'] == 0
+    assert marker['size_bytes'] == len(ARTIFACT_GUI_BYTES)
+    assert marker['sha256'] == hashlib.sha256(ARTIFACT_GUI_BYTES).hexdigest()
+    path = Path(marker['download_file']).resolve()
+    assert path.is_relative_to(artifacts.resolve()), 'browser download must be an owned evidence file'
+    assert path.read_bytes() == ARTIFACT_GUI_BYTES, 'actual browser download bytes differ'
+    return path
+
+def run_artifact_browser_rounds(h, publication, marker, coordination, web, timeout, evidence, save):
+    from artifact_joint_fixture import assert_artifact
+    from faults import submit, run, head
+    view = publication['manifest_view']
+    assert view['sources']['agent']['agent_id'] == marker['agent_id'] and view['sources']['agent']['version_number'] == marker['agent_version_number'] == 2
+    assert view['sources']['profile']['profile_id'] == marker['profile_id'] and view['sources']['profile']['revision_number'] == marker['profile_revision_number'] == 2
+    def success(text, previous=None):
+        offset = len(h.model.output_snapshot())
+        run_id = submit(h, text, '42')
+        delivery = h.wait_delivery(run_id)
+        accepted = wait_success(h, run_id)
+        actual = run(h, run_id)
+        current_head = head(h, actual)
+        route = json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id=' + h.quote(run_id))[0][0])['Route']
+        assert (route['ManifestRef'], route['ManifestDigest'], route['DeploymentRevisionID']) == (h.manifest_id, h.manifest_digest, h.revision_id)
+        assert current_head['accepted_ref'] == accepted['candidate']['candidate_ref'] and current_head['accepted_digest'] == accepted['candidate']['content_digest']
+        assert accepted['candidate']['parent_ref'] == (previous['candidate']['candidate_ref'] if previous else '')
+        assert accepted['candidate']['parent_digest'] == (previous['candidate']['content_digest'] if previous else '')
+        assert delivery['final_text'] == 'artifact final: ' + text
+        outputs = h.model.output_snapshot()[offset:]
+        assert len(outputs) == 1 and outputs[0]['input'] == text
+        return dict(input=text, run_id=run_id, run=actual, route=route, head=current_head, delivery=delivery, candidate=accepted['candidate'], completion=accepted['completion'], tool_results=outputs[0]['tool_results'])
+    seed = success('artifact-v0')
+    evidence['rounds'] = [seed]
+    source = Path(h.write('gui-upload.txt', ARTIFACT_GUI_BYTES.decode()))
+    ready = dict(result='READY', run_id=seed['run_id'], name=ARTIFACT_GUI_NAME, version=0, content=ARTIFACT_GUI_BYTES.decode(), upload_file=str(source), mime_type='text/plain', deployment_id=h.deployment_id, revision_number=h.revision_number, manifest_id=h.manifest_id)
+    (coordination / 'artifact-ready.json').write_text(json.dumps(ready, indent=2) + '\n')
+    evidence['gui_upload'] = 'PENDING';save()
+    print('ARTIFACT_GUI_UPLOAD_READY=' + str(coordination / 'artifact-ready.json'), flush=True)
+    uploaded = wait_browser_marker(coordination / 'gui-artifact.json', web, timeout)
+    download = verify_artifact_browser_download(uploaded, h.artifacts, seed['run_id'])
+    # Independent owner readback verifies the same immutable name/version, never substitutes for GUI upload.
+    path = '/v1/tenants/' + quote(h.tenant_id, safe='') + '/deployments/' + quote(h.deployment_id, safe='') + '/revisions/' + str(h.revision_number) + '/artifacts/' + quote(ARTIFACT_GUI_NAME, safe='')
+    request = Request(h.urls['control'] + path + '?' + urlencode({'run_id': seed['run_id'], 'version': 0}), method='GET')
+    with h.opener.open(request, timeout=10) as response:
+        raw, status = response.read(16 * 1024 * 1024 + 1), response.status
+    assert status == 200 and raw == ARTIFACT_GUI_BYTES == download.read_bytes()
+    h.gui_artifact_expected = dict(name=ARTIFACT_GUI_NAME, content=ARTIFACT_GUI_BYTES.decode(), version=0, mime_type='text/plain')
+    follower = success('artifact-gui-read', seed)
+    assert follower['run']['session_id'] == seed['run']['session_id']
+    assert len(follower['tool_results']) == 1
+    loaded = follower['tool_results'][0]
+    assert_artifact(loaded, ARTIFACT_GUI_NAME, 0, raw, loaded=True, mime_type='text/plain')
+    assert loaded['ref'] == uploaded['ref']
+    metadata, objects = h.metadata_state(), h.object_state()
+    files = [item for item in metadata['files'] if item['filename'] == ARTIFACT_GUI_NAME]
+    assert len(files) == 1
+    report = [item for item in metadata['files'] if item['filename'] == 'report.bin']
+    assert len(report) == 1 and files[0]['scope_id'] == report[0]['scope_id']
+    versions = [item for item in metadata['versions'] if item['file_id'] == files[0]['file_id']]
+    assert len(versions) == 1 and versions[0]['version'] == 0
+    content = next(item for item in objects if item['key'] == versions[0]['object_key'])
+    assert content['bytes_hex'] == raw.hex() and content['sha256'] == uploaded['sha256']
+    assert versions[0]['content_sha256'] == uploaded['sha256'] and versions[0]['content_length'] == len(raw)
+    evidence.update(result='PASS', gui_upload='PASS', browser_upload=uploaded, worker_used_gui_manifest=True, rounds=[seed, follower], storage={'metadata': metadata, 'objects': objects}, next_run_loaded_gui_bytes=True, http_download_exact=True, model_requests=h.model.snapshot(), model_outputs=h.model.output_snapshot())
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--coordination', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--backend', choices=('postgresql', 'redis'), default='postgresql')
-    parser.add_argument('--scenario', choices=('memory', 'session'), default='memory')
+    parser.add_argument('--scenario', choices=('memory', 'session', 'artifact'), default='memory')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     harness = WebHarness
     model_fixture = MemoryModelFixture
+    if args.scenario == 'artifact':
+        from artifact_joint_fixture import ArtifactHarness, ArtifactModelFixture
+        class ArtifactWebHarness(WebPublicationMixin, ArtifactHarness):
+            pass
+        harness, model_fixture = ArtifactWebHarness, ArtifactModelFixture
     if args.scenario == 'session':
         if args.backend != 'redis':
             parser.error('session scenario requires --backend redis')
@@ -57,11 +144,11 @@ def main():
             pass
         harness = RedisWebHarness
     h = harness(root, args.artifacts)
-    backend_id = 'joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg')
+    backend_id = 'joint-artifact-s3' if args.scenario == 'artifact' else ('joint-session-redis' if args.scenario == 'session' else ('joint-memory-redis' if args.backend == 'redis' else 'joint-memory-pg'))
     web = None
     web_log = None
     evidence = {'result': 'PENDING', 'gui': 'PENDING', 'external_model': 'DETERMINISTIC_HTTP_FIXTURE', 'shared_services_changed': False}
-    target = h.artifacts / ('session-web.json' if args.scenario == 'session' else 'memory-web.json')
+    target = h.artifacts / (args.scenario + '-web.json')
     def save():
         target.write_text(h.redact(json.dumps(evidence, indent=2, ensure_ascii=False)) + '\n')
     try:
@@ -93,7 +180,8 @@ def main():
                     raise RuntimeError('isolated Web readiness timeout') from None
                 time.sleep(.5)
         access = Path(h.work) / 'gui-access.json'
-        access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
+        secrets = {'artifact_access_key': h.artifact_access_key, 'artifact_secret_key': h.artifact_secret_key} if args.scenario == 'artifact' else {args.scenario + '_password': h.session_password if args.scenario == 'session' else h.memory_password}
+        access.write_text(json.dumps({'web_url': web_url, 'username': 'joint-owner', 'password': h.owner_password, **secrets, 'tenant_id': h.tenant_id, 'agent_id': h.agent_id, 'profile_id': h.profile_id, 'deployment_id': h.deployment_id, 'backend_id': backend_id, 'backend_revision': 1, 'artifacts': str(h.artifacts)}))
         access.chmod(0o600)
         args.coordination.mkdir(parents=True, exist_ok=True)
         (args.coordination / 'ready.json').write_text(json.dumps({'url': web_url, 'private_access_file': str(access), 'artifacts': str(h.artifacts)}))
@@ -115,9 +203,12 @@ def main():
         if args.scenario == 'memory':
             assert sorted(node['memory']['tools']) == sorted(TOOLS)
             selected_storage = node['memory']['resource']
-        else:
+        elif args.scenario == 'session':
             assert view['runtime']['summary']['enabled'] and node['add_session_summary']
             selected_storage = view['storage_roles']['session']
+        else:
+            assert node['artifact'] == {'enabled': True, 'resource': 'artifact'}
+            selected_storage = view['storage_roles']['artifact']
         assert view['resources']['storage'][selected_storage]['backend']['backend_id'] == backend_id
         h.revision_id = publication['id']
         h.manifest_id, h.manifest_digest = publication['manifest_id'], publication['manifest_digest']
@@ -135,6 +226,8 @@ def main():
             assert len(state) == 1 and 'persistent orchid memory' in json.dumps(state)
             assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id=' + h.quote(run_id)) == [['APPLIED']]
             evidence.update(result='PASS', worker_used_gui_manifest=True, run_id=run_id, delivery=delivery, memory=state, completion=result['completion'])
+        elif args.scenario == 'artifact':
+            run_artifact_browser_rounds(h, publication, marker, args.coordination, web, args.timeout, evidence, save)
         else:
             from faults import run, head
             rounds = []

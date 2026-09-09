@@ -27,7 +27,7 @@ const categories: { key: ResourceCategory; label: string; purposes: Purpose[] }[
   { key: "models", label: "Models", purposes: ["api_key"] },
   { key: "tools", label: "Tools", purposes: ["bearer_token"] },
   { key: "knowledge", label: "Knowledge", purposes: ["qdrant_api_key", "embedding_api_key"] },
-  { key: "storage", label: "Storage", purposes: ["dsn", "dsn_password"] },
+  { key: "storage", label: "Storage", purposes: ["dsn", "dsn_password", "access_key_id", "secret_access_key"] },
 ];
 
 function credentialRows(revision: ProfileRevision): CredentialRow[] {
@@ -64,6 +64,8 @@ function resourceLabel(row: CredentialRow) {
 }
 
 function replacementLabel(row: CredentialRow) {
+  if (row.purpose === "access_key_id") return "新 S3 Access Key ID";
+  if (row.purpose === "secret_access_key") return "新 S3 Secret Access Key";
   return row.purpose === "dsn" ? "新 DSN" : row.purpose === "dsn_password" ? `新 ${row.resourceName === "session" ? "Session" : "Memory"} 后端密码` : "新凭证值";
 }
 

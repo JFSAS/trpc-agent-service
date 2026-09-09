@@ -3,6 +3,7 @@ package runtimeadapter
 import (
 	"context"
 	"errors"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/artifactstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 )
 
 type attempt struct {
+	artifactStore   *artifactstore.Store
 	memoryStore     memoryStore
 	memoryCandidate *memorystore.Candidate
 	memoryDigest    string
@@ -84,6 +86,12 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	p := a.plan
 	g := a.grant
 	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, MaxToolCalls: p.MaxToolCalls, AcceptedSnapshot: history}
+	if p.Artifact != nil {
+		if a.artifactStore == nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		request.Artifact = &trpcagent.ArtifactConfig{Service: a.artifactStore, MaxBytes: p.Artifact.Backend.Limits.MaxBytes}
+	}
 	if p.Summary != nil {
 		request.Summary = &trpcagent.SummaryConfig{Model: trpcagent.Model{Endpoint: p.Summary.ModelEndpoint, Name: p.Summary.ModelName, APIKey: a.summaryKey}, EventThreshold: p.Summary.EventThreshold, AddSessionSummary: p.Summary.AddSessionSummary}
 	}
@@ -190,6 +198,10 @@ func (a *attempt) Close() {
 		return
 	}
 	a.closed = true
+	if a.artifactStore != nil {
+		a.artifactStore.Close()
+		a.artifactStore = nil
+	}
 	a.modelKey = ""
 	a.summaryKey = ""
 	if a.memoryStore != nil {

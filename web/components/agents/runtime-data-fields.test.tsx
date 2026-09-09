@@ -50,6 +50,8 @@ describe("runtime capability controls", () => {
     expect(spec().nodes.assistant.tool_slots).toEqual([]);
     fireEvent.change(screen.getByLabelText("Artifact 服务"), { target: { value: "absent" } });
     expect(spec().nodes.assistant).not.toHaveProperty("artifact");
+    expect(screen.getByText(/不是 SDK 内建工具/)).toHaveTextContent("artifact_save、artifact_load、artifact_list、artifact_delete");
+    expect(screen.getByText(/工具保存立即持久化/)).toHaveTextContent("不随失败 Run 回滚");
   });
   it("disables controls and distinguishes supported Summary execution from cross-publication history migration", () => {
     render(<Harness disabled />);

@@ -60,6 +60,7 @@ type MemoryConfig struct {
 	PreloadLimit int
 }
 type Request struct {
+	Artifact                              *ArtifactConfig
 	Memory                                *MemoryConfig
 	MaxToolCalls                          int64
 	Summary                               *SummaryConfig
@@ -171,6 +172,10 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 	runnerOptions := []runner.Option{runner.WithSessionService(local), runner.WithMemoryService(nil)}
 	var memoryAttempt *MemoryAttempt
 	var toolState *memoryToolState
+	var artifactState *artifactTools
+	cfg := CapabilityConfig{AddSessionSummary: req.Summary != nil && req.Summary.AddSessionSummary}
+	services := CapabilityServices{}
+	names := []string{}
 	if req.Memory != nil {
 		if req.Memory.BoundKey.AppName != req.TenantID || req.MaxToolCalls < 1 {
 			return Result{}, ErrMemoryScope
@@ -184,11 +189,27 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 		if traceErr != nil {
 			return Result{}, traceErr
 		}
-		options, optionErr := BuildCapabilityOptions(CapabilityConfig{MemoryTools: req.Memory.Tools, MemoryPreloadLimit: req.Memory.PreloadLimit, AddSessionSummary: req.Summary != nil && req.Summary.AddSessionSummary}, CapabilityServices{Memory: service})
+		cfg.MemoryTools = req.Memory.Tools
+		cfg.MemoryPreloadLimit = req.Memory.PreloadLimit
+		services.Memory = service
+		names = append(names, req.Memory.Tools...)
+	}
+	if req.Artifact != nil {
+		if req.Artifact.Service == nil || req.Artifact.MaxBytes < 1 || req.MaxToolCalls < 1 {
+			return Result{}, ErrArtifact
+		}
+		artifactState = &artifactTools{tracer: e.Tracer, maxBytes: req.Artifact.MaxBytes}
+		cfg.Artifact = true
+		services.Artifact = req.Artifact.Service
+		services.ArtifactTools = artifactState.tools()
+		names = append(names, ArtifactToolNames...)
+	}
+	if req.Memory != nil || req.Artifact != nil {
+		options, optionErr := BuildCapabilityOptions(cfg, services)
 		if optionErr != nil {
 			return Result{}, optionErr
 		}
-		toolState = newMemoryToolState(req.Memory.Tools, req.MaxToolCalls, e.Tracer)
+		toolState = newMemoryToolState(names, req.MaxToolCalls, e.Tracer)
 		agentOptions = append(agentOptions, options.Agent...)
 		agentOptions = append(agentOptions, llmagent.WithToolCallbacks(toolState.callbacks()))
 		runnerOptions = append(runnerOptions, options.Runner...)
@@ -229,6 +250,9 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 						return Result{}, summaryModel.err()
 					}
 					return Result{}, err
+				}
+				if artifactState != nil && artifactState.failed.Load() {
+					return Result{}, ErrArtifact
 				}
 				if toolState != nil && toolState.failed.Load() {
 					return Result{}, ErrMemoryTool
@@ -275,7 +299,7 @@ func (e Executor) Execute(ctx context.Context, req Request) (result Result, err 
 						}
 					}
 				}
-				if req.Memory == nil && (len(choice.Message.ToolCalls) > 0 || len(choice.Delta.ToolCalls) > 0) {
+				if toolState == nil && (len(choice.Message.ToolCalls) > 0 || len(choice.Delta.ToolCalls) > 0) {
 					observed = ErrFinal
 					cancel()
 					continue
