@@ -150,6 +150,7 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 		StorageAdapters          map[profiledomain.StorageKind]AdapterContract            `json:"storage_adapters"`
 		Execution                ExecutionPolicy                                          `json:"execution"`
 		Limits                   CompileLimits                                            `json:"limits"`
+		WorkerPlanContract       string                                                   `json:"worker_plan_contract,omitempty"`
 		WorkerSessionRuntimeRole string                                                   `json:"worker_session_runtime_role,omitempty"`
 	}{
 		RuntimeDataCapabilities: sortedUnique(c.RuntimeDataCapabilities),
@@ -165,6 +166,7 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 	// entirely for platform-v1 so historical contract digests remain unchanged.
 	if c.Version == deploymentv1.WorkerV1PlatformVersion {
 		payload.WorkerSessionRuntimeRole = deploymentv1.WorkerV1SessionRuntimeRole
+		payload.WorkerPlanContract = deploymentv1.WorkerV1PlanContract
 	}
 	payload.Execution.AllowedEndpointHosts = sortedUnique(c.Execution.AllowedEndpointHosts)
 	encoded, err := json.Marshal(payload)
@@ -357,7 +359,8 @@ func WorkerV1PlatformExecutionContract() PlatformExecutionContract {
 	c.StorageAdapters[profiledomain.StorageKindManagedArtifact] = AdapterContract{Version: StorageAdapterManagedArtifactV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedSession] = AdapterContract{Version: StorageAdapterManagedSessionV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedMemory] = AdapterContract{Version: StorageAdapterManagedMemoryV1}
-	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{}
+	// The historical adapter ID describes the MCP transport, not a web.search restriction.
+	c.ToolAdapters = map[profiledomain.ToolKind]AdapterContract{profiledomain.ToolKindMCPStreamableHTTP: {Version: ToolAdapterMCPWebSearchV1}}
 	c.KnowledgeAdapters = map[profiledomain.KnowledgeKind]KnowledgeAdapterContract{profiledomain.KnowledgeKindManaged: {Version: KnowledgeAdapterManagedV1, CreatesCallable: true}}
 	digest, err := c.CalculateDigest()
 	if err != nil {

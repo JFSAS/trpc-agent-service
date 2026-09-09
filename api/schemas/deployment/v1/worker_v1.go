@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -14,6 +15,10 @@ import (
 // WorkerV1PlatformVersion is a new immutable execution contract identity. Legacy
 // platform-v1 manifests remain readable but are not executable by Worker V1.
 const WorkerV1PlatformVersion = "worker-v1"
+
+// WorkerV1PlanContract pins the supported ordered single-parent execution tree.
+// It participates in the release digest; it is not a runtime-configurable policy.
+const WorkerV1PlanContract = "llm-sequence-parallel-loop-tree-v1"
 
 // WorkerV1SessionRuntimeRole is the fixed append-only runtime principal from
 // Database V1 provisioning. Draft profiles and historical contracts stay generic.
@@ -35,62 +40,84 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if c.Runtime != nil && (c.Runtime.Summary == nil || c.Runtime.Summary.Validate() != nil) {
 		return reject("invalid session summary configuration")
 	}
-	for _, node := range c.AgentPlan.Nodes {
-		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
-			return reject("summary consumption requires enabled runtime summary")
-		}
-	}
 	if c.Execution.Backend != "worker-process-v1" || c.Execution.MaxRunSeconds <= 0 || c.Execution.MaxOutputTokens <= 0 {
 		return reject("execution policy")
 	}
-	node, ok := c.AgentPlan.Nodes[c.AgentPlan.Root]
-	if !ok || len(c.AgentPlan.Nodes) != 1 || node.Kind != "llm" || len(node.Children) > 0 || node.Body != "" || node.MaxIterations != 0 {
-		return reject("exactly one llm root is required")
+	leaves, err := workerV1LLMNodes(c.AgentPlan)
+	if err != nil {
+		return err
 	}
-	if len(node.ToolResources) > 0 || len(c.Resources.Tools) > 0 || len(c.ResolvedRequirements.Tools) > 0 {
-		return reject("external tools are deferred")
-	}
-	// V1 binds one SDK Knowledge service. Reject multiple references explicitly;
-	// never silently pick the first resource or search an undeclared namespace.
-	if len(node.KnowledgeResources) > 1 || len(c.Resources.Knowledge) != len(node.KnowledgeResources) || len(c.ResolvedRequirements.Knowledge) != len(node.KnowledgeResources) || len(node.CallableEntries) != len(node.KnowledgeResources) {
-		return reject("single explicit knowledge resource closure")
-	}
-	if len(node.KnowledgeResources) == 1 {
-		key := node.KnowledgeResources[0]
-		if node.CallableEntries[0] != "knowledge/"+key {
-			return reject("knowledge callable authority")
+	// Validate node authority locally, then validate the union once. A resource
+	// shared by two leaves is one global dependency, not an extra for either leaf.
+	selectedModels, selectedTools, selectedKnowledge := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	toolModels := map[string]bool{}
+	memorySelected, artifactSelected := false, false
+	for _, node := range leaves {
+		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
+			return reject("summary consumption requires enabled runtime summary")
 		}
-		for _, bound := range c.ResolvedRequirements.Knowledge {
-			if bound != key {
-				return reject("knowledge requirement binding")
+		selectedModels[node.ModelResource] = true
+		if node.Generation != nil && node.Generation.MaxOutputTokens != nil && *node.Generation.MaxOutputTokens > c.Execution.MaxOutputTokens {
+			return reject("generation exceeds fixed single-output policy")
+		}
+		if node.Memory != nil {
+			if node.Memory.Validate() != nil || c.Execution.MaxToolCalls < 1 || c.Sources.Agent.AgentID == "" || c.StorageRoles["memory"] != node.Memory.Resource {
+				return reject("invalid memory configuration or binding")
 			}
+			memorySelected = true
+		}
+		if node.Artifact != nil {
+			if node.Artifact.Validate() != nil || c.Execution.MaxToolCalls < 1 || c.StorageRoles["artifact"] != node.Artifact.Resource {
+				return reject("invalid artifact configuration or binding")
+			}
+			artifactSelected = true
+		}
+		// Each SDK leaf binds at most one Knowledge service. Distinct leaves may
+		// bind distinct fixed namespaces; neither gets the other's authority.
+		if len(node.KnowledgeResources) > 1 {
+			return reject("single explicit knowledge resource per llm")
+		}
+		localTools, callables := map[string]bool{}, []string{}
+		for _, name := range node.ToolResources {
+			if localTools[name] {
+				return reject("duplicate tool selection")
+			}
+			localTools[name], selectedTools[name] = true, true
+			callables = append(callables, "tools/"+name)
+		}
+		for _, name := range node.KnowledgeResources {
+			selectedKnowledge[name] = true
+			callables = append(callables, "knowledge/"+name)
+		}
+		slices.Sort(callables)
+		actualCallables := append([]string(nil), node.CallableEntries...)
+		slices.Sort(actualCallables)
+		if !slices.Equal(callables, actualCallables) {
+			return reject("selected callable authority")
+		}
+		if (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(callables) > 0 {
+			toolModels[node.ModelResource] = true
 		}
 	}
-
-	selectedModels := map[string]bool{node.ModelResource: true}
 	if c.Runtime != nil {
 		selectedModels[c.Runtime.Summary.ModelResource] = true
 	}
-	if len(c.Resources.Models) != len(selectedModels) || len(c.ResolvedRequirements.Models) != len(selectedModels) {
+	if len(c.Resources.Models) != len(selectedModels) || !workerV1Bindings(c.ResolvedRequirements.Models, selectedModels) {
 		return reject("model closure")
 	}
-	bindings := map[string]bool{}
-	for _, key := range c.ResolvedRequirements.Models {
-		if !selectedModels[key] || bindings[key] {
-			return reject("model requirement binding")
-		}
-		bindings[key] = true
+	if len(c.Resources.Tools) != len(selectedTools) || !workerV1Bindings(c.ResolvedRequirements.Tools, selectedTools) {
+		return reject("selected MCP tool closure")
 	}
-	if node.Generation != nil && node.Generation.MaxOutputTokens != nil && *node.Generation.MaxOutputTokens > c.Execution.MaxOutputTokens {
-		return reject("generation exceeds fixed single-output policy")
+	if len(c.Resources.Knowledge) != len(selectedKnowledge) || !workerV1Bindings(c.ResolvedRequirements.Knowledge, selectedKnowledge) {
+		return reject("explicit knowledge resource closure")
 	}
 	sessionKey, ok := c.StorageRoles["session"]
 	session, exists := c.Resources.Storage[sessionKey]
 	storageCount := 1
-	if node.Artifact != nil {
+	if artifactSelected {
 		storageCount++
 	}
-	if node.Memory != nil {
+	if memorySelected {
 		storageCount++
 	}
 	if !ok || !exists || len(c.StorageRoles) != storageCount || len(c.Resources.Storage) != storageCount {
@@ -126,14 +153,10 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		return reject("session adapter")
 	}
 	credentials := map[string]CredentialUse{session.Credential.CredentialID: session.Credential}
-	if node.Memory != nil {
-		m := node.Memory
-		if m.Validate() != nil || c.Execution.MaxToolCalls < 1 || c.Sources.Agent.AgentID == "" {
-			return reject("invalid memory configuration")
-		}
+	if memorySelected {
 		key, ok := c.StorageRoles["memory"]
 		resource, exists := c.Resources.Storage[key]
-		if !ok || !exists || key != m.Resource || key == sessionKey || resource.Kind != "managed_memory" || resource.AdapterVersion != "managed-memory-v1" || resource.Backend == nil {
+		if !ok || !exists || key == sessionKey || resource.Kind != "managed_memory" || resource.AdapterVersion != "managed-memory-v1" || resource.Backend == nil {
 			return reject("memory adapter binding")
 		}
 		backend := resource.Backend
@@ -158,14 +181,10 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
-	if node.Artifact != nil {
-		a := node.Artifact
-		if a.Validate() != nil || c.Execution.MaxToolCalls < 1 {
-			return reject("invalid artifact configuration")
-		}
+	if artifactSelected {
 		key, ok := c.StorageRoles["artifact"]
 		resource, exists := c.Resources.Storage[key]
-		if !ok || !exists || key != a.Resource || key != "artifact" || resource.Kind != "managed_artifact" || resource.AdapterVersion != "managed-artifact-v1" || resource.MetadataContract != ArtifactMetadataContract || resource.Backend == nil || resource.Credentials == nil || resource.Credential != (CredentialUse{}) {
+		if !ok || !exists || key != "artifact" || resource.Kind != "managed_artifact" || resource.AdapterVersion != "managed-artifact-v1" || resource.MetadataContract != ArtifactMetadataContract || resource.Backend == nil || resource.Credentials == nil || resource.Credential != (CredentialUse{}) {
 			return reject("artifact adapter binding")
 		}
 		b := resource.Backend
@@ -188,8 +207,7 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
-	if len(node.KnowledgeResources) == 1 {
-		key := node.KnowledgeResources[0]
+	for key := range selectedKnowledge {
 		r, exists := c.Resources.Knowledge[key]
 		if !exists || r.Kind != "managed_knowledge" || r.AdapterVersion != "managed-knowledge-v1" || r.Capability != "knowledge.search" || r.Backend == nil || r.Credential == nil || c.Execution.MaxToolCalls < 1 {
 			return reject("knowledge adapter")
@@ -222,12 +240,42 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		}
 		expectedHosts = append(expectedHosts, strings.ToLower(host), strings.ToLower(ep.Hostname()))
 	}
+
+	for name := range selectedTools {
+		r, exists := c.Resources.Tools[name]
+		if !exists || r.Kind != "mcp_streamable_http" || r.AdapterVersion != "mcp-web-search-v1" || !regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`).MatchString(r.ToolName) || !regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`).MatchString(r.ToolsetName) || !regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,127}$`).MatchString(r.Capability) || c.Execution.MaxToolCalls < 1 {
+			return reject("selected MCP adapter")
+		}
+		endpoint, err := url.Parse(r.ServerURL)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(r.ServerURL, "#") {
+			return reject("fixed MCP endpoint")
+		}
+		switch r.Auth.Kind {
+		case "none":
+			if r.Auth.Credential != nil {
+				return reject("MCP no-auth credential")
+			}
+		case "bearer":
+			u := r.Auth.Credential
+			if u == nil || u.CredentialID == "" || u.Purpose != "bearer_token" || u.AudienceDigest != CredentialAudienceDigest(r.Kind, r.ServerURL, r.Auth.Kind) {
+				return reject("MCP credential audience")
+			}
+			if previous, ok := credentials[u.CredentialID]; ok && previous != *u {
+				return reject("credential closure")
+			}
+			credentials[u.CredentialID] = *u
+		default:
+			return reject("MCP authentication kind")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(endpoint.Hostname()))
+	}
+
 	for key := range selectedModels {
 		model, exists := c.Resources.Models[key]
 		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
 			return reject("model adapter")
 		}
-		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(node.KnowledgeResources) > 0) && !slices.Contains(model.Capabilities, "tool_call") {
+		if toolModels[key] && !slices.Contains(model.Capabilities, "tool_call") {
 			return reject("data tools require model tool_call capability")
 		}
 		endpoint, err := url.Parse(model.BaseURL)
@@ -251,6 +299,96 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		return reject("endpoint set must equal selected resource closure")
 	}
 	return nil
+}
+
+// workerV1LLMNodes validates a bounded rooted tree without depending on Control
+// internals. Traversal follows Children in source order and never mutates it.
+func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
+	reject := func(reason string) error { return fmt.Errorf("%w: %s", ErrUnsupportedWorkerManifest, reason) }
+	if plan.Root == "" || len(plan.Nodes) == 0 || len(plan.Nodes) > 128 {
+		return nil, reject("plan requires 1..128 nodes and a root")
+	}
+	seen := make(map[string]bool, len(plan.Nodes))
+	leaves := []ManifestNode{}
+	var visit func(string, int) error
+	visit = func(id string, depth int) error {
+		node, ok := plan.Nodes[id]
+		if id == "" || !ok || depth > 16 || seen[id] {
+			return reject("plan must be reachable, acyclic, single-parent and depth <=16")
+		}
+		seen[id] = true
+		switch node.Kind {
+		case "llm":
+			if len(node.Children) > 0 || node.Body != "" || node.MaxIterations != 0 {
+				return reject("llm cannot contain composition fields")
+			}
+			leaves = append(leaves, node)
+		case "sequence", "parallel":
+			if len(node.Children) < 1 || len(node.Children) > 64 {
+				return reject(node.Kind + " requires 1..64 unique children")
+			}
+			if node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil || node.Body != "" || node.MaxIterations != 0 {
+				return reject(node.Kind + " cannot contain llm or data options")
+			}
+			for _, child := range node.Children {
+				if err := visit(child, depth+1); err != nil {
+					return err
+				}
+			}
+		case "loop":
+			if node.Body == "" || node.MaxIterations < 1 || node.MaxIterations > 32 {
+				return reject("loop requires one body and explicit max_iterations in 1..32")
+			}
+			if node.Children != nil || node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
+				return reject("loop cannot contain children, llm or data options")
+			}
+			if err := visit(node.Body, depth+1); err != nil {
+				return err
+			}
+		default:
+			return reject("only llm, sequence, parallel and loop are supported")
+		}
+		return nil
+	}
+	if err := visit(plan.Root, 1); err != nil {
+		return nil, err
+	}
+	if len(seen) != len(plan.Nodes) {
+		return nil, reject("all plan nodes must be reachable from root")
+	}
+	// A parallel branch has no single terminal author. Follow only the overall
+	// Final path after validating every branch above: the user must explicitly
+	// place a successor LLM (possibly through nested sequences). Never choose a
+	// parallel child by map/order/timing or inject a hidden summarizer.
+	for id := plan.Root; ; {
+		node := plan.Nodes[id]
+		switch node.Kind {
+		case "llm":
+			return leaves, nil
+		case "sequence":
+			id = node.Children[len(node.Children)-1]
+		case "loop":
+			id = node.Body
+		case "parallel":
+			return nil, reject(fmt.Sprintf("terminal parallel node %q requires an explicit successor llm in sequence", id))
+		}
+	}
+}
+
+// Logical binding names can differ from resource names, but no missing, extra,
+// or duplicate resource authority is allowed in the fixed resolved map.
+func workerV1Bindings(bindings map[string]string, selected map[string]bool) bool {
+	if len(bindings) != len(selected) {
+		return false
+	}
+	seen := make(map[string]bool, len(bindings))
+	for _, resource := range bindings {
+		if !selected[resource] || seen[resource] {
+			return false
+		}
+		seen[resource] = true
+	}
+	return true
 }
 
 // CredentialAudienceDigest preserves Profile V1's frozen JSON-array digest

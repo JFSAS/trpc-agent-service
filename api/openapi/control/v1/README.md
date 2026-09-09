@@ -158,7 +158,9 @@ is assumed.
 
 Control-plane DTO, storage, publication, route, and integration tests establish
 this implemented management surface; they do not establish runtime execution.
-The tool kind/capability remain closed to `mcp_streamable_http`/`web.search`.
+The tool kind remains `mcp_streamable_http`. Capability uses the existing AgentSpec
+grammar `^[a-z][a-z0-9_.-]{0,127}$` and exact requirement matching; `web.search`
+remains valid. The declaration is not evidence of server behavior or authorization.
 Future built-in/workspace tool protocols are not added by this credential change.
 
 See the [credential contract](../../../../docs/architecture-next/control-api/runtime-profile-credentials.md)

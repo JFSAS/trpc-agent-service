@@ -3,6 +3,17 @@
 面向多租户的生产级 Agent SaaS 平台。仓库正在从远端基线重新建设，采用独立
 Workload、服务本地 `internal/`、领域模块和不可变运行快照组织代码。
 
+## 默认本地全栈启动
+
+```sh
+./scripts/compose-managed.sh up
+```
+
+一次启动 Web、Control、Worker、Gateway、PG/NATS 和 Redis/Qdrant/MinIO，自动生成并
+复用仓库外的私密服务配置。默认 Web 为 `http://127.0.0.1:23000`，新项目独立于既有
+运行环境；模型、Embedding 与 IM 仍需显式配置。准备条件、端口、后端授权及同卷重启
+验收见 [Managed Local V1](deploy/compose/MANAGED_LOCAL.md)。
+
 ## 当前状态
 
 Control API 的首个可运行版本已经覆盖七个核心子领域：

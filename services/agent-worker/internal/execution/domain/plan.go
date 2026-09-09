@@ -2,12 +2,16 @@ package domain
 
 import (
 	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
+	"slices"
 	"time"
 )
 
 // Plan is the runtime-ready projection of one fully validated immutable
 // Manifest. It carries only the V1 closure, never mutable Profile values.
 type Plan struct {
+	Nodes                                                      map[string]NodePlan
+	Knowledges                                                 map[string]KnowledgePlan
+	Tools                                                      []ToolPlan
 	Knowledge                                                  *KnowledgePlan
 	Artifact                                                   *ArtifactPlan
 	Memory                                                     *MemoryPlan
@@ -26,6 +30,27 @@ type Plan struct {
 	SessionTarget                                              StorageTarget
 }
 
+// NodePlan preserves each leaf's explicit authority inside an ordered SDK tree.
+// Resources on Plan are the initialization closure, not implicit node options.
+type NodePlan struct {
+	Body                                  string
+	MaxIterations                         int64
+	Kind                                  string
+	Children                              []string
+	Instruction, ModelEndpoint, ModelName string
+	ModelCredential                       CredentialUse
+	Temperature                           *float64
+	MaxOutputTokens                       *int64
+	ToolResources                         []string
+	KnowledgeResource                     string
+	Memory                                *NodeMemoryPlan
+	Artifact, AddSessionSummary           bool
+}
+type NodeMemoryPlan struct {
+	Tools        []string
+	PreloadLimit int
+}
+
 // SummaryPlan is the fixed model dependency for Session summary generation.
 // It shares the execution per-output ceiling, not an accumulated token budget.
 type SummaryPlan struct {
@@ -42,6 +67,11 @@ type MemoryPlan struct {
 	Credential   CredentialUse
 	Tools        []string
 	PreloadLimit int
+}
+
+type ToolPlan struct {
+	Resource, ServerURL, ToolsetName, ToolName, AuthKind, Capability string
+	Credential                                                       CredentialUse
 }
 
 type KnowledgePlan struct {
@@ -103,7 +133,49 @@ func (p Plan) Uses() []CredentialUse {
 	if p.Knowledge != nil {
 		uses = append(uses, p.Knowledge.Credential, p.Knowledge.EmbeddingCredential)
 	}
-	return uses
+	for _, t := range p.Tools {
+		if t.AuthKind == "bearer" {
+			found := false
+			for _, use := range uses {
+				if use == t.Credential {
+					found = true
+					break
+				}
+			}
+			if !found {
+				uses = append(uses, t.Credential)
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(p.Nodes))
+	for key := range p.Nodes {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		if p.Nodes[key].Kind == "llm" {
+			uses = append(uses, p.Nodes[key].ModelCredential)
+		}
+	}
+	keys = keys[:0]
+	for key := range p.Knowledges {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		k := p.Knowledges[key]
+		uses = append(uses, k.Credential, k.EmbeddingCredential)
+	}
+	unique := make([]CredentialUse, 0, len(uses))
+	seen := map[CredentialUse]bool{}
+	for _, u := range uses {
+		if !seen[u] {
+			unique = append(unique, u)
+			seen[u] = true
+		}
+	}
+	return unique
 }
 
 type RuntimeResult struct {

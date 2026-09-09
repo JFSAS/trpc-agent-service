@@ -52,13 +52,28 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 	if err = protocol.ValidateWorkerV1(content, r.ContractDigest); err != nil {
 		return domain.Plan{}, application.ErrManifestUnsupported
 	}
-	node := content.AgentPlan.Nodes[content.AgentPlan.Root]
+	if kind := content.AgentPlan.Nodes[content.AgentPlan.Root].Kind; kind == "sequence" || kind == "loop" {
+		return projectSequence(content, m), nil
+	}
+	return projectLLM(content, content.AgentPlan.Root, m), nil
+}
+
+func projectLLM(content protocol.ManifestContent, nodeID string, m manifest.Publication) domain.Plan {
+	node := content.AgentPlan.Nodes[nodeID]
 	model := content.Resources.Models[node.ModelResource]
 	storage := content.Resources.Storage[content.StorageRoles["session"]]
 	use := func(u protocol.CredentialUse) domain.CredentialUse {
 		return domain.CredentialUse{CredentialID: u.CredentialID, Purpose: u.Purpose, AudienceDigest: u.AudienceDigest}
 	}
-	p := domain.Plan{TenantID: m.TenantID, ManifestID: m.ManifestID, ManifestDigest: m.ContentDigest, DeploymentRevisionID: m.DeploymentRevisionID, ProfileID: content.Sources.Profile.ProfileID, ProfileRevision: content.Sources.Profile.RevisionNumber, MaxToolCalls: content.Execution.MaxToolCalls, NodeID: content.AgentPlan.Root, Instruction: node.Instruction, ModelEndpoint: model.BaseURL, ModelName: model.Model, MaxRunSeconds: content.Execution.MaxRunSeconds, MaxOutputTokens: content.Execution.MaxOutputTokens, ModelCredential: use(model.Credential), SessionCredential: use(storage.Credential), SessionTarget: domain.StorageTarget{Host: storage.Destination.Host, Port: uint16(storage.Destination.Port), Database: storage.Destination.Database, Username: storage.Destination.Username, SSLMode: storage.Destination.SSLMode}}
+	p := domain.Plan{TenantID: m.TenantID, ManifestID: m.ManifestID, ManifestDigest: m.ContentDigest, DeploymentRevisionID: m.DeploymentRevisionID, ProfileID: content.Sources.Profile.ProfileID, ProfileRevision: content.Sources.Profile.RevisionNumber, MaxToolCalls: content.Execution.MaxToolCalls, NodeID: nodeID, Instruction: node.Instruction, ModelEndpoint: model.BaseURL, ModelName: model.Model, MaxRunSeconds: content.Execution.MaxRunSeconds, MaxOutputTokens: content.Execution.MaxOutputTokens, ModelCredential: use(model.Credential), SessionCredential: use(storage.Credential), SessionTarget: domain.StorageTarget{Host: storage.Destination.Host, Port: uint16(storage.Destination.Port), Database: storage.Destination.Database, Username: storage.Destination.Username, SSLMode: storage.Destination.SSLMode}}
+	for _, name := range node.ToolResources {
+		r := content.Resources.Tools[name]
+		t := domain.ToolPlan{Resource: name, ServerURL: r.ServerURL, ToolsetName: r.ToolsetName, ToolName: r.ToolName, AuthKind: r.Auth.Kind, Capability: r.Capability}
+		if r.Auth.Credential != nil {
+			t.Credential = use(*r.Auth.Credential)
+		}
+		p.Tools = append(p.Tools, t)
+	}
 	if storage.Kind == "managed_session" {
 		backend := storage.Backend.Clone()
 		p.SessionBackend = &backend
@@ -89,5 +104,5 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 		selected := content.Resources.Models[spec.ModelResource]
 		p.Summary = &domain.SummaryPlan{ModelEndpoint: selected.BaseURL, ModelName: selected.Model, ModelCredential: use(selected.Credential), EventThreshold: spec.EventThreshold, AddSessionSummary: node.AddSessionSummary != nil && *node.AddSessionSummary}
 	}
-	return p, nil
+	return p
 }

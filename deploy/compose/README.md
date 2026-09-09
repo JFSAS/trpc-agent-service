@@ -1,3 +1,9 @@
+# 默认本地全栈入口
+
+使用 `scripts/compose-managed.sh up` 一次启动 Web、Control、Worker、Gateway、PG/NATS
+和 Redis/Qdrant/MinIO。配置只需初始化一次，后续复用私密 state 与命名卷。
+完整说明见 [MANAGED_LOCAL.md](MANAGED_LOCAL.md)。下文保留基础 Compose 的底层配置参考。
+
 # Control API + Channel Gateway + Worker V1 Compose
 
 > **当前源码状态（Worker V1）**：Run/Manifest 消费、单 LLM、正式 Session、Completion/

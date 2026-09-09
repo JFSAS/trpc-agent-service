@@ -1,6 +1,12 @@
 package domain
 
-import "strconv"
+import (
+	"regexp"
+	"strconv"
+)
+
+// Matches the existing AgentSpec tool capability grammar; exact matching remains in compilation.
+var toolCapabilityPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,127}$`)
 
 func validateSemantics(spec Spec) []Diagnostic {
 	var diagnostics []Diagnostic
@@ -45,11 +51,11 @@ func validateModelSemantics(key string, resource ModelResource, diagnostics *[]D
 }
 
 func validateToolSemantics(key string, resource ToolResource, diagnostics *[]Diagnostic) {
-	if resource.Capability != CapabilityWebSearch {
+	if !toolCapabilityPattern.MatchString(resource.Capability) {
 		*diagnostics = append(*diagnostics, resourceDiagnostic(
 			"RUNTIME_PROFILE_SPEC_CAPABILITY_KIND_MISMATCH", SeverityError,
 			"/tools/"+escapeJSONPointer(key)+"/capability", "tool", key,
-			"mcp_streamable_http capability must be web.search in RuntimeProfileSpec V1",
+			"mcp_streamable_http capability must match the AgentSpec capability grammar",
 		))
 	}
 }

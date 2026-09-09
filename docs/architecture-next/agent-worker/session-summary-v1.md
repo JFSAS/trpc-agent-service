@@ -166,3 +166,31 @@ revision，绑定切换到新 revision 后才会生成匹配的新 Run；历史�
 HTTP fixture。Redis Session/Memory 的真实后端验收由各自独立门禁记录，不把本次
 PostgreSQL 组合宣称为全部后端组合矩阵。未切换共享部署，也未新增真实 Telegram
 验收。
+
+## 当前 Worker 分支复验（cfce361，2026-09-09）
+
+在已包含正式 Summary 实现的 `cfce361` 上重新执行运行门禁，未重写已完成的
+摘要装配，也未改变 Manifest 或发布 pin。验收使用独立 PostgreSQL/NATS、真实
+Control/Gateway/Worker 与 Channel Lab HTTP，模型为确定性 HTTP fixture。
+
+- `test-worker-summary-accepted-head.sh`：race 模式主测试与五个子分支，
+  覆盖下一 Attempt 恢复/SDK 消费、摘要失败无候选、失败 completion、
+  rejected parent、stale lease；禁止跳过测试。
+- `test-worker-summary-joint.py`：正式 HTTP 发布 Agent/Profile/Deployment；
+  三个成功 Run 验证摘要生成、正式接受、下一轮精确消费及 Final，
+  一个摘要 401 失败 Run 验证正式 head 不变、无候选和既有失败回复。
+- 原始报告保存在 `/private/tmp/worker-summary-current-20260909/`。
+  `summary-joint.json` 明确区分模型 fixture 与真实服务链路。
+
+本轮没有调用外部付费模型，没有替换共享 Control/Worker/Gateway 或 Telegram Bot；
+临时服务由验收脚本清理。源码实现已由 `76027c6` 提交，本节仅补充当前分支复验记录。
+
+
+### 22a030f 独立源码复验
+
+2026-09-09 再次从已提交的 `22a030f` 导出独立源码，运行 accepted-head race
+门禁与全进程 Summary joint 门禁，均 exit 0，且临时资源清理 PASS。报告见
+`/private/tmp/worker-summary-final-20260909/joint/summary-joint.json`。
+当前工作树同时有尚未完成的 Workspace 附件装配，其缺失共享字段导致直接编译失败；
+本次通过结果仅对应上述已提交源码及文档变更，不代表未提交附件改动通过回归。
+模型使用确定性 HTTP fixture，IM 使用真实 Channel Lab HTTP，不新增付费模型调用。

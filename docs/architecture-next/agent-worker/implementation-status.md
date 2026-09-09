@@ -26,6 +26,31 @@ Worker 装配逐包完成：
 各包的实际模型、存储、GUI 和失败语义以对应文档为准；不把旧 Telegram 证据延伸为
 新能力 Telegram 验收。各包功能完成也不自动等于四能力组合已通过。
 
+## 2026-09-09 普通工具与编排增量
+
+数据能力开发交付已完成，真实外部 Embedding 配置是单列遗留验收。
+新任务从 [普通 MCP 工具](mcp-v1.md) 开始：既有 AgentSpec/Profile/Manifest 字段
+驱动单 LLM 的显式 selected callable，保留正式 Session/Final 接受链路。
+Control Capability 与既有 Agent 语法对齐，历史 `web.search` 仍有效。
+
+MCP 已取得真实 Streamable HTTP server、正式 HTTP 发布 + Channel Lab 两轮 fixture
+（含业务 IsError 纠正和下一轮历史消费），以及一轮真实 DeepSeek 选择并使用工具返回。
+具体 GUI 与代码包验收记录见 MCP 文档；上述不代表真实 Telegram 或 live 错误纠正。
+[Sequence](sequence-v1.md) 已接通有序嵌套 SDK Chain、节点级依赖选择和末叶 Final，
+正式成功/终端失败/恢复联合及真实模型正常链路已验证。
+[Parallel + 显式汇总](parallel-v1.md) 已接通共享发布门禁、Reader/Factory 和真实 SDK
+并发装配；正式 fixture 两种相反完成顺序及分支失败取消、真实模型正常运行、既有 GUI
+同 Manifest 发布/执行均通过。共享 Memory 的真实 SDK 并行 add/load 与候选无丢写
+race 已验；PG/Redis Memory、Artifact 等真实后端并行组合仍留后续相关回归。
+[Loop](loop-v1.md) 的既有 body/max_iterations 已完成 Reader/Factory 与真实 SDK Cycle
+接线、定向 race、正式成功/终轮失败/恢复及 GUI 差异输出验收。真实模型两次场景均因
+额外引用/标记指令未满足而保留 FAIL；第二次已证两次调用、完整前轮上下文、正式
+接受与 Gateway/Lab 交付，不能因同文本响应独立证明末轮选择。无新增退出 DSL 或
+隐式预算。[最终相关回归](orchestration-acceptance-v1.md) 已完成 Parallel 的真实 PG/Redis
+Memory、MinIO/PG Artifact、Qdrant 双 resource/tenant scope 矩阵，实际发现并修复
+组合 Plan 的 Knowledge 正式导入仍读取旧单叶字段导致403的问题；真实模型未验边界
+和最终统一 Go/Web 结果在矩阵中逐项列明。
+
 ## 1. 本轮交付
 
 | 位置 | 新增的实现 |

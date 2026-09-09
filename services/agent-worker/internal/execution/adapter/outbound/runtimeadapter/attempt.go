@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/artifactstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/knowledgestore"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/mcptoolset"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"sync"
 	"time"
@@ -19,28 +20,31 @@ import (
 )
 
 type attempt struct {
-	knowledgeStore  *knowledgestore.Store
-	artifactStore   *artifactstore.Store
-	memoryStore     memoryStore
-	memoryCandidate *memorystore.Candidate
-	memoryDigest    string
-	finalText       string
-	staged          domain.Candidate
-	tracer          trace.Tracer
-	grant           domain.Grant
-	plan            domain.Plan
-	store           candidateStore
-	check           func(context.Context) error
-	modelKey        string
-	summaryKey      string
-	executor        trpcagent.Executor
-	capacity        int
-	mu              sync.Mutex
-	closed          bool
-	executed        bool
-	loaded          bool
-	loadedDigest    string
-	resultDigest    string
+	nodeModelKeys     map[string]string
+	sequenceKnowledge map[string]*knowledgestore.Store
+	mcpServices       []*mcptoolset.Service
+	knowledgeStore    *knowledgestore.Store
+	artifactStore     *artifactstore.Store
+	memoryStore       memoryStore
+	memoryCandidate   *memorystore.Candidate
+	memoryDigest      string
+	finalText         string
+	staged            domain.Candidate
+	tracer            trace.Tracer
+	grant             domain.Grant
+	plan              domain.Plan
+	store             candidateStore
+	check             func(context.Context) error
+	modelKey          string
+	summaryKey        string
+	executor          trpcagent.Executor
+	capacity          int
+	mu                sync.Mutex
+	closed            bool
+	executed          bool
+	loaded            bool
+	loadedDigest      string
+	resultDigest      string
 }
 
 func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, resultErr error) {
@@ -88,6 +92,12 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	p := a.plan
 	g := a.grant
 	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, MaxToolCalls: p.MaxToolCalls, AcceptedSnapshot: history}
+	if len(a.mcpServices) != len(p.Tools) {
+		return domain.RuntimeResult{}, application.ErrRuntimeFailed
+	}
+	for i, t := range p.Tools {
+		request.Tools = append(request.Tools, trpcagent.MCPToolConfig{Resource: t.Resource, Tool: a.mcpServices[i].Tool()})
+	}
 	if p.Knowledge != nil {
 		if a.knowledgeStore == nil {
 			return domain.RuntimeResult{}, application.ErrRuntimeFailed
@@ -119,6 +129,9 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 		}
 		request.Memory = &trpcagent.MemoryConfig{BoundKey: scope.Key(), Entries: saved.Entries, BaseRevision: saved.Revision, Tools: p.Memory.Tools, PreloadLimit: p.Memory.PreloadLimit}
 	}
+	if err := a.populateSequence(&request); err != nil {
+		return domain.RuntimeResult{}, err
+	}
 	result, err := a.executor.Execute(ctx, request)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -127,7 +140,10 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 		if errors.Is(err, trpcagent.ErrSnapshot) || errors.Is(err, trpcagent.ErrCapacity) || errors.Is(err, trpcagent.ErrOverlay) {
 			return domain.RuntimeResult{}, application.ErrSessionInvalid
 		}
-		if errors.Is(err, trpcagent.ErrRetryableModel) {
+		if errors.Is(err, trpcagent.ErrMCPAuthentication) {
+			return domain.RuntimeResult{}, application.ErrCredentialDenied
+		}
+		if errors.Is(err, trpcagent.ErrRetryableModel) || errors.Is(err, trpcagent.ErrMCPDependency) {
 			return domain.RuntimeResult{}, application.ErrDependency
 		}
 		return domain.RuntimeResult{}, application.ErrRuntimeFailed
@@ -206,6 +222,15 @@ func (a *attempt) Close() {
 		return
 	}
 	a.closed = true
+	for _, s := range a.mcpServices {
+		_ = s.Close()
+	}
+	a.mcpServices = nil
+	for _, store := range a.sequenceKnowledge {
+		store.Close()
+	}
+	a.sequenceKnowledge = nil
+	a.nodeModelKeys = nil
 	if a.knowledgeStore != nil {
 		a.knowledgeStore.Close()
 		a.knowledgeStore = nil
