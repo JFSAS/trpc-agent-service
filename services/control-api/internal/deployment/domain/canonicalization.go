@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/gowebpki/jcs"
+	profiledomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
 )
 
 var ErrInvalidManifestContent = errors.New("invalid runtime manifest content")
@@ -37,9 +38,15 @@ func DecodeManifestContent(raw json.RawMessage) (ManifestContent, error) {
 	if len(raw) == 0 {
 		return ManifestContent{}, ErrInvalidManifestContent
 	}
+	if err := validateDataCapabilityPresence(raw); err != nil {
+		return ManifestContent{}, ErrInvalidManifestContent
+	}
 	var content ManifestContent
 	if err := strictDecodeJSON(raw, &content); err != nil {
 		return ManifestContent{}, fmt.Errorf("%w: %v", ErrInvalidManifestContent, err)
+	}
+	if err := validateManagedWire(raw); err != nil {
+		return ManifestContent{}, err
 	}
 	return content, nil
 }
@@ -127,6 +134,19 @@ func validateManifestCredentialShape(content ManifestContent) error {
 		}
 	}
 	for _, resource := range content.Resources.Storage {
+		if resource.Credentials != nil && (resource.Kind != profiledomain.StorageKindManagedArtifact || resource.Backend == nil || !validArtifactCredentials(resource.Credentials, *resource.Backend)) {
+			return ErrInvalidManifestContent
+		}
+		if resource.Kind.Managed() {
+			if resource.Backend != nil && managedPasswordBackend(resource.Kind, *resource.Backend) && ((resource.Kind == "managed_memory" && resource.Backend.Kind == "postgresql") || resource.Credential != (CredentialUse{})) {
+				if !validCredentialUse(resource.Credential, CredentialPurposeDSNPassword) {
+					return ErrInvalidManifestContent
+				}
+			} else if resource.Credential != (CredentialUse{}) {
+				return ErrInvalidManifestContent
+			}
+			continue
+		}
 		if !validCredentialUse(resource.Credential, CredentialPurposeDSN) {
 			return ErrInvalidManifestContent
 		}
@@ -237,11 +257,36 @@ func rejectDuplicateJSONKeys(data []byte) error {
 
 func normalizeManifestContent(content ManifestContent) ManifestContent {
 	normalized := content
+	if content.Runtime != nil {
+		runtime := *content.Runtime
+		if runtime.Summary != nil {
+			summary := *runtime.Summary
+			runtime.Summary = &summary
+		}
+		normalized.Runtime = &runtime
+	}
 	normalized.AgentPlan = AgentPlan{
 		Root:  content.AgentPlan.Root,
 		Nodes: make(map[string]ManifestNode, len(content.AgentPlan.Nodes)),
 	}
 	for id, node := range content.AgentPlan.Nodes {
+		if node.Memory != nil {
+			memory := *node.Memory
+			memory.Tools = sortedUnique(memory.Tools)
+			if memory.PreloadLimit != nil {
+				limit := *memory.PreloadLimit
+				memory.PreloadLimit = &limit
+			}
+			node.Memory = &memory
+		}
+		if node.Artifact != nil {
+			artifact := *node.Artifact
+			node.Artifact = &artifact
+		}
+		if node.AddSessionSummary != nil {
+			enabled := *node.AddSessionSummary
+			node.AddSessionSummary = &enabled
+		}
 		node.ToolResources = sortedUnique(node.ToolResources)
 		node.KnowledgeResources = sortedUnique(node.KnowledgeResources)
 		node.CallableEntries = sortedUnique(node.CallableEntries)
@@ -278,6 +323,10 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.Resources.Tools[name] = resource
 	}
 	for name, resource := range content.Resources.Knowledge {
+		if resource.Backend != nil {
+			b := resource.Backend.Clone()
+			resource.Backend = &b
+		}
 		if resource.Credential != nil {
 			credential := *resource.Credential
 			resource.Credential = &credential
@@ -285,6 +334,14 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.Resources.Knowledge[name] = resource
 	}
 	for name, resource := range content.Resources.Storage {
+		if resource.Credentials != nil {
+			c := *resource.Credentials
+			resource.Credentials = &c
+		}
+		if resource.Backend != nil {
+			b := resource.Backend.Clone()
+			resource.Backend = &b
+		}
 		normalized.Resources.Storage[name] = resource
 	}
 	normalized.ResolvedRequirements = ResolvedRequirements{

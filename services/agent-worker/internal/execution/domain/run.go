@@ -149,6 +149,7 @@ type Candidate struct {
 	Parent      Head
 }
 type Finish struct {
+	MemoryDigest      string
 	Grant             Grant
 	Status            Status
 	Candidate         Candidate
@@ -163,12 +164,15 @@ func FinishDigest(f Finish) string {
 		Status            Status
 		Candidate         Candidate
 		Text, Reason      string
-	}{f.Grant.AttemptID, f.Grant.Generation, f.Grant.LeaseEpoch, f.Status, f.Candidate, f.FinalText, f.Reason}
+		MemoryDigest      string `json:",omitempty"`
+	}{f.Grant.AttemptID, f.Grant.Generation, f.Grant.LeaseEpoch, f.Status, f.Candidate, f.FinalText, f.Reason, f.MemoryDigest}
 	b, _ := json.Marshal(value)
 	return Digest(b)
 }
 
 type Completion struct {
+	MemoryDigest                                   string `json:",omitempty"`
+	MemoryStatus                                   string `json:",omitempty"`
 	ResultDigest                                   string
 	TenantID, RunID, CompletionID, AttemptID, Kind string
 	Status                                         Status

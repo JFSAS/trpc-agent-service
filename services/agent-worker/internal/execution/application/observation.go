@@ -38,6 +38,10 @@ func ObservationResult(err error) string {
 		return "session_wait"
 	case errors.Is(err, ErrManifestInvalid), errors.Is(err, ErrManifestUnsupported), errors.Is(err, domain.ErrInvalid):
 		return "invalid"
+	case errors.Is(err, ErrMemoryFinalize):
+		return "memory_finalize_failed"
+	case errors.Is(err, ErrMemoryApply):
+		return "memory_apply_failed"
 	case errors.Is(err, ErrSessionPreparation):
 		return "session_preparation"
 	case errors.Is(err, ErrSessionInvalid):

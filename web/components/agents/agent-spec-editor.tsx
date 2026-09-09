@@ -22,6 +22,7 @@ import {
   type AgentEditorState,
 } from "../../lib/agent-editor-state";
 import { Button } from "../ui";
+import { NodeDataFields, RuntimeSummaryFields } from "./runtime-data-fields";
 import { AgentCanvas } from "./agent-canvas";
 import { DiagnosticsPanel } from "./diagnostics-panel";
 import { CsvInput, NumberInput } from "./editor-inputs";
@@ -173,6 +174,7 @@ export function AgentSpecEditor({
           <aside style={{ alignContent: "start", display: "grid", gap: 12, minWidth: 0 }}>
             <NodeInspector key={state.selectedNodeID} disabled={disabled} dispatch={dispatch} state={state} />
             <RequirementsEditor disabled={disabled} dispatch={dispatch} state={state} />
+            <RuntimeSummaryFields disabled={disabled} dispatch={dispatch} state={state} />
           </aside>
         </div>
       )}
@@ -231,6 +233,7 @@ function LLMFields({ node, state, replace, disabled }: {
     <label className="field"><span>Instruction</span><textarea disabled={disabled} onChange={(event) => replace({ ...node, instruction: event.target.value })} rows={5} style={{ font: "inherit" }} value={node.instruction} /></label>
     <label className="field"><span>Model Slot</span><select disabled={disabled} onChange={(event) => replace({ ...node, model_slot: event.target.value })} value={node.model_slot}>{Object.keys(state.spec.requirements.models).map((slot) => <option key={slot}>{slot}</option>)}</select></label>
     <label className="field"><span>Tool Slots（逗号分隔）</span><CsvInput disabled={disabled} onValueChange={(tool_slots) => replace({ ...node, tool_slots })} value={node.tool_slots} /></label>
+    <NodeDataFields disabled={disabled} node={node} replace={replace} />
     <label className="field"><span>Knowledge Slots（逗号分隔）</span><CsvInput disabled={disabled} onValueChange={(knowledge_slots) => replace({ ...node, knowledge_slots })} value={node.knowledge_slots} /></label>
     <div style={{ display: "grid", gap: 7, gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
       <label className="field"><span>Temperature</span><NumberInput disabled={disabled} max={2} min={0} onValueChange={(temperature) => replace({ ...node, generation: generation(temperature, node.generation?.max_output_tokens) })} step={0.1} value={node.generation?.temperature} /></label>

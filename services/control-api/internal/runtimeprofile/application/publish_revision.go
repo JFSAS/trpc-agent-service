@@ -50,6 +50,9 @@ func (s *Service) PublishProfileRevision(
 	if !report.Valid {
 		return PublishProfileRevisionResult{Report: report}, ErrRuntimeProfileSpecInvalid
 	}
+	if err := s.checkManagedDocument(ctx, command.TenantID, canonical.Document); err != nil {
+		return PublishProfileRevisionResult{}, err
+	}
 	id, err := s.deps.NewRevisionID()
 	if err != nil {
 		return PublishProfileRevisionResult{}, fmt.Errorf("generate runtime profile revision id: %w", err)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/bootstrap"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/memorymigrations"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/sessionmigrations"
 )
 
@@ -93,6 +94,36 @@ func run(args []string, out io.Writer) error {
 			return errors.New("Session preparation failed")
 		}
 		_, err = fmt.Fprintln(out, "SESSION_PREPARATION=PASS")
+		return err
+	}
+	if len(args) > 0 && args[0] == "prepare-memory" {
+		flags := flag.NewFlagSet("prepare-memory", flag.ContinueOnError)
+		flags.SetOutput(out)
+		timeout := flags.Duration("timeout", 30*time.Second, "explicit preparation deadline")
+		if err := flags.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		if flags.NArg() != 0 || *timeout <= 0 {
+			return errors.New("invalid Memory preparation arguments")
+		}
+		dsn := os.Getenv("MEMORY_MIGRATION_DATABASE_URL")
+		if dsn == "" {
+			return errors.New("MEMORY_MIGRATION_DATABASE_URL is required")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			return errors.New("open Memory migration database")
+		}
+		defer pool.Close()
+		if err = memorymigrations.Apply(ctx, pool); err != nil {
+			return errors.New("Memory preparation failed")
+		}
+		_, err = fmt.Fprintln(out, "MEMORY_PREPARATION=PASS")
 		return err
 	}
 	flags := flag.NewFlagSet("agent-worker", flag.ContinueOnError)

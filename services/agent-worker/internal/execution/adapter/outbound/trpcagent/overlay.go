@@ -30,6 +30,7 @@ type snapshot struct {
 // overlay owns exactly one attempt-local session. No pointer is shared between
 // attempts and no SDK write has authority to accept formal history.
 type overlay struct {
+	summary                *overlaySummary
 	tracer                 trace.Tracer
 	appends, snapshotBytes int64
 	mu                     sync.Mutex
@@ -46,6 +47,9 @@ func sessionKey(tenantID, sessionID string) session.Key {
 	return session.Key{AppName: "worker_v1_" + hex.EncodeToString(sum[:]), UserID: "session", SessionID: sessionID}
 }
 func newOverlay(tenantID, sessionID string, accepted []byte, capacity int) (*overlay, error) {
+	return newOverlayState(tenantID, sessionID, accepted, capacity, false)
+}
+func newOverlayState(tenantID, sessionID string, accepted []byte, capacity int, allowSummary bool) (*overlay, error) {
 	if tenantID == "" || sessionID == "" || capacity <= 0 {
 		return nil, ErrSnapshot
 	}
@@ -62,7 +66,7 @@ func newOverlay(tenantID, sessionID string, accepted []byte, capacity int) (*ove
 			return nil, ErrSnapshot
 		}
 		s.stored = value.Session
-		if keyFromSession(s.stored) != key || len(s.stored.Summaries) > 0 {
+		if keyFromSession(s.stored) != key || (!allowSummary && len(s.stored.Summaries) > 0) {
 			return nil, ErrSnapshot
 		}
 	}
@@ -108,6 +112,17 @@ func (s *overlay) Snapshot() ([]byte, error) {
 	defer s.mu.Unlock()
 	if s.sticky != nil {
 		return nil, s.sticky
+	}
+	if s.summary != nil {
+		if s.summary.closed {
+			return nil, s.fail(ErrSummaryClosed)
+		}
+		// Snapshot has no context: never wait on a network-bound summary job
+		// or export a candidate that omits its pending result. Poisoning the
+		// Attempt also prevents a late model response from being imported.
+		if len(s.summary.gate) != 0 {
+			return nil, s.fail(ErrSummaryInProgress)
+		}
 	}
 	return s.encoded()
 }
@@ -247,16 +262,5 @@ func (s *overlay) ListUserStates(ctx context.Context, key session.UserKey) (sess
 	}
 	return session.StateMap{}, nil
 }
-
-// Runner always offers summary jobs after some events. These no-op methods
-// explicitly disable all derived background work rather than enqueueing it.
-func (*overlay) CreateSessionSummary(context.Context, *session.Session, string, bool) error {
-	return nil
-}
-func (*overlay) EnqueueSummaryJob(context.Context, *session.Session, string, bool) error { return nil }
-func (*overlay) GetSessionSummaryText(context.Context, *session.Session, ...session.SummaryOption) (string, bool) {
-	return "", false
-}
-func (*overlay) Close() error { return nil }
 
 var _ session.Service = (*overlay)(nil)

@@ -53,12 +53,14 @@ type ToolAuthConfig struct {
 	Kind domain.AuthKind `json:"kind"`
 }
 type KnowledgeConfig struct {
-	Kind       domain.KnowledgeKind `json:"kind"`
-	Host       string               `json:"host"`
-	Port       int64                `json:"port"`
-	TLS        bool                 `json:"tls"`
-	Collection string               `json:"collection"`
-	Embedding  EmbeddingConfig      `json:"embedding"`
+	BackendID       string               `json:"backend_id,omitempty"`
+	BackendRevision uint64               `json:"backend_revision,omitempty"`
+	Kind            domain.KnowledgeKind `json:"kind"`
+	Host            string               `json:"host"`
+	Port            int64                `json:"port"`
+	TLS             bool                 `json:"tls"`
+	Collection      string               `json:"collection"`
+	Embedding       EmbeddingConfig      `json:"embedding"`
 }
 type EmbeddingConfig struct {
 	Model      string `json:"model"`
@@ -66,8 +68,10 @@ type EmbeddingConfig struct {
 	Dimensions int64  `json:"dimensions"`
 }
 type StorageConfig struct {
-	Kind        domain.StorageKind         `json:"kind"`
-	Destination *domain.StorageDestination `json:"destination,omitempty"`
+	BackendID       string                     `json:"backend_id,omitempty"`
+	BackendRevision uint64                     `json:"backend_revision,omitempty"`
+	Kind            domain.StorageKind         `json:"kind"`
+	Destination     *domain.StorageDestination `json:"destination,omitempty"`
 }
 
 var resourceName = regexp.MustCompile("^[a-z][a-z0-9_-]{0,63}$")
@@ -78,6 +82,9 @@ func DecodeProfileWrite(data []byte) (ProfileWrite, error) {
 	var input ProfileWrite
 	if err := decodeCredentialJSON(data, &input); err != nil {
 		return ProfileWrite{}, err
+	}
+	if !managedWireFields(data) {
+		return ProfileWrite{}, domain.ErrCredentialInput
 	}
 	if err := input.validate(); err != nil {
 		return ProfileWrite{}, err
@@ -206,11 +213,25 @@ func (w ProfileWrite) validate() error {
 		}
 	}
 	for _, knowledge := range w.Config.Knowledge {
+		if knowledge.Kind == domain.KnowledgeKindManaged {
+			if knowledge.BackendID == "" || knowledge.BackendRevision == 0 || knowledge.Host != "" || knowledge.Port != 0 || knowledge.TLS || knowledge.Collection != "" {
+				return domain.ErrCredentialInput
+			}
+		} else if knowledge.BackendID != "" || knowledge.BackendRevision != 0 {
+			return domain.ErrCredentialInput
+		}
 		if strings.ContainsAny(knowledge.Host, "@/?#") || !nonSecretEndpoint(knowledge.Embedding.BaseURL) {
 			return domain.ErrCredentialInput
 		}
 	}
-	for _, storage := range w.Config.Storage {
+	for name, storage := range w.Config.Storage {
+		if storage.Kind.Managed() {
+			if name != storage.Kind.Role() || storage.BackendID == "" || storage.BackendRevision == 0 || storage.Destination != nil {
+				return domain.ErrCredentialInput
+			}
+		} else if storage.BackendID != "" || storage.BackendRevision != 0 {
+			return domain.ErrCredentialInput
+		}
 		if storage.Destination != nil && strings.ContainsAny(storage.Destination.Host, "@/?#") {
 			return domain.ErrCredentialInput
 		}
@@ -297,10 +318,10 @@ func (c ProfileConfig) acceptsPurpose(category, name, purpose string, clearing b
 		return ok && purpose == "bearer_token" && (r.Auth.Kind == domain.AuthKindBearer || clearing)
 	case "knowledge":
 		_, ok := c.Knowledge[name]
-		return ok && (purpose == "qdrant_api_key" || purpose == "embedding_api_key")
+		return ok && (purpose == "embedding_api_key" || purpose == "qdrant_api_key")
 	case "storage":
-		_, ok := c.Storage[name]
-		return ok && purpose == "dsn"
+		r, ok := c.Storage[name]
+		return ok && ((r.Kind == domain.StorageKindManagedArtifact && (purpose == "access_key_id" || purpose == "secret_access_key")) || (!r.Kind.Managed() && purpose == "dsn") || ((r.Kind == domain.StorageKindManagedMemory || r.Kind == domain.StorageKindManagedSession) && purpose == "dsn_password"))
 	}
 	return false
 }

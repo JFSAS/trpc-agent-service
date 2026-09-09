@@ -48,6 +48,15 @@ func (l *Ledger) Claim(ctx context.Context, req domain.ClaimRequest) (grant doma
 	if r.Status == domain.Succeeded || r.Status == domain.Failed || r.Sequence != settled+1 {
 		return domain.Grant{}, domain.ErrNotReady
 	}
+	// Complete has accepted the prior Session snapshot, but its Memory result
+	// is not visible until this same-session local gate is finalized.
+	var memoryPending bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM execution_completions c JOIN execution_runs prior ON prior.tenant_id=c.tenant_id AND prior.run_id=c.run_id WHERE prior.tenant_id=$1 AND prior.session_id=$2 AND c.memory_status='PENDING')`, req.TenantID, r.SessionID).Scan(&memoryPending); err != nil {
+		return domain.Grant{}, err
+	}
+	if memoryPending {
+		return domain.Grant{}, domain.ErrNotReady
+	}
 	if r.WaitReason == "INVALID_CLOCK" || !now.Before(r.RunDeadline) || (r.ExecutionDeadline != nil && !now.Before(*r.ExecutionDeadline)) || r.Attempts >= r.Policy.MaxAttempts {
 		return domain.Grant{}, domain.ErrNotReady
 	}

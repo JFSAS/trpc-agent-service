@@ -15,7 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	protocol "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/artifactstore"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/knowledgestore"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/trpcagent"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/application"
@@ -27,8 +32,9 @@ import (
 var ErrAlreadyPrepared = errors.New("attempt credential initialization already started")
 
 type Options struct {
-	Tracer  trace.Tracer
-	BaseURL string
+	ArtifactPool *pgxpool.Pool
+	Tracer       trace.Tracer
+	BaseURL      string
 	// Client is a borrowed mTLS client configured by bootstrap with trust roots
 	// and the Workload certificate. The factory never closes the shared transport.
 	Client                *http.Client
@@ -40,11 +46,14 @@ type Options struct {
 	Observer              application.Observer
 }
 type Factory struct {
-	options   Options
-	client    *http.Client
-	mu        sync.Mutex
-	started   map[attemptKey]time.Time
-	openStore func(context.Context, string, sessionstore.Target, int) (candidateStore, error)
+	openRedisSession func(context.Context, sessionstore.RedisTarget, string, int) (candidateStore, error)
+	options          Options
+	client           *http.Client
+	mu               sync.Mutex
+	started          map[attemptKey]time.Time
+	openRedisMemory  func(context.Context, memorystore.RedisTarget, string, int) (memoryStore, error)
+	openMemory       func(context.Context, string, memorystore.Target, int) (memoryStore, error)
+	openStore        func(context.Context, string, sessionstore.Target, int) (candidateStore, error)
 }
 type attemptKey struct {
 	TenantID, RunID, AttemptID string
@@ -68,6 +77,15 @@ func New(o Options) (*Factory, error) {
 	f.openStore = func(ctx context.Context, dsn string, t sessionstore.Target, capacity int) (candidateStore, error) {
 		return sessionstore.Open(ctx, dsn, t, capacity)
 	}
+	f.openMemory = func(ctx context.Context, dsn string, target memorystore.Target, capacity int) (memoryStore, error) {
+		return memorystore.Open(ctx, dsn, target, capacity)
+	}
+	f.openRedisMemory = func(ctx context.Context, target memorystore.RedisTarget, password string, capacity int) (memoryStore, error) {
+		return memorystore.OpenRedis(ctx, target, password, capacity)
+	}
+	f.openRedisSession = func(ctx context.Context, target sessionstore.RedisTarget, password string, capacity int) (candidateStore, error) {
+		return sessionstore.OpenRedis(ctx, target, password, capacity)
+	}
 	return f, nil
 }
 
@@ -76,6 +94,30 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	defer func() { telemetrytrace.End(span, resultErr) }()
 	if check == nil || g.Run.ExecutionDeadline == nil || g.Token == "" || g.AttemptID == "" || g.WorkerID == "" || g.LeaseEpoch <= 0 || p.TenantID != g.Run.Request.Route.TenantID || p.ManifestID != g.Run.Request.Route.ManifestRef || p.ManifestDigest != g.Run.Request.Route.ManifestDigest || p.DeploymentRevisionID != g.Run.Request.Route.DeploymentRevisionID || p.ProfileID == "" || p.ProfileRevision <= 0 {
 		return nil, application.ErrManifestInvalid
+	}
+	if p.Knowledge != nil {
+		fixed := *p.Knowledge
+		fixed.Backend = fixed.Backend.Clone()
+		p.Knowledge = &fixed
+	}
+	if p.Artifact != nil {
+		fixed := *p.Artifact
+		fixed.Backend = fixed.Backend.Clone()
+		p.Artifact = &fixed
+	}
+	if p.SessionBackend != nil {
+		fixed := p.SessionBackend.Clone()
+		p.SessionBackend = &fixed
+	}
+	if p.Memory != nil {
+		fixed := *p.Memory
+		fixed.Backend = fixed.Backend.Clone()
+		fixed.Tools = append([]string(nil), fixed.Tools...)
+		p.Memory = &fixed
+	}
+	if p.Summary != nil {
+		fixed := *p.Summary
+		p.Summary = &fixed
 	}
 	if err := check(ctx); err != nil {
 		return nil, err
@@ -105,20 +147,14 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 	if err = check(ctx); err != nil {
 		return nil, err
 	}
-	t := p.SessionTarget
 	storeStart := time.Now()
 	ctx, openSpan := telemetrytrace.Start(f.options.Tracer, ctx, "worker.session.open")
 	defer func() { telemetrytrace.End(openSpan, resultErr) }()
-	target := sessionstore.Target{Host: t.Host, Port: t.Port, Database: t.Database, Username: t.Username, SSLMode: t.SSLMode}
-	// Control stores only the DSN password. The published destination, never the
-	// credential value, determines the Session connection target.
-	dsn, err := sessionstore.CredentialDSN(target, batch[p.SessionCredential])
-	if err != nil {
-		mapped := storeError(ctx, err)
-		f.observe(ctx, "session_open", g, storeStart, mapped)
-		return nil, mapped
+	capacity := f.options.SnapshotCapacityBytes
+	if p.SessionBackend != nil && int64(capacity) > p.SessionBackend.Limits.MaxBytes {
+		capacity = int(p.SessionBackend.Limits.MaxBytes)
 	}
-	store, err := f.openStore(ctx, dsn, target, f.options.SnapshotCapacityBytes)
+	store, err := f.prepareSession(ctx, p, batch[p.SessionCredential], capacity)
 	if err != nil {
 		mapped := storeError(ctx, err)
 		stage, _, _ := sessionstore.OpenFailure(err)
@@ -126,7 +162,44 @@ func (f *Factory) Prepare(ctx context.Context, g domain.Grant, p domain.Plan, ch
 		return nil, mapped
 	}
 	f.observe(ctx, "session_open", g, storeStart, nil)
-	return &attempt{tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: f.options.SnapshotCapacityBytes, DrainTimeout: f.options.DrainTimeout}, capacity: f.options.SnapshotCapacityBytes}, nil
+	summaryKey := ""
+	if p.Summary != nil {
+		summaryKey = batch[p.Summary.ModelCredential]
+	}
+	var ms memoryStore
+	if p.Memory != nil {
+		ms, err = f.prepareMemory(ctx, p, batch[p.Memory.Credential])
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+	}
+	var as *artifactstore.Store
+	if p.Artifact != nil {
+		as, err = f.prepareArtifact(ctx, g, p, batch)
+		if err != nil {
+			store.Close()
+			if ms != nil {
+				ms.Close()
+			}
+			return nil, err
+		}
+	}
+	var ks *knowledgestore.Store
+	if p.Knowledge != nil {
+		ks, err = f.prepareKnowledge(ctx, p, batch)
+		if err != nil {
+			store.Close()
+			if ms != nil {
+				ms.Close()
+			}
+			if as != nil {
+				as.Close()
+			}
+			return nil, err
+		}
+	}
+	return &attempt{knowledgeStore: ks, artifactStore: as, memoryStore: ms, summaryKey: summaryKey, tracer: f.options.Tracer, grant: g, plan: p, store: store, check: check, modelKey: batch[p.ModelCredential], executor: trpcagent.Executor{Tracer: f.options.Tracer, CapacityBytes: capacity, DrainTimeout: f.options.DrainTimeout}, capacity: capacity}, nil
 }
 func (f *Factory) observe(ctx context.Context, operation string, g domain.Grant, start time.Time, err error, stages ...string) {
 	if f.options.Observer != nil {
@@ -163,25 +236,49 @@ func (f *Factory) start(g domain.Grant) error {
 }
 
 func requiredUses(p domain.Plan) ([]domain.CredentialUse, error) {
-	if p.SessionCredential.CredentialID == "" || p.SessionCredential.Purpose != "dsn" {
+	if err := validateKnowledgePlan(p); err != nil {
+		return nil, err
+	}
+	if err := validateArtifactPlan(p); err != nil {
+		return nil, err
+	}
+	if err := validateSessionPlan(p); err != nil {
+		return nil, err
+	}
+	validModelUse := func(use domain.CredentialUse) bool {
+		if use.CredentialID == "" {
+			return use.Purpose == "" && use.AudienceDigest == ""
+		}
+		return use.Purpose == "api_key" && domain.DigestValid(use.AudienceDigest)
+	}
+	if !validModelUse(p.ModelCredential) {
 		return nil, application.ErrManifestInvalid
 	}
-	uses := []domain.CredentialUse{}
-	if p.ModelCredential.CredentialID != "" {
-		if p.ModelCredential.Purpose != "api_key" {
+	if p.Summary != nil {
+		summary := p.Summary
+		endpoint, err := url.Parse(summary.ModelEndpoint)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(summary.ModelEndpoint, "#") || strings.TrimSpace(summary.ModelName) == "" || summary.EventThreshold < 1 || summary.EventThreshold > 9007199254740991 || int64(int(summary.EventThreshold)) != summary.EventThreshold || !validModelUse(summary.ModelCredential) {
 			return nil, application.ErrManifestInvalid
 		}
-		uses = append(uses, p.ModelCredential)
-	} else if p.ModelCredential.Purpose != "" || p.ModelCredential.AudienceDigest != "" {
-		return nil, application.ErrManifestInvalid
+		if summary.ModelCredential.CredentialID != "" && summary.ModelCredential.AudienceDigest != protocol.CredentialAudienceDigest("openai_compatible", summary.ModelEndpoint) {
+			return nil, application.ErrManifestInvalid
+		}
 	}
-	uses = append(uses, p.SessionCredential)
-	seen := map[domain.CredentialUse]bool{}
+	if p.Memory != nil {
+		if err := validateMemoryPlan(p); err != nil {
+			return nil, err
+		}
+	}
+	uses := p.Uses()
+	seen := map[string]domain.CredentialUse{}
 	for _, use := range uses {
-		if !domain.DigestValid(use.AudienceDigest) || seen[use] {
+		if !domain.DigestValid(use.AudienceDigest) {
 			return nil, application.ErrManifestInvalid
 		}
-		seen[use] = true
+		if previous, ok := seen[use.CredentialID]; ok && previous != use {
+			return nil, application.ErrManifestInvalid
+		}
+		seen[use.CredentialID] = use
 	}
 	return uses, nil
 }
@@ -298,7 +395,7 @@ func storeError(ctx context.Context, err error) error {
 		return application.ErrSessionPreparation
 	case errors.Is(err, sessionstore.ErrIdentity):
 		return application.ErrCredentialDenied
-	case errors.Is(err, sessionstore.ErrCorrupt), errors.Is(err, sessionstore.ErrConflict), errors.Is(err, sessionstore.ErrCapacity):
+	case errors.Is(err, sessionstore.ErrNotFound), errors.Is(err, sessionstore.ErrCorrupt), errors.Is(err, sessionstore.ErrConflict), errors.Is(err, sessionstore.ErrCapacity):
 		return application.ErrSessionInvalid
 	default:
 		return application.ErrDependency

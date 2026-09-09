@@ -131,6 +131,7 @@ func integerValue(value any) (int64, bool) {
 // encoding/json's int64 decoder, which otherwise rejects valid values such as
 // 3.0. Only fields declared as integer in AgentSpec V1 are rewritten.
 func normalizeIntegerLexemes(root map[string]any) {
+	normalizeDataIntegers(root)
 	nodes, _ := root["nodes"].(map[string]any)
 	for _, value := range nodes {
 		node, _ := value.(map[string]any)

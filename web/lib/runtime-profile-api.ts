@@ -31,6 +31,8 @@ export type ToolConfig = {
 };
 export type KnowledgeConfig = {
   kind?: string;
+  backend_id?: string;
+  backend_revision?: number;
   host?: string;
   port?: number;
   tls?: boolean;
@@ -44,7 +46,7 @@ export type StorageDestination = {
   username?: string;
   sslmode?: string;
 };
-export type StorageConfig = { kind?: string; destination?: StorageDestination };
+export type StorageConfig = { kind?: string; backend_id?: string; backend_revision?: number; destination?: StorageDestination };
 export type ProfileConfig = {
   models: Record<string, ModelConfig>;
   tools: Record<string, ToolConfig>;

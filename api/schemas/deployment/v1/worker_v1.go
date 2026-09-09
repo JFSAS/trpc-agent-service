@@ -31,6 +31,15 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion || (expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest) {
 		return reject("contract identity")
 	}
+	// Summary and explicitly declared PostgreSQL/Redis Memory are executable.
+	if c.Runtime != nil && (c.Runtime.Summary == nil || c.Runtime.Summary.Validate() != nil) {
+		return reject("invalid session summary configuration")
+	}
+	for _, node := range c.AgentPlan.Nodes {
+		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
+			return reject("summary consumption requires enabled runtime summary")
+		}
+	}
 	if c.Execution.Backend != "worker-process-v1" || c.Execution.MaxRunSeconds <= 0 || c.Execution.MaxOutputTokens <= 0 {
 		return reject("execution policy")
 	}
@@ -38,52 +47,208 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	if !ok || len(c.AgentPlan.Nodes) != 1 || node.Kind != "llm" || len(node.Children) > 0 || node.Body != "" || node.MaxIterations != 0 {
 		return reject("exactly one llm root is required")
 	}
-	if len(node.ToolResources)+len(node.KnowledgeResources)+len(node.CallableEntries) > 0 || len(c.Resources.Tools)+len(c.Resources.Knowledge)+len(c.ResolvedRequirements.Tools)+len(c.ResolvedRequirements.Knowledge) > 0 {
-		return reject("tools, knowledge and callable entries are deferred")
+	if len(node.ToolResources) > 0 || len(c.Resources.Tools) > 0 || len(c.ResolvedRequirements.Tools) > 0 {
+		return reject("external tools are deferred")
 	}
-	model, ok := c.Resources.Models[node.ModelResource]
-	if !ok || len(c.Resources.Models) != 1 || len(c.ResolvedRequirements.Models) != 1 {
+	// V1 binds one SDK Knowledge service. Reject multiple references explicitly;
+	// never silently pick the first resource or search an undeclared namespace.
+	if len(node.KnowledgeResources) > 1 || len(c.Resources.Knowledge) != len(node.KnowledgeResources) || len(c.ResolvedRequirements.Knowledge) != len(node.KnowledgeResources) || len(node.CallableEntries) != len(node.KnowledgeResources) {
+		return reject("single explicit knowledge resource closure")
+	}
+	if len(node.KnowledgeResources) == 1 {
+		key := node.KnowledgeResources[0]
+		if node.CallableEntries[0] != "knowledge/"+key {
+			return reject("knowledge callable authority")
+		}
+		for _, bound := range c.ResolvedRequirements.Knowledge {
+			if bound != key {
+				return reject("knowledge requirement binding")
+			}
+		}
+	}
+
+	selectedModels := map[string]bool{node.ModelResource: true}
+	if c.Runtime != nil {
+		selectedModels[c.Runtime.Summary.ModelResource] = true
+	}
+	if len(c.Resources.Models) != len(selectedModels) || len(c.ResolvedRequirements.Models) != len(selectedModels) {
 		return reject("model closure")
 	}
-	for _, resourceKey := range c.ResolvedRequirements.Models {
-		if resourceKey != node.ModelResource {
+	bindings := map[string]bool{}
+	for _, key := range c.ResolvedRequirements.Models {
+		if !selectedModels[key] || bindings[key] {
 			return reject("model requirement binding")
 		}
+		bindings[key] = true
 	}
 	if node.Generation != nil && node.Generation.MaxOutputTokens != nil && *node.Generation.MaxOutputTokens > c.Execution.MaxOutputTokens {
 		return reject("generation exceeds fixed single-output policy")
 	}
-	if model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
-		return reject("model adapter")
-	}
 	sessionKey, ok := c.StorageRoles["session"]
 	session, exists := c.Resources.Storage[sessionKey]
-	if !ok || !exists || len(c.StorageRoles) != 1 || len(c.Resources.Storage) != 1 {
-		return reject("session-only storage is required; memory is deferred")
+	storageCount := 1
+	if node.Artifact != nil {
+		storageCount++
 	}
-	if session.Kind != "postgres_state" || session.AdapterVersion != "postgres-state-v1" || session.Credential.Purpose != "dsn" {
+	if node.Memory != nil {
+		storageCount++
+	}
+	if !ok || !exists || len(c.StorageRoles) != storageCount || len(c.Resources.Storage) != storageCount {
+		return reject("storage must equal explicit data capability closure")
+	}
+	expectedHosts := []string{}
+	switch session.Kind {
+	case "postgres_state":
+		if session.AdapterVersion != "postgres-state-v1" || session.Credential.Purpose != "dsn" {
+			return reject("session adapter")
+		}
+		if session.Destination.Username != WorkerV1SessionRuntimeRole {
+			return ErrWorkerV1SessionRuntimeRole
+		}
+		if session.Credential.CredentialID == "" || session.Credential.AudienceDigest != CredentialAudienceDigest(session.Kind, session.Destination) {
+			return reject("credential audience does not match fixed destination")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(session.Destination.Host))
+	case "managed_session":
+		b := session.Backend
+		if sessionKey != "session" || session.AdapterVersion != "managed-session-v1" || b == nil || b.ValidateForRole("session") != nil || b.TenantID != c.TenantID || b.Kind != "redis" {
+			return reject("fixed managed Redis session backend")
+		}
+		if b.Redis.Username != WorkerV1SessionRuntimeRole {
+			return ErrWorkerV1SessionRuntimeRole
+		}
+		d, err := b.Digest()
+		if err != nil || session.Credential.CredentialID == "" || session.Credential.Purpose != "dsn_password" || session.Credential.AudienceDigest != d {
+			return reject("managed session credential audience")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(b.Redis.Host))
+	default:
 		return reject("session adapter")
 	}
-	if session.Destination.Username != WorkerV1SessionRuntimeRole {
-		return ErrWorkerV1SessionRuntimeRole
+	credentials := map[string]CredentialUse{session.Credential.CredentialID: session.Credential}
+	if node.Memory != nil {
+		m := node.Memory
+		if m.Validate() != nil || c.Execution.MaxToolCalls < 1 || c.Sources.Agent.AgentID == "" {
+			return reject("invalid memory configuration")
+		}
+		key, ok := c.StorageRoles["memory"]
+		resource, exists := c.Resources.Storage[key]
+		if !ok || !exists || key != m.Resource || key == sessionKey || resource.Kind != "managed_memory" || resource.AdapterVersion != "managed-memory-v1" || resource.Backend == nil {
+			return reject("memory adapter binding")
+		}
+		backend := resource.Backend
+		d, err := backend.Digest()
+		if err != nil || backend.ValidateForRole("memory") != nil || backend.TenantID != c.TenantID {
+			return reject("fixed memory backend")
+		}
+		if (backend.Kind == "postgresql" && backend.PostgreSQL.Username != "memory_runtime") || (backend.Kind == "redis" && backend.Redis.Username != "memory_runtime") {
+			return reject("fixed memory runtime identity")
+		}
+		u := resource.Credential
+		if u.CredentialID == "" || u.Purpose != "dsn_password" || u.AudienceDigest != d {
+			return reject("memory credential audience")
+		}
+		if prior, ok := credentials[u.CredentialID]; ok && prior != u {
+			return reject("credential closure")
+		}
+		credentials[u.CredentialID] = u
+		host, err := backend.EndpointHost()
+		if err != nil {
+			return reject("memory endpoint")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
-	endpoint, err := url.Parse(model.BaseURL)
-	if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(model.BaseURL, "#") || endpoint.Hostname() == "" || !slices.Contains(c.Execution.AllowedEndpointHosts, strings.ToLower(endpoint.Hostname())) || !slices.Contains(c.Execution.AllowedEndpointHosts, strings.ToLower(session.Destination.Host)) {
-		return reject("fixed endpoint closure")
+	if node.Artifact != nil {
+		a := node.Artifact
+		if a.Validate() != nil || c.Execution.MaxToolCalls < 1 {
+			return reject("invalid artifact configuration")
+		}
+		key, ok := c.StorageRoles["artifact"]
+		resource, exists := c.Resources.Storage[key]
+		if !ok || !exists || key != a.Resource || key != "artifact" || resource.Kind != "managed_artifact" || resource.AdapterVersion != "managed-artifact-v1" || resource.MetadataContract != ArtifactMetadataContract || resource.Backend == nil || resource.Credentials == nil || resource.Credential != (CredentialUse{}) {
+			return reject("artifact adapter binding")
+		}
+		b := resource.Backend
+		d, err := b.Digest()
+		if err != nil || b.ValidateForRole("artifact") != nil || b.TenantID != c.TenantID {
+			return reject("fixed artifact backend")
+		}
+		for purpose, u := range map[string]CredentialUse{"access_key_id": resource.Credentials.AccessKeyID, "secret_access_key": resource.Credentials.SecretAccessKey} {
+			if u.CredentialID == "" || u.Purpose != purpose || u.AudienceDigest != d {
+				return reject("artifact credential audience")
+			}
+			if prior, ok := credentials[u.CredentialID]; ok && prior != u {
+				return reject("credential closure")
+			}
+			credentials[u.CredentialID] = u
+		}
+		host, err := b.EndpointHost()
+		if err != nil {
+			return reject("artifact endpoint")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(host))
 	}
-	expectedHosts := []string{strings.ToLower(endpoint.Hostname()), strings.ToLower(session.Destination.Host)}
+	if len(node.KnowledgeResources) == 1 {
+		key := node.KnowledgeResources[0]
+		r, exists := c.Resources.Knowledge[key]
+		if !exists || r.Kind != "managed_knowledge" || r.AdapterVersion != "managed-knowledge-v1" || r.Capability != "knowledge.search" || r.Backend == nil || r.Credential == nil || c.Execution.MaxToolCalls < 1 {
+			return reject("knowledge adapter")
+		}
+		b := r.Backend
+		d, err := b.Digest()
+		if err != nil || b.TenantID != c.TenantID || b.ValidateForRole("knowledge") != nil || r.Embedding.Dimensions != b.Qdrant.Dimensions || strings.TrimSpace(r.Embedding.Model) == "" {
+			return reject("fixed knowledge backend")
+		}
+		u := *r.Credential
+		if u.CredentialID == "" || u.Purpose != "qdrant_api_key" || u.AudienceDigest != d {
+			return reject("knowledge credential audience")
+		}
+		if prior, ok := credentials[u.CredentialID]; ok && prior != u {
+			return reject("credential closure")
+		}
+		credentials[u.CredentialID] = u
+		e := r.Embedding
+		ep, err := url.Parse(e.BaseURL)
+		if err != nil || (ep.Scheme != "http" && ep.Scheme != "https") || ep.Hostname() == "" || ep.User != nil || ep.RawQuery != "" || ep.ForceQuery || strings.Contains(e.BaseURL, "#") || e.Credential.CredentialID == "" || e.Credential.Purpose != "embedding_api_key" || e.Credential.AudienceDigest != CredentialAudienceDigest(r.Kind, e.BaseURL) {
+			return reject("fixed embedding resource")
+		}
+		if prior, ok := credentials[e.Credential.CredentialID]; ok && prior != e.Credential {
+			return reject("credential closure")
+		}
+		credentials[e.Credential.CredentialID] = e.Credential
+		host, err := b.EndpointHost()
+		if err != nil {
+			return reject("knowledge endpoint")
+		}
+		expectedHosts = append(expectedHosts, strings.ToLower(host), strings.ToLower(ep.Hostname()))
+	}
+	for key := range selectedModels {
+		model, exists := c.Resources.Models[key]
+		if !exists || model.Kind != "openai_compatible" || model.AdapterVersion != "openai-compatible-v1" || model.Credential.CredentialID == "" || model.Credential.Purpose != "api_key" || !slices.Contains(model.Capabilities, "chat") {
+			return reject("model adapter")
+		}
+		if key == node.ModelResource && ((node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(node.KnowledgeResources) > 0) && !slices.Contains(model.Capabilities, "tool_call") {
+			return reject("data tools require model tool_call capability")
+		}
+		endpoint, err := url.Parse(model.BaseURL)
+		if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || strings.Contains(model.BaseURL, "#") || endpoint.Hostname() == "" {
+			return reject("fixed endpoint closure")
+		}
+		if model.Credential.AudienceDigest != CredentialAudienceDigest(model.Kind, model.BaseURL) {
+			return reject("credential audience does not match fixed destination")
+		}
+		if prior, ok := credentials[model.Credential.CredentialID]; ok && prior != model.Credential {
+			return reject("credential closure")
+		}
+		credentials[model.Credential.CredentialID] = model.Credential
+		expectedHosts = append(expectedHosts, strings.ToLower(endpoint.Hostname()))
+	}
 	slices.Sort(expectedHosts)
 	expectedHosts = slices.Compact(expectedHosts)
 	actualHosts := append([]string(nil), c.Execution.AllowedEndpointHosts...)
 	slices.Sort(actualHosts)
 	if !slices.Equal(actualHosts, expectedHosts) {
 		return reject("endpoint set must equal selected resource closure")
-	}
-	if model.Credential.AudienceDigest != CredentialAudienceDigest(model.Kind, model.BaseURL) || session.Credential.AudienceDigest != CredentialAudienceDigest(session.Kind, session.Destination) {
-		return reject("credential audience does not match fixed destination")
-	}
-	if model.Credential.CredentialID == session.Credential.CredentialID {
-		return reject("credential closure")
 	}
 	return nil
 }

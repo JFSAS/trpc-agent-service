@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/platformbackend"
+	backendconfig "github.com/liuzengh/trpc-agent-service/services/control-api/internal/platformbackend/adapter/outbound/configfile"
 	"net/http"
 	"time"
 
@@ -62,6 +64,14 @@ func New(ctx context.Context, config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	backendCatalog, err := backendconfig.Load(config.PlatformBackendCatalogFile, config.PlatformBackendCatalogSHA256)
+	if err != nil {
+		return nil, fmt.Errorf("load platform backend catalog: %w", err)
+	}
+	backendTargets, err := backendconfig.LoadRuntime(config.PlatformBackendTargetsFile, config.PlatformBackendTargetsSHA256, backendCatalog)
+	if err != nil {
+		return nil, fmt.Errorf("load platform backend targets: %w", err)
+	}
 	pool, err := openDatabase(ctx, config)
 	if err != nil {
 		return nil, err
@@ -100,6 +110,10 @@ func New(ctx context.Context, config Config) (*App, error) {
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("assemble tenant: %w", err)
+	}
+	if _, err := platformbackend.NewModule(platformbackend.Dependencies{Routes: router, Authenticate: identityModule.AuthenticationMiddleware(), TenantAccess: activeTenantMemberLookup{tenants: tenantModule.Service}, Catalog: backendCatalog}); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("assemble backend directory: %w", err)
 	}
 	if err := ensureInitialPlatformOperator(ctx, pool, config); err != nil {
 		pool.Close()
@@ -140,7 +154,9 @@ func New(ctx context.Context, config Config) (*App, error) {
 		runtimeRouter.Use(gin.RecoveryWithWriter(nil))
 	}
 	runtimeProfileModule, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
-		ExecutionVerifier: executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
+		ManagedCredentialTargets: deploymentBackendAccess{targets: backendTargets, tenants: activeTenantMemberLookup{tenants: tenantModule.Service}},
+		Backends:                 profileBackendAccess{catalog: backendCatalog},
+		ExecutionVerifier:        executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
 		DB: pool, Routes: router,
 		Authenticate:  identityModule.AuthenticationMiddleware(),
 		CredentialKey: config.ProfileCredentialKey,
@@ -151,7 +167,26 @@ func New(ctx context.Context, config Config) (*App, error) {
 		pool.Close()
 		return nil, fmt.Errorf("assemble runtime profile: %w", err)
 	}
+	var knowledgeBackend deploymentapp.KnowledgeBackend
+	if config.Runtime != nil {
+		knowledgeBackend, err = config.Runtime.knowledgeClient()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+	}
+	var artifactBackend deploymentapp.ArtifactBackend
+	if config.Runtime != nil {
+		artifactBackend, err = config.Runtime.artifactClient()
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+	}
 	deploymentModule, err := deployment.NewModule(deployment.Dependencies{
+		ManagedBackends: deploymentBackendAccess{targets: backendTargets, tenants: activeTenantMemberLookup{tenants: tenantModule.Service}},
+		ArtifactBackend: artifactBackend, ArtifactCredentials: runtimeProfileModule.Service,
+		KnowledgeBackend: knowledgeBackend, KnowledgeCredentials: runtimeProfileModule.Service,
 		DB: pool, Routes: router,
 		Authenticate:       identityModule.AuthenticationMiddleware(),
 		TenantAccess:       activeTenantMemberLookup{tenants: tenantModule.Service},
@@ -270,17 +305,19 @@ func New(ctx context.Context, config Config) (*App, error) {
 
 func deploymentPlatformContract(config Config) (deploymentdomain.PlatformExecutionContract, error) {
 	contract := deploymentdomain.WorkerV1PlatformExecutionContract()
+	if err := bindManagedCatalogDigest(config, &contract); err != nil {
+		return deploymentdomain.PlatformExecutionContract{}, err
+	}
 	if len(config.DeploymentAllowedEndpointHosts) > 0 {
 		contract.Execution.AllowedEndpointHosts = append(
 			[]string(nil), config.DeploymentAllowedEndpointHosts...,
 		)
-		digest, err := contract.CalculateDigest()
-		if err != nil {
-			return deploymentdomain.PlatformExecutionContract{}, fmt.Errorf(
-				"calculate deployment platform contract digest: %w", err,
-			)
-		}
-		contract.Digest = digest
+
+	}
+	digest, err := contract.CalculateDigest()
+	contract.Digest = digest
+	if err != nil {
+		return deploymentdomain.PlatformExecutionContract{}, err
 	}
 	if err := contract.Validate(); err != nil {
 		return deploymentdomain.PlatformExecutionContract{}, fmt.Errorf(

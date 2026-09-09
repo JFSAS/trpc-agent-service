@@ -31,19 +31,23 @@ type FinalVerifier interface {
 	VerifyFinal(context.Context, proof.FinalRequest) (proof.FinalResponse, error)
 }
 type Options struct {
+	Knowledge                            KnowledgeImporter
+	Artifacts                            ArtifactOperator
 	Tracer                               trace.Tracer
 	ControlPrincipals, GatewayPrincipals []string
 	Timeout                              time.Duration
 	MaxConcurrent                        int
 }
 type Handler struct {
-	tracer           trace.Tracer
-	attempts         AttemptVerifier
-	finals           FinalVerifier
-	control, gateway map[string]bool
-	timeout          time.Duration
-	slots            chan struct{}
-	mux              *http.ServeMux
+	knowledgeImporter KnowledgeImporter
+	artifacts         ArtifactOperator
+	tracer            trace.Tracer
+	attempts          AttemptVerifier
+	finals            FinalVerifier
+	control, gateway  map[string]bool
+	timeout           time.Duration
+	slots             chan struct{}
+	mux               *http.ServeMux
 }
 
 func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, error) {
@@ -72,9 +76,15 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 			return nil, errors.New("Control and Gateway proof identities must be distinct")
 		}
 	}
-	h := &Handler{tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
+	h := &Handler{knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST "+proof.AttemptVerifyPath, h.attempt)
 	h.mux.HandleFunc("POST "+proof.FinalVerifyPath, h.final)
+	if o.Artifacts != nil {
+		h.mux.HandleFunc("POST "+proof.ArtifactPath, h.artifact)
+	}
+	if o.Knowledge != nil {
+		h.mux.HandleFunc("POST "+proof.KnowledgePath, h.knowledge)
+	}
 	return h, nil
 }
 func principals(values []string) (map[string]bool, error) {

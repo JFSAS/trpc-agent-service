@@ -27,7 +27,7 @@ const categories: { key: ResourceCategory; label: string; purposes: Purpose[] }[
   { key: "models", label: "Models", purposes: ["api_key"] },
   { key: "tools", label: "Tools", purposes: ["bearer_token"] },
   { key: "knowledge", label: "Knowledge", purposes: ["qdrant_api_key", "embedding_api_key"] },
-  { key: "storage", label: "Storage", purposes: ["dsn"] },
+  { key: "storage", label: "Storage", purposes: ["dsn", "dsn_password", "access_key_id", "secret_access_key"] },
 ];
 
 function credentialRows(revision: ProfileRevision): CredentialRow[] {
@@ -61,6 +61,12 @@ function stateLabel(state: CredentialState) {
 
 function resourceLabel(row: CredentialRow) {
   return `${categories.find(({ key }) => key === row.category)?.label} / ${row.resourceName} / ${row.purpose}`;
+}
+
+function replacementLabel(row: CredentialRow) {
+  if (row.purpose === "access_key_id") return "新 S3 Access Key ID";
+  if (row.purpose === "secret_access_key") return "新 S3 Secret Access Key";
+  return row.purpose === "dsn" ? "新 DSN" : row.purpose === "dsn_password" ? `新 ${row.resourceName === "session" ? "Session" : "Memory"} 后端密码` : "新凭证值";
 }
 
 export function ProfileRevisionDetail({ tenantId, profileId, revisionNumber }: { tenantId: string; profileId: string; revisionNumber: number }) {
@@ -255,7 +261,7 @@ export function ProfileRevisionDetail({ tenantId, profileId, revisionNumber }: {
 
     <section className={styles.snapshot} aria-labelledby="profile-snapshot-heading">
       <header className={styles.sectionHeader}><div><h2 id="profile-snapshot-heading"><LockKeyhole size={16} />配置快照</h2><p>Models、Tools、Knowledge、Storage 只读浏览；连接目标变更请返回 Draft 编辑并发布新版本。</p></div></header>
-      <ProfileResourceEditor config={revision.config} credentials={{}} credentialStates={revision.credential_states ?? {}} onChange={() => {}} isOwner={isOwner} readOnly />
+      <ProfileResourceEditor tenantId={tenantId} config={revision.config} credentials={{}} credentialStates={revision.credential_states ?? {}} onChange={() => {}} isOwner={isOwner} readOnly />
       <details className={styles.json}><summary>查看脱敏配置 JSON</summary><pre>{JSON.stringify(revision.config, null, 2)}</pre></details>
     </section>
 
@@ -268,7 +274,7 @@ export function ProfileRevisionDetail({ tenantId, profileId, revisionNumber }: {
           {statesStale ? <Button variant="secondary" disabled={refreshing} onClick={() => void refreshStates()}>重新读取状态</Button> : refreshedTarget && canUpdate(refreshedTarget) ? <Button variant="secondary" onClick={() => { setTarget(refreshedTarget); setConflict(false); resetAttempt(); }}>确认使用最新状态</Button> : <p>请返回 Draft 建立新关联并发布。</p>}
         </div>}
         <fieldset className={styles.actions} disabled={busy || conflict || !isOwner}><legend>更新方式</legend><label><input type="radio" name="credential-action" checked={action === "replace"} onChange={() => { setAction("replace"); setValue(""); setClearConfirmed(false); resetAttempt(); }} />替换</label><label><input type="radio" name="credential-action" checked={action === "clear"} onChange={() => { setAction("clear"); setValue(""); setClearConfirmed(false); resetAttempt(); }} />清除</label></fieldset>
-        {action === "replace" ? <label className={`field ${styles.secret}`}><span>{target.purpose === "dsn" ? "新 DSN" : "新凭证值"}</span><input aria-label={target.purpose === "dsn" ? "新 DSN" : "新凭证值"} aria-describedby={secretHintId} aria-invalid={!!value && invalidValue} type="password" autoComplete="new-password" spellCheck={false} value={value} maxLength={65536} disabled={busy || conflict || !isOwner} onChange={(event) => { setValue(event.target.value); resetAttempt(); }} placeholder="输入新的凭证，不回填已有值" /><small id={secretHintId}>{target.purpose === "dsn" ? "PostgreSQL URI 需包含密码和 sslmode，连接目标需保持不变。" : "凭证只用于本次提交；成功或关闭后清空，不保存到浏览器存储。"}</small>{value && invalidValue && <small className="error-text">请输入非空且不含换行的凭证值。</small>}</label> : <label className={styles.confirm}><input type="checkbox" checked={clearConfirmed} disabled={busy || conflict || !isOwner} onChange={(event) => { setClearConfirmed(event.target.checked); resetAttempt(); }} /><span>我确认清除将使共享该关联的已发布配置失去此凭证；清除后需通过新 Draft 关联重新配置。</span></label>}
+        {action === "replace" ? <label className={`field ${styles.secret}`}><span>{replacementLabel(target)}</span><input aria-label={replacementLabel(target)} aria-describedby={secretHintId} aria-invalid={!!value && invalidValue} type="password" autoComplete="new-password" spellCheck={false} value={value} maxLength={65536} disabled={busy || conflict || !isOwner} onChange={(event) => { setValue(event.target.value); resetAttempt(); }} placeholder="输入新的凭证，不回填已有值" /><small id={secretHintId}>{target.purpose === "dsn" ? "PostgreSQL URI 需包含密码和 sslmode，连接目标需保持不变。" : target.purpose === "dsn_password" ? "填写原始密码，不是完整 DSN；沿用此发布版本的固定关联，不依赖当前后端目录。" : "凭证只用于本次提交；成功或关闭后清空，不保存到浏览器存储。"}</small>{value && invalidValue && <small className="error-text">请输入非空且不含换行的凭证值。</small>}</label> : <label className={styles.confirm}><input type="checkbox" checked={clearConfirmed} disabled={busy || conflict || !isOwner} onChange={(event) => { setClearConfirmed(event.target.checked); resetAttempt(); }} /><span>我确认清除将使共享该关联的已发布配置失去此凭证；清除后需通过新 Draft 关联重新配置。</span></label>}
         <div className={styles.warning}><Info size={16} /><span>更新会影响引用该凭证关联的已发布配置，配置 Revision 和 digest 保持不变。</span></div>
       </div>
     </ProfileDialog>}

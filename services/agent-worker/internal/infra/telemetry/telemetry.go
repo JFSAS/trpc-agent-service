@@ -153,7 +153,7 @@ func boundedID(v string) string {
 }
 func operation(v string) string {
 	switch v {
-	case "terminalize", "intake", "advance", "manifest", "claim", "prepare", "credential_resolve", "session_open", "session_load", "execute", "usage", "session_stage", "complete", "renew", "fence", "manifest_apply", "wire_reject", "reply_publish", "drain", "storage_sample", "startup":
+	case "memory_apply", "memory_finalize", "terminalize", "intake", "advance", "manifest", "claim", "prepare", "credential_resolve", "session_open", "session_load", "execute", "usage", "session_stage", "complete", "renew", "fence", "manifest_apply", "wire_reject", "reply_publish", "drain", "storage_sample", "startup":
 		return v
 	default:
 		return "other"
@@ -161,7 +161,7 @@ func operation(v string) string {
 }
 func outcome(v string) string {
 	switch v {
-	case "ok", "fenced", "conflict", "capacity", "manifest_wait", "session_wait", "invalid", "session_preparation", "session_invalid", "credential_denied", "cancelled", "deadline", "dependency", "failed":
+	case "memory_apply_failed", "memory_finalize_failed", "ok", "fenced", "conflict", "capacity", "manifest_wait", "session_wait", "invalid", "session_preparation", "session_invalid", "credential_denied", "cancelled", "deadline", "dependency", "failed":
 		return v
 	default:
 		return "other"

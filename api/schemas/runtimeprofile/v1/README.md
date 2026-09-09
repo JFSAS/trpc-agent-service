@@ -109,3 +109,29 @@ standalone Sandbox Manager; this change adds no new tool kind or capability.
 See the [subdomain contract](../../../../docs/architecture-next/control-api/runtime-profile.md),
 [Canonical specification](../../../../docs/architecture-next/control-api/runtime-profile-spec.md),
 and [credential contract](../../../../docs/architecture-next/control-api/runtime-profile-credentials.md).
+
+### Managed PostgreSQL / Redis Memory password
+
+`managed_memory` and `managed_session` may carry the server-generated paired canonical fields
+`dsn_credential_id` and `credential_audience_digest`. The latter is the exact
+role-bound PostgreSQL/Redis Memory or Redis Session backend Snapshot digest, obtained through a trusted platform port.
+Neither field is accepted or returned in public config. Public write actions and
+credential state use `storage.<name>.dsn_password`; the value is a password, not
+a DSN. Deployment requires a configured, matching association for active managed
+Memory. Changing backend identity/revision requires replacement, not implicit keep.
+Published credential rotation uses the immutable association without consulting
+current backend availability. Managed Session only enables Redis/session_runtime; Memory retains memory_runtime. Other managed roles do not gain this
+credential purpose.
+
+Managed Artifact uses optional canonical access_key_id_credential_id and
+secret_access_key_credential_id with one fixed S3 Snapshot audience digest.
+Draft may be partial; new Worker compilation requires both associations.
+Public write/state purposes are access_key_id and secret_access_key under
+storage.artifact. Public config never accepts internal IDs or audience fields.
+
+Managed Knowledge now accepts optional paired canonical
+qdrant_api_key_credential_id and credential_audience_digest from the trusted
+Qdrant Snapshot resolver. Public config remains unchanged; write/state use
+qdrant_api_key. Embedding credential audience retains its existing kind/BaseURL
+algorithm. New Worker publications require the explicit Qdrant association;
+historical descriptors without it remain readable, not executable.

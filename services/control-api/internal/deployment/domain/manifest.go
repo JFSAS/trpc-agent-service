@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 
 	agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 	profiledomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
@@ -13,6 +14,7 @@ const (
 	CredentialPurposeQdrantAPIKey    = "qdrant_api_key"
 	CredentialPurposeEmbeddingAPIKey = "embedding_api_key"
 	CredentialPurposeDSN             = "dsn"
+	CredentialPurposeDSNPassword     = "dsn_password"
 
 	StorageRoleSession = "session"
 	StorageRoleMemory  = "memory"
@@ -29,7 +31,12 @@ type PlatformContractReference struct {
 	Digest  string `json:"digest"`
 }
 
+type ManifestRuntime struct {
+	Summary *ManifestSummary `json:"summary"`
+}
+
 type ManifestContent struct {
+	Runtime                *ManifestRuntime          `json:"runtime,omitempty"`
 	SchemaVersion          string                    `json:"schema_version"`
 	CompilerVersion        string                    `json:"compiler_version"`
 	RuntimeContractVersion string                    `json:"runtime_contract_version"`
@@ -72,7 +79,10 @@ type AgentPlan struct {
 // ManifestNode is a closed union. MarshalJSON omits every inactive branch so
 // zero values cannot silently become executable options.
 type ManifestNode struct {
-	Kind agentdomain.NodeKind
+	Memory            *ManifestMemory
+	Artifact          *ManifestArtifact
+	AddSessionSummary *bool
+	Kind              agentdomain.NodeKind
 
 	Name               string
 	Instruction        string
@@ -99,9 +109,12 @@ func (n ManifestNode) MarshalJSON() ([]byte, error) {
 			KnowledgeResources []string                `json:"knowledge_resources"`
 			CallableEntries    []string                `json:"callable_entries"`
 			Generation         *agentdomain.Generation `json:"generation,omitempty"`
+			Memory             *ManifestMemory         `json:"memory,omitempty"`
+			Artifact           *ManifestArtifact       `json:"artifact,omitempty"`
+			AddSessionSummary  *bool                   `json:"add_session_summary,omitempty"`
 		}{
 			n.Kind, n.Name, n.Instruction, n.ModelResource,
-			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation,
+			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary,
 		})
 	case agentdomain.NodeKindSequence, agentdomain.NodeKindParallel:
 		return json.Marshal(struct {
@@ -141,6 +154,9 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			KnowledgeResources []string                `json:"knowledge_resources"`
 			CallableEntries    []string                `json:"callable_entries"`
 			Generation         *agentdomain.Generation `json:"generation,omitempty"`
+			Memory             *ManifestMemory         `json:"memory,omitempty"`
+			Artifact           *ManifestArtifact       `json:"artifact,omitempty"`
+			AddSessionSummary  *bool                   `json:"add_session_summary,omitempty"`
 		}
 		if err := strictDecodeJSON(data, &wire); err != nil {
 			return err
@@ -150,6 +166,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			ModelResource: wire.ModelResource, ToolResources: wire.ToolResources,
 			KnowledgeResources: wire.KnowledgeResources,
 			CallableEntries:    wire.CallableEntries, Generation: wire.Generation,
+			Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary,
 		}
 		return nil
 	case agentdomain.NodeKindSequence, agentdomain.NodeKindParallel:
@@ -262,6 +279,7 @@ func (a *ManifestToolAuth) UnmarshalJSON(data []byte) error {
 }
 
 type ManifestKnowledgeResource struct {
+	Backend        *datav1.Snapshot            `json:"backend,omitempty"`
 	AdapterVersion string                      `json:"adapter_version"`
 	Kind           profiledomain.KnowledgeKind `json:"kind"`
 	Host           string                      `json:"host"`
@@ -280,11 +298,18 @@ type ManifestEmbeddingResource struct {
 	Credential CredentialUse `json:"credential"`
 }
 
+type ArtifactCredentials struct {
+	AccessKeyID     CredentialUse `json:"access_key_id"`
+	SecretAccessKey CredentialUse `json:"secret_access_key"`
+}
 type ManifestStorageResource struct {
-	AdapterVersion string                           `json:"adapter_version"`
-	Kind           profiledomain.StorageKind        `json:"kind"`
-	Destination    profiledomain.StorageDestination `json:"destination"`
-	Credential     CredentialUse                    `json:"credential"`
+	Credentials      *ArtifactCredentials             `json:"credentials,omitempty"`
+	MetadataContract string                           `json:"metadata_contract,omitempty"`
+	Backend          *datav1.Snapshot                 `json:"backend,omitempty"`
+	AdapterVersion   string                           `json:"adapter_version"`
+	Kind             profiledomain.StorageKind        `json:"kind"`
+	Destination      profiledomain.StorageDestination `json:"destination"`
+	Credential       CredentialUse                    `json:"credential"`
 }
 
 type ResolvedRequirements struct {
@@ -303,6 +328,7 @@ type CompiledManifest struct {
 // ManifestView is the stable public projection. Its types have no field that
 // can hold an internal CredentialID, purpose, or audience digest.
 type ManifestView struct {
+	Runtime                *ManifestRuntime          `json:"runtime,omitempty"`
 	SchemaVersion          string                    `json:"schema_version"`
 	CompilerVersion        string                    `json:"compiler_version"`
 	RuntimeContractVersion string                    `json:"runtime_contract_version"`
@@ -352,6 +378,7 @@ type ManifestToolAuthView struct {
 }
 
 type ManifestKnowledgeResourceView struct {
+	Backend           *ManagedBackendView         `json:"backend,omitempty"`
 	AdapterVersion    string                      `json:"adapter_version"`
 	Kind              profiledomain.KnowledgeKind `json:"kind"`
 	Host              string                      `json:"host"`
@@ -371,6 +398,8 @@ type ManifestEmbeddingView struct {
 }
 
 type ManifestStorageResourceView struct {
+	MetadataContract  string                           `json:"metadata_contract,omitempty"`
+	Backend           *ManagedBackendView              `json:"backend,omitempty"`
 	AdapterVersion    string                           `json:"adapter_version"`
 	Kind              profiledomain.StorageKind        `json:"kind"`
 	Destination       profiledomain.StorageDestination `json:"destination"`
@@ -412,6 +441,10 @@ func NewManifestView(content ManifestContent) ManifestView {
 		}
 	}
 	for name, resource := range normalized.Resources.Knowledge {
+		if resource.Backend != nil {
+			view.Resources.Knowledge[name] = ManifestKnowledgeResourceView{CredentialPresent: resource.Credential != nil, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion, Embedding: ManifestEmbeddingView{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, CredentialPresent: true}, Capability: resource.Capability}
+			continue
+		}
 		view.Resources.Knowledge[name] = ManifestKnowledgeResourceView{
 			AdapterVersion: resource.AdapterVersion, Kind: resource.Kind,
 			Host: resource.Host, Port: resource.Port, TLS: resource.TLS,
@@ -424,11 +457,17 @@ func NewManifestView(content ManifestContent) ManifestView {
 		}
 	}
 	for name, resource := range normalized.Resources.Storage {
+		if resource.Backend != nil {
+			view.Resources.Storage[name] = ManifestStorageResourceView{CredentialPresent: resource.Credential.CredentialID != "" || resource.Credentials != nil, MetadataContract: resource.MetadataContract, Backend: backendView(*resource.Backend), Kind: resource.Kind, AdapterVersion: resource.AdapterVersion}
+			continue
+		}
 		view.Resources.Storage[name] = ManifestStorageResourceView{
 			AdapterVersion: resource.AdapterVersion, Kind: resource.Kind,
 			Destination: resource.Destination, CredentialPresent: true,
 		}
 	}
+	view.Runtime = normalized.Runtime
+	view.Execution.AllowedEndpointHosts = publicEndpointHosts(normalized)
 	return view
 }
 

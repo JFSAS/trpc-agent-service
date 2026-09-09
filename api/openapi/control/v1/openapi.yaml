@@ -28,6 +28,44 @@ tags:
       value transport. Public manifest_view is an explicit projection without
       Credential IDs, purposes, audiences, values, or dynamic credential state.
 paths:
+  /v1/tenants/{tenant_id}/runtime-backends:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: listRuntimeBackends
+      summary: List platform backends available to the current tenant
+      description: Requires active membership; returns metadata only, never physical targets or credentials.
+      tags: [Runtime Profile]
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Authorized backend metadata, including disabled selections
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, revision, label, kind, roles, available]
+                      properties:
+                        id: {type: string}
+                        revision: {type: integer, minimum: 1, maximum: 9007199254740991}
+                        label: {type: string}
+                        kind: {type: string, enum: [postgresql, redis, qdrant, s3]}
+                        roles:
+                          type: array
+                          items: {type: string, enum: [session, memory, knowledge, artifact]}
+                        available: {type: boolean}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503':
+          description: Current membership or directory dependency unavailable
   /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights:
     $ref: "./preflight-public.yaml#/paths/~1v1~1tenants~1{tenant_id}~1channel-accounts~1{account_id}~1preflights"
   /v1/tenants/{tenant_id}/channel-accounts/{account_id}/preflights/{preflight_id}:
@@ -1114,6 +1152,121 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/artifacts/{filename}:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+      - $ref: '#/components/parameters/DeploymentRevisionNumber'
+      - name: filename
+        in: path
+        required: true
+        description: Single basename; slash, backslash, dot and dot-dot are rejected.
+        schema: {type: string, minLength: 1, maxLength: 255}
+      - name: run_id
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+    get:
+      operationId: loadDeploymentArtifact
+      summary: Download one Artifact through the fixed Run and Deployment Revision
+      description: Owner-only. Worker independently verifies Run tenant and Manifest identity and derives Session scope. No caller-selected backend or credentials are accepted.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      parameters:
+        - name: version
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0}
+      responses:
+        '200':
+          description: Raw file bytes, no-store and attachment disposition. Version starts at zero.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '400': {description: Invalid filename or closed query.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Owner or Run/Manifest authorization failed.}
+        '404': {description: Artifact or Deployment Revision not found.}
+        '413': {description: Artifact exceeds fixed backend or transport limit.}
+        '503': {description: "Worker, credentials or backend unavailable."}
+    put:
+      operationId: saveDeploymentArtifact
+      summary: Upload a new Artifact version through the fixed Run and Deployment Revision
+      description: Owner-only. Raw bytes are capped at 16 MiB and fixed backend MaxBytes. Version is allocated by Worker; version query is rejected. No automatic retries or implicit idempotency are provided.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+          text/plain:
+            schema: {type: string}
+      responses:
+        '200':
+          description: Saved Artifact metadata without content or credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [name, version, ref, mime_type, size_bytes, sha256]
+                properties:
+                  name: {type: string}
+                  version: {type: integer, minimum: 0}
+                  ref: {type: string}
+                  mime_type: {type: string}
+                  size_bytes: {type: integer, minimum: 0}
+                  sha256: {type: string}
+        '400': {description: Invalid filename or closed query.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Owner or Run/Manifest authorization failed.}
+        '404': {description: Deployment Revision not found.}
+        '413': {description: Artifact exceeds fixed backend or transport limit.}
+        '503': {description: "Worker, credentials or backend unavailable."}
+  /v1/tenants/{tenant_id}/deployments/{deployment_id}/revisions/{revision_number}/knowledge/{resource}/import:
+    parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/DeploymentID'
+      - $ref: '#/components/parameters/DeploymentRevisionNumber'
+      - name: resource
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 64}
+    post:
+      operationId: importDeploymentKnowledgeText
+      summary: Import plain text into one fixed published Knowledge resource
+      description: Owner-only synchronous import. Uses fixed Manifest and Profile credentials. No scope, backend, Run, chunk configuration or credential fields are accepted. Same fixed Knowledge configuration may be reused across Deployment Revisions.
+      tags: [Deployment]
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, text]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                text: {type: string, minLength: 1, description: UTF-8 plain text capped at 1 MiB and fixed backend MaxBytes.}
+      responses:
+        '200':
+          description: Import completed synchronously; document count is reported by Worker.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [documents]
+                properties:
+                  documents: {type: integer, minimum: 0}
+        '400': {description: Invalid closed request.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Owner or fixed resource authorization failed.}
+        '404': {description: Deployment Revision not found.}
+        '413': {description: Text exceeds transport or backend limit.}
+        '503': {description: "Worker, credentials or backend unavailable."}
 components:
   securitySchemes:
     cookieAuth:
@@ -1724,7 +1877,7 @@ components:
               minLength: 1
               maxLength: 65536
               writeOnly: true
-              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL/Redis Memory and Redis Session use dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
             expected_credential_revision:
               type: "integer"
               minimum: 0
@@ -1767,6 +1920,12 @@ components:
             additionalProperties: false
             properties:
               dsn:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              dsn_password:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              access_key_id:
+                $ref: "#/components/schemas/RuntimeProfileCredentialAction"
+              secret_access_key:
                 $ref: "#/components/schemas/RuntimeProfileCredentialAction"
     RuntimeProfileWrite:
       type: "object"
@@ -1855,6 +2014,12 @@ components:
             additionalProperties: false
             properties:
               dsn:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              dsn_password:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              access_key_id:
+                $ref: "#/components/schemas/RuntimeProfileCredentialState"
+              secret_access_key:
                 $ref: "#/components/schemas/RuntimeProfileCredentialState"
     RuntimeProfileDraft:
       type: "object"
@@ -1995,7 +2160,7 @@ components:
             purpose_field: {type: string, enum: [qdrant_api_key, embedding_api_key]}
         - properties:
             category: {type: string, enum: [storage]}
-            purpose_field: {type: string, enum: [dsn]}
+            purpose_field: {type: string, enum: [dsn, dsn_password, access_key_id, secret_access_key]}
       properties:
         profile_revision_number:
           type: "integer"
@@ -2008,7 +2173,7 @@ components:
           pattern: "^[a-z][a-z0-9_-]{0,63}$"
         purpose_field:
           type: "string"
-          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn"]
+          enum: ["api_key", "bearer_token", "qdrant_api_key", "embedding_api_key", "dsn", "dsn_password", "access_key_id", "secret_access_key"]
         association_token:
           type: "string"
           minLength: 64
@@ -2033,7 +2198,7 @@ components:
               minLength: 1
               maxLength: 65536
               writeOnly: true
-              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
+              description: "Write-only credential value. Empty values, masks, placeholders, NUL and line breaks are rejected. Managed PostgreSQL/Redis Memory and Redis Session use dsn_password as a raw password, never a DSN; its fixed target comes from the platform catalog. Storage dsn requires a single-host PostgreSQL URI with password and explicit sslmode=disable/require/verify-full; only its password is encrypted while destination is fixed separately."
         - type: "object"
           additionalProperties: false
           required: ["target", "action", "expected_credential_revision"]

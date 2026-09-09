@@ -27,7 +27,7 @@ export type ManifestView = {
   platform_contract: { version: string; digest: string }; tenant_id: string;
   sources: { agent: { agent_id: string; version_number: number; digest: string }; profile: { profile_id: string; revision_number: number; digest: string } };
   agent_plan: { root: string; nodes: Record<string, {
-    kind: string; model_resource?: string; tool_resources?: string[]; knowledge_resources?: string[]; callable_entries?: string[];
+    kind: string; model_resource?: string; tool_resources?: string[]; knowledge_resources?: string[]; callable_entries?: string[]; artifact?: { enabled: boolean; resource: string };
   }> };
   resources: Record<string, Record<string, JSONValue>>;
   resolved_requirements: Record<string, Record<string, string>>;

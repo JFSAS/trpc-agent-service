@@ -7,6 +7,7 @@ import (
 
 func validateSemantics(spec Spec) []Diagnostic {
 	var diagnostics []Diagnostic
+	validateDataSemantics(spec, &diagnostics)
 	if _, exists := spec.Nodes[spec.Root]; !exists {
 		diagnostics = append(diagnostics, Diagnostic{
 			Code: "AGENT_SPEC_ROOT_NOT_FOUND", Severity: SeverityError,
@@ -130,6 +131,9 @@ func validateNodeSlots(id string, node Node, requirements Requirements, diagnost
 
 func appendUnusedSlotWarnings(spec Spec, diagnostics *[]Diagnostic) {
 	usedModels := make(map[string]bool)
+	if spec.Runtime != nil && spec.Runtime.Summary != nil && spec.Runtime.Summary.Enabled {
+		usedModels[spec.Runtime.Summary.ModelSlot] = true
+	}
 	usedTools := make(map[string]bool)
 	usedKnowledge := make(map[string]bool)
 	for _, node := range spec.Nodes {

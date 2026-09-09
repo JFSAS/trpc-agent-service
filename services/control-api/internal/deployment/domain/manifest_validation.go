@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 	deploymentv1 "github.com/liuzengh/trpc-agent-service/api/schemas/deployment/v1"
 	"net/url"
 	"slices"
@@ -54,6 +55,14 @@ func validateManifestSemantics(content ManifestContent) error {
 		},
 		Nodes: make(map[string]agentdomain.Node, len(content.AgentPlan.Nodes)),
 	}
+	if content.Runtime != nil {
+		if content.Runtime.Summary == nil || content.Runtime.Summary.Validate() != nil {
+			return ErrInvalidManifestContent
+		}
+		summary := content.Runtime.Summary
+		threshold := summary.EventThreshold
+		agent.Runtime = &agentdomain.Runtime{Summary: &agentdomain.Summary{Enabled: true, ModelSlot: summary.ModelResource, EventThreshold: &threshold}}
+	}
 	for name, resource := range profile.Models {
 		agent.Requirements.Models[name] = agentdomain.ModelRequirement{Capabilities: resource.Capabilities}
 	}
@@ -73,7 +82,7 @@ func validateManifestSemantics(content ManifestContent) error {
 				return ErrInvalidManifestContent
 			}
 			model, exists := profile.Models[node.ModelResource]
-			if !exists || (len(node.CallableEntries) > 0 && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
+			if !exists || ((len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil) && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
 				return ErrInvalidManifestContent
 			}
 			if node.Generation != nil && node.Generation.MaxOutputTokens != nil &&
@@ -81,7 +90,31 @@ func validateManifestSemantics(content ManifestContent) error {
 				return ErrInvalidManifestContent
 			}
 		}
+		if node.Kind != agentdomain.NodeKindLLM && (node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil) {
+			return ErrInvalidManifestContent
+		}
+		var memory *agentdomain.Memory
+		var artifact *agentdomain.Artifact
+		if node.Memory != nil {
+			if node.Memory.Validate() != nil || node.Memory.Resource != "memory" || content.StorageRoles["memory"] != "memory" {
+				return ErrInvalidManifestContent
+			}
+			if validateNodeCallableNames(node.CallableEntries, node.Memory.Tools, ProviderCallableNames) != nil {
+				return ErrInvalidManifestContent
+			}
+			memory = &agentdomain.Memory{Tools: append([]string{}, node.Memory.Tools...), PreloadLimit: node.Memory.PreloadLimit}
+		}
+		if node.Artifact != nil {
+			if node.Artifact.Validate() != nil || node.Artifact.Resource != "artifact" || content.StorageRoles["artifact"] != "artifact" {
+				return ErrInvalidManifestContent
+			}
+			artifact = &agentdomain.Artifact{Enabled: true}
+		}
+		if node.AddSessionSummary != nil && !*node.AddSessionSummary {
+			return ErrInvalidManifestContent
+		}
 		agent.Nodes[id] = agentdomain.Node{
+			Memory: memory, Artifact: artifact, AddSessionSummary: node.AddSessionSummary,
 			Kind: node.Kind, Name: node.Name, Instruction: node.Instruction,
 			ModelSlot: node.ModelResource, ToolSlots: node.ToolResources,
 			KnowledgeSlots: node.KnowledgeResources, Generation: node.Generation,
@@ -108,12 +141,31 @@ func validateManifestSemantics(content ManifestContent) error {
 		return ErrInvalidManifestContent
 	}
 	for role, name := range content.StorageRoles {
-		if (role != StorageRoleSession && role != StorageRoleMemory) || role != name {
+		if (role != StorageRoleSession && role != StorageRoleMemory && role != "artifact") || role != name {
 			return ErrInvalidManifestContent
 		}
 		if _, exists := profile.Storage[name]; !exists {
 			return ErrInvalidManifestContent
 		}
+	}
+	for role, resource := range profile.Storage {
+		if resource.Kind.Managed() && role != "session" && !agentUsesStorageRole(agent, role) {
+			return ErrInvalidManifestContent
+		}
+	}
+	backends := map[string]datav1.Snapshot{}
+	for name, r := range content.Resources.Storage {
+		if r.Backend != nil {
+			backends["storage/"+name] = r.Backend.Clone()
+		}
+	}
+	for name, r := range content.Resources.Knowledge {
+		if r.Backend != nil {
+			backends["knowledge/"+name] = r.Backend.Clone()
+		}
+	}
+	if ds := ValidateManagedSnapshots(CompileInput{TenantID: content.TenantID, Agent: AgentVersionSource{Spec: agent}, Profile: ProfileRevisionSource{Spec: profile}, Platform: PlatformExecutionContract{Execution: content.Execution}, ManagedBackends: backends}); len(ds) > 0 {
+		return ErrInvalidManifestContent
 	}
 	return nil
 }
@@ -163,6 +215,34 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 		addURLHost(resource.ServerURL)
 	}
 	for name, resource := range content.Resources.Knowledge {
+		if resource.Kind == profiledomain.KnowledgeKindManaged {
+			r := BackendRequest{Category: "knowledge", Name: name, Role: "knowledge", Dimensions: resource.Embedding.Dimensions}
+			if resource.Backend == nil {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			r.BackendID = resource.Backend.BackendID
+			r.Revision = resource.Backend.BackendRevision
+			if !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != KnowledgeAdapterManagedV1 || resource.Host != "" || resource.Port != 0 || resource.TLS || resource.Collection != "" || resource.Capability != profiledomain.CapabilityKnowledgeSearch || resource.Embedding.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Embedding.BaseURL) {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			profile.Knowledge[name] = profiledomain.KnowledgeResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision, Embedding: profiledomain.EmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, APIKeyCredentialID: resource.Embedding.Credential.CredentialID}}
+			if resource.Credential != nil {
+				digest, _ := resource.Backend.Digest()
+				if !validCredentialUse(*resource.Credential, CredentialPurposeQdrantAPIKey) || resource.Credential.AudienceDigest != digest {
+					return profiledomain.Spec{}, ErrInvalidManifestContent
+				}
+				p := profile.Knowledge[name]
+				p.QdrantAPIKeyCredentialID = resource.Credential.CredentialID
+				p.CredentialAudienceDigest = digest
+				profile.Knowledge[name] = p
+			}
+
+			host, _ := resource.Backend.EndpointHost()
+			hosts[host] = true
+			addURLHost(resource.Embedding.BaseURL)
+			continue
+		}
+
 		if resource.Kind != profiledomain.KnowledgeKindQdrantOpenAI || resource.AdapterVersion != KnowledgeAdapterQdrantOpenAIV1 ||
 			resource.Capability != profiledomain.CapabilityKnowledgeSearch ||
 			resource.Embedding.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Embedding.BaseURL) {
@@ -187,6 +267,49 @@ func manifestProfile(content ManifestContent) (profiledomain.Spec, error) {
 		addURLHost(resource.Embedding.BaseURL)
 	}
 	for name, resource := range content.Resources.Storage {
+		if resource.Kind.Managed() {
+			if resource.Backend == nil {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			r := BackendRequest{Category: "storage", Name: name, Role: resource.Kind.Role(), BackendID: resource.Backend.BackendID, Revision: resource.Backend.BackendRevision}
+			adapter := StorageAdapterManagedSessionV1
+			if resource.Kind == profiledomain.StorageKindManagedMemory {
+				adapter = StorageAdapterManagedMemoryV1
+			}
+			if resource.Kind == profiledomain.StorageKindManagedArtifact {
+				adapter = StorageAdapterManagedArtifactV1
+			}
+			if (resource.Kind == profiledomain.StorageKindManagedArtifact && resource.MetadataContract != ArtifactMetadataContract) || (resource.Kind != profiledomain.StorageKindManagedArtifact && resource.MetadataContract != "") {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			if name != r.Role || !validBackendMatch(content.TenantID, r, *resource.Backend) || resource.AdapterVersion != adapter || resource.Destination != (profiledomain.StorageDestination{}) {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			profileResource := profiledomain.StorageResource{Kind: resource.Kind, BackendID: r.BackendID, BackendRevision: r.Revision}
+			if managedPasswordBackend(resource.Kind, *resource.Backend) && ((resource.Kind == profiledomain.StorageKindManagedMemory && resource.Backend.Kind == datav1.PostgreSQL) || resource.Credential != (CredentialUse{})) {
+				digest, err := resource.Backend.Digest()
+				if err != nil || !validCredentialUse(resource.Credential, CredentialPurposeDSNPassword) || resource.Credential.AudienceDigest != digest {
+					return profiledomain.Spec{}, ErrInvalidManifestContent
+				}
+				profileResource.DSNCredentialID = resource.Credential.CredentialID
+				profileResource.CredentialAudienceDigest = digest
+			} else if resource.Credential != (CredentialUse{}) {
+				return profiledomain.Spec{}, ErrInvalidManifestContent
+			}
+			if resource.Credentials != nil {
+				if resource.Kind != profiledomain.StorageKindManagedArtifact || !validArtifactCredentials(resource.Credentials, *resource.Backend) {
+					return profiledomain.Spec{}, ErrInvalidManifestContent
+				}
+				profileResource.AccessKeyIDCredentialID = resource.Credentials.AccessKeyID.CredentialID
+				profileResource.SecretAccessKeyCredentialID = resource.Credentials.SecretAccessKey.CredentialID
+				profileResource.CredentialAudienceDigest = resource.Credentials.AccessKeyID.AudienceDigest
+			}
+			profile.Storage[name] = profileResource
+			host, _ := resource.Backend.EndpointHost()
+			hosts[host] = true
+			continue
+		}
+
 		if resource.Kind != profiledomain.StorageKindPostgresState || resource.AdapterVersion != StorageAdapterPostgresStateV1 ||
 			resource.Credential.AudienceDigest != audienceDigest(resource.Kind, resource.Destination) {
 			return profiledomain.Spec{}, ErrInvalidManifestContent

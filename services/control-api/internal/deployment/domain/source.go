@@ -1,6 +1,7 @@
 package domain
 
 import (
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 	agentdomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/agent/domain"
 	profiledomain "github.com/liuzengh/trpc-agent-service/services/control-api/internal/runtimeprofile/domain"
 )
@@ -39,8 +40,9 @@ type ProfileRevisionSource struct {
 // CompileInput contains only fixed values. The compiler performs no I/O and
 // does not consult mutable Draft, credential, provider, or worker state.
 type CompileInput struct {
-	TenantID string
-	Agent    AgentVersionSource
-	Profile  ProfileRevisionSource
-	Platform PlatformExecutionContract
+	ManagedBackends map[string]datav1.Snapshot
+	TenantID        string
+	Agent           AgentVersionSource
+	Profile         ProfileRevisionSource
+	Platform        PlatformExecutionContract
 }

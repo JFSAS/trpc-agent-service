@@ -3,7 +3,11 @@ package runtimeadapter
 import (
 	"context"
 	"errors"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/artifactstore"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/knowledgestore"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/memorystore"
 	"sync"
+	"time"
 
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/sessionstore"
@@ -15,20 +19,28 @@ import (
 )
 
 type attempt struct {
-	tracer       trace.Tracer
-	grant        domain.Grant
-	plan         domain.Plan
-	store        candidateStore
-	check        func(context.Context) error
-	modelKey     string
-	executor     trpcagent.Executor
-	capacity     int
-	mu           sync.Mutex
-	closed       bool
-	executed     bool
-	loaded       bool
-	loadedDigest string
-	resultDigest string
+	knowledgeStore  *knowledgestore.Store
+	artifactStore   *artifactstore.Store
+	memoryStore     memoryStore
+	memoryCandidate *memorystore.Candidate
+	memoryDigest    string
+	finalText       string
+	staged          domain.Candidate
+	tracer          trace.Tracer
+	grant           domain.Grant
+	plan            domain.Plan
+	store           candidateStore
+	check           func(context.Context) error
+	modelKey        string
+	summaryKey      string
+	executor        trpcagent.Executor
+	capacity        int
+	mu              sync.Mutex
+	closed          bool
+	executed        bool
+	loaded          bool
+	loadedDigest    string
+	resultDigest    string
 }
 
 func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, resultErr error) {
@@ -52,9 +64,12 @@ func (a *attempt) Load(ctx context.Context, head domain.Head) (history []byte, r
 		a.loadedDigest = domain.Digest(nil)
 		return nil, nil
 	}
+	parentCtx := ctx
+	ctx, cancel := sessionContext(ctx, a.plan)
+	defer cancel()
 	c, err := a.store.Load(ctx, a.plan.TenantID, a.grant.Run.SessionID, sessionstore.Head{Ref: head.Ref, Digest: head.Digest})
 	if err != nil {
-		return nil, sessionError(ctx, err)
+		return nil, sessionOperationError(parentCtx, ctx, err)
 	}
 	a.loaded = true
 	a.loadedDigest = domain.Digest(c.Snapshot)
@@ -72,7 +87,39 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 	}
 	p := a.plan
 	g := a.grant
-	result, err := a.executor.Execute(ctx, trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, AcceptedSnapshot: history})
+	request := trpcagent.Request{TenantID: p.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID, NodeID: p.NodeID, Instruction: p.Instruction, InputText: g.Run.Request.Input.Text, Model: trpcagent.Model{Endpoint: p.ModelEndpoint, Name: p.ModelName, APIKey: a.modelKey, Temperature: p.Temperature, MaxOutputTokens: p.NodeMaxOutputTokens}, MaxOutputTokens: p.MaxOutputTokens, MaxToolCalls: p.MaxToolCalls, AcceptedSnapshot: history}
+	if p.Knowledge != nil {
+		if a.knowledgeStore == nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		request.Knowledge = &trpcagent.KnowledgeConfig{Resource: p.Knowledge.Resource, Service: a.knowledgeStore}
+	}
+	if p.Artifact != nil {
+		if a.artifactStore == nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		request.Artifact = &trpcagent.ArtifactConfig{Service: a.artifactStore, MaxBytes: p.Artifact.Backend.Limits.MaxBytes}
+	}
+	if p.Summary != nil {
+		request.Summary = &trpcagent.SummaryConfig{Model: trpcagent.Model{Endpoint: p.Summary.ModelEndpoint, Name: p.Summary.ModelName, APIKey: a.summaryKey}, EventThreshold: p.Summary.EventThreshold, AddSessionSummary: p.Summary.AddSessionSummary}
+	}
+	if p.Memory != nil {
+		scopeID, err := g.Run.Request.MemoryScopeID(p.Memory.AgentID)
+		if err != nil || a.memoryStore == nil {
+			return domain.RuntimeResult{}, application.ErrManifestInvalid
+		}
+		scope := memorystore.Scope{TenantID: p.TenantID, ID: scopeID}
+		readCtx, cancel := context.WithTimeout(ctx, time.Duration(p.Memory.Backend.Limits.TimeoutMS)*time.Millisecond)
+		readCtx, span := telemetrytrace.Start(a.tracer, readCtx, "worker.memory.load")
+		saved, err := a.memoryStore.Load(readCtx, scope)
+		telemetrytrace.End(span, memoryError(err))
+		cancel()
+		if err != nil {
+			return domain.RuntimeResult{}, memoryError(err)
+		}
+		request.Memory = &trpcagent.MemoryConfig{BoundKey: scope.Key(), Entries: saved.Entries, BaseRevision: saved.Revision, Tools: p.Memory.Tools, PreloadLimit: p.Memory.PreloadLimit}
+	}
+	result, err := a.executor.Execute(ctx, request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return domain.RuntimeResult{}, ctx.Err()
@@ -85,8 +132,22 @@ func (a *attempt) Execute(ctx context.Context, history []byte) (domain.RuntimeRe
 		}
 		return domain.RuntimeResult{}, application.ErrRuntimeFailed
 	}
+	var memoryTimeout time.Duration
+	if p.Memory != nil {
+		if result.Memory == nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		c := result.Memory
+		a.memoryCandidate = &memorystore.Candidate{Scope: memorystore.Scope{TenantID: c.Scope.AppName, ID: c.Scope.UserID}, BaseRevision: c.BaseRevision, Entries: c.Entries}
+		a.memoryDigest, err = a.memoryCandidate.Digest()
+		if err != nil {
+			return domain.RuntimeResult{}, application.ErrRuntimeFailed
+		}
+		memoryTimeout = time.Duration(p.Memory.Backend.Limits.TimeoutMS) * time.Millisecond
+	}
+	a.finalText = result.FinalText
 	a.resultDigest = domain.Digest(result.Snapshot)
-	return domain.RuntimeResult{FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
+	return domain.RuntimeResult{MemoryDigest: a.memoryDigest, MemoryTimeout: memoryTimeout, FinalText: result.FinalText, Snapshot: result.Snapshot, InputTokens: int64(result.Usage.InputTokens), OutputTokens: int64(result.Usage.OutputTokens), TotalTokens: int64(result.Usage.TotalTokens)}, nil
 }
 func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Candidate, resultErr error) {
 	ctx, span := telemetrytrace.Start(a.tracer, ctx, "worker.session.stage", trace.WithAttributes(attribute.Int("app.storage.bytes", len(snapshot))))
@@ -106,8 +167,14 @@ func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Can
 	}
 	g := a.grant
 	candidate := sessionstore.Candidate{Identity: sessionstore.Identity{TenantID: a.plan.TenantID, SessionID: g.Run.SessionID, RunID: g.Run.Request.RunID, AttemptID: g.AttemptID}, Parent: sessionstore.Head{Ref: g.Parent.Ref, Digest: g.Parent.Digest}, ContentVersion: sessionstore.ContentVersion, Snapshot: snapshot}
+	parentCtx := ctx
+	ctx, cancel := sessionContext(ctx, a.plan)
+	defer cancel()
 	head, err := a.store.Put(ctx, candidate)
 	if err != nil {
+		if ctx.Err() != nil {
+			return domain.Candidate{}, sessionOperationError(parentCtx, ctx, err)
+		}
 		if errors.Is(err, sessionstore.ErrConflict) || errors.Is(err, sessionstore.ErrCapacity) || errors.Is(err, sessionstore.ErrCorrupt) {
 			return domain.Candidate{}, sessionError(ctx, err)
 		}
@@ -129,7 +196,8 @@ func (a *attempt) Stage(ctx context.Context, snapshot []byte) (staged domain.Can
 		}
 		head = expected
 	}
-	return domain.Candidate{Ref: head.Ref, Digest: head.Digest, Parent: g.Parent}, nil
+	a.staged = domain.Candidate{Ref: head.Ref, Digest: head.Digest, Parent: g.Parent}
+	return a.staged, nil
 }
 func (a *attempt) Close() {
 	a.mu.Lock()
@@ -138,7 +206,21 @@ func (a *attempt) Close() {
 		return
 	}
 	a.closed = true
+	if a.knowledgeStore != nil {
+		a.knowledgeStore.Close()
+		a.knowledgeStore = nil
+	}
+	if a.artifactStore != nil {
+		a.artifactStore.Close()
+		a.artifactStore = nil
+	}
 	a.modelKey = ""
+	a.summaryKey = ""
+	if a.memoryStore != nil {
+		a.memoryStore.Close()
+		a.memoryStore = nil
+	}
+	a.memoryCandidate = nil
 	a.store.Close()
 	a.store = nil
 }

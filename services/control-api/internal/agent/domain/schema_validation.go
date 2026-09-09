@@ -13,7 +13,7 @@ var (
 
 func validateSchemaShape(root map[string]any) []Diagnostic {
 	var diagnostics []Diagnostic
-	validateAllowedFields(root, "", []string{"schema_version", "root", "requirements", "nodes"}, &diagnostics)
+	validateAllowedFields(root, "", []string{"schema_version", "root", "requirements", "nodes", "runtime"}, &diagnostics)
 	requireFields(root, "", []string{"schema_version", "root", "requirements", "nodes"}, &diagnostics)
 
 	if version, exists := root["schema_version"]; exists {
@@ -33,6 +33,9 @@ func validateSchemaShape(root map[string]any) []Diagnostic {
 	}
 	if nodes, exists := root["nodes"]; exists {
 		validateNodes(nodes, &diagnostics)
+	}
+	if value, exists := root["runtime"]; exists {
+		validateRuntime(value, &diagnostics)
 	}
 	return diagnostics
 }
@@ -139,7 +142,7 @@ func validateNode(id, pointer string, node map[string]any, diagnostics *[]Diagno
 	var allowed, required []string
 	switch NodeKind(kind) {
 	case NodeKindLLM:
-		allowed = []string{"kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation"}
+		allowed = []string{"kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation", "memory", "artifact", "add_session_summary"}
 		required = []string{"kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"}
 	case NodeKindSequence, NodeKindParallel:
 		allowed = []string{"kind", "name", "children"}
@@ -186,6 +189,7 @@ func validateNode(id, pointer string, node map[string]any, diagnostics *[]Diagno
 }
 
 func validateLLMNode(pointer string, node map[string]any, diagnostics *[]Diagnostic) {
+	validateNodeData(pointer, node, diagnostics)
 	if instruction, exists := node["instruction"]; exists {
 		text, ok := instruction.(string)
 		if !ok {

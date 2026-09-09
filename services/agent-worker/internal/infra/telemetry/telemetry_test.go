@@ -207,3 +207,19 @@ func TestAbsentExportDoesNotUseAmbientEndpoint(t *testing.T) {
 	default:
 	}
 }
+
+func TestMemoryAcceptedPhaseUsesBoundedObservationLabels(t *testing.T) {
+	for _, value := range []string{"memory_apply", "memory_finalize"} {
+		if operation(value) != value {
+			t.Fatal("Memory phase hidden as other")
+		}
+	}
+	for _, value := range []string{"memory_apply_failed", "memory_finalize_failed"} {
+		if outcome(value) != value {
+			t.Fatal("Memory failure hidden as other")
+		}
+	}
+	if operation("memory_private_content") != "other" || outcome("postgres://secret") != "other" {
+		t.Fatal("unbounded Memory labels")
+	}
+}

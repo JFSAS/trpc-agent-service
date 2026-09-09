@@ -639,3 +639,23 @@ func TestCompileRejectsInvalidLogicalCallableName(t *testing.T) {
 	assertDiagnostic(t, report, DiagnosticEntrypointUnsupported, DiagnosticSourceAgent,
 		"/nodes/researcher/callable_entries", "researcher", "researcher")
 }
+
+// Profile persistence support must not advertise an executable Deployment before
+// the fixed-target compiler and runtime adapters have actually been connected.
+func TestManagedProfileDoesNotBypassDeploymentAdapterGate(t *testing.T) {
+	input := validCompileInput()
+	input.Profile.Spec.Storage["session"] = profiledomain.StorageResource{Kind: profiledomain.StorageKindManagedSession, BackendID: "redis", BackendRevision: 1}
+	_, report := Compile(input)
+	if report.Valid {
+		t.Fatal("managed storage compiled without a physical backend snapshot adapter")
+	}
+	found := false
+	for _, d := range report.Diagnostics {
+		if d.Code == DiagnosticBackendUnavailable {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing explicit unavailable fixed backend diagnostic", report.Diagnostics)
+	}
+}

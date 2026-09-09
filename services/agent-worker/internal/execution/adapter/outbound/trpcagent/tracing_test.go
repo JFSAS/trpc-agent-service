@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +31,12 @@ import (
 )
 
 const traceCanary = "CANARY private prompt response arguments"
+
+const sdkToolCancelChildEnv = "WORKER_TEST_SDK_TOOL_CANCEL_CHILD"
+
+func sdkToolCancelChild(t *testing.T) bool {
+	return os.Getenv(sdkToolCancelChildEnv) == "1" && t.Name() == "TestTracingSDKToolContract/cancel"
+}
 
 type traceSink struct {
 	mu    sync.Mutex
@@ -64,15 +72,21 @@ func newTraceRuntime(t *testing.T) (*telemetrytrace.Runtime, *traceSink) {
 	oldProvider, oldTracer := agenttrace.TracerProvider, agenttrace.Tracer
 	BindTracing(rt.Provider())
 	restoreLog := BindLogging(func(context.Context, string) {})
-	t.Cleanup(restoreLog)
+	// Cancellation can leave the SDK flow running after its public stream and
+	// agent span finish. The isolated child keeps globals stable until exit.
+	if !sdkToolCancelChild(t) {
+		t.Cleanup(restoreLog)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		if err := rt.Shutdown(ctx); err != nil {
 			t.Error(err)
 		}
-		agenttrace.TracerProvider, agenttrace.Tracer = oldProvider, oldTracer
-		agenttrace.SetSpanAttributePolicy(agenttrace.SpanAttributePolicy{})
+		if !sdkToolCancelChild(t) {
+			agenttrace.TracerProvider, agenttrace.Tracer = oldProvider, oldTracer
+			agenttrace.SetSpanAttributePolicy(agenttrace.SpanAttributePolicy{})
+		}
 	})
 	return rt, sink
 }
@@ -203,6 +217,27 @@ func (m *traceToolModel) GenerateContent(ctx context.Context, _ *model.Request) 
 func TestTracingSDKToolContract(t *testing.T) {
 	for _, mode := range []string{"ok", "error", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
+			if mode == "cancel" && !sdkToolCancelChild(t) {
+				binary, err := os.Executable()
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+				defer stop()
+				// Reuse the current binary, including race instrumentation. Only the
+				// cancellation case runs in the child; no SDK globals change here.
+				cmd := exec.CommandContext(ctx, binary, "-test.run=^TestTracingSDKToolContract$/^cancel$", "-test.count=1", "-test.timeout=20s", "-test.v")
+				cmd.Env = append(os.Environ(), sdkToolCancelChildEnv+"=1")
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("isolated SDK cancellation failed: %v\n%s", err, output)
+				}
+				if !bytes.Contains(output, []byte("SDK_TOOL_TRACE=PASS mode=cancel")) {
+					t.Fatalf("isolated SDK cancellation did not execute assertions:\n%s", output)
+				}
+				t.Logf("isolated SDK cancellation passed:\n%s", output)
+				return
+			}
 			rt, sink := newTraceRuntime(t)
 			type input struct {
 				Input string `json:"input"`

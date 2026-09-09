@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { GET, PATCH, POST, PUT } from "./route";
+import { ARTIFACT_MAX_BYTES } from "../../../../lib/artifact-api";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -116,6 +117,48 @@ describe("Control API same-origin proxy", () => {
 
 });
 
+it("bounds raw Artifact uploads before forwarding instead of buffering arbitrary bytes", async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ version: 0 }, { status: 201 }));
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "large.bin"];
+  const response = await PUT(new NextRequest(`http://console.test/api/control/${path.join("/")}?run_id=run_1`, { method: "PUT", body: new Uint8Array(ARTIFACT_MAX_BYTES + 1), headers: { "content-type": "application/octet-stream" } }), { params: Promise.resolve({ path }) });
+  expect(response.status).toBe(413);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("forwards exact Artifact bytes and cookie but no client identity headers", async () => {
+  const raw = new Uint8Array([0, 255, 1]);
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ name: "report.txt", version: 0 }, { status: 201 }));
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "report #1.txt"];
+  const response = await PUT(new NextRequest("http://console.test/api/control/v1/artifact?run_id=run_1", { method: "PUT", body: raw, headers: { "content-type": "text/plain", cookie: "session=opaque", "x-user-id": "forged", "x-tenant-id": "forged", authorization: "forged" } }), { params: Promise.resolve({ path }) });
+  expect(response.status).toBe(201);
+  expect(fetcher.mock.calls[0][0]).toContain("/artifacts/report%20%231.txt?run_id=run_1");
+  expect([...new Uint8Array(fetcher.mock.calls[0][1]?.body as ArrayBuffer)]).toEqual([...raw]);
+  expect(Object.fromEntries(new Headers(fetcher.mock.calls[0][1]?.headers))).toEqual({ "content-type": "text/plain", cookie: "session=opaque" });
+});
+
+it.each(["text/html", "image/svg+xml"])("forces Artifact %s into attachment delivery, never same-origin active content", async (mime) => {
+  const raw = "<svg onload=alert(document.domain)>";
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(raw, { headers: { "content-type": mime, "content-disposition": "inline" } }));
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "active.svg"];
+  const response = await GET(new NextRequest(`http://console.test/api/control/${path.join("/")}?run_id=run_1&version=0`), { params: Promise.resolve({ path }) });
+  expect(response.headers.get("content-disposition")).toBe("attachment");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(response.headers.get("content-type")).toBe(mime);
+  expect(await response.text()).toBe(raw);
+});
+
+it("propagates Artifact request cancellation to the upstream without widening forwarded headers", async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bytes"));
+  const controller = new AbortController();
+  const path = ["v1", "tenants", "t", "deployments", "d", "revisions", "2", "artifacts", "file.txt"];
+  const response = await GET(new NextRequest(`http://console.test/api/control/${path.join("/")}`, { signal: controller.signal }), { params: Promise.resolve({ path }) });
+  const upstreamSignal = fetcher.mock.calls[0][1]?.signal;
+  expect(upstreamSignal).toBeDefined();expect(upstreamSignal?.aborted).toBe(false);
+  controller.abort();expect(upstreamSignal?.aborted).toBe(true);
+  await response.body?.cancel();
+});
+
 it("forwards the legacy create interpreter only on the Account POST and exposes the result contract", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ account: {} }, { status: 201, headers: { "X-Channel-Result-Contract": "webhook-v1" } }));
   const path = ["v1", "tenants", "t", "channel-accounts"];
@@ -127,4 +170,14 @@ it("forwards the legacy create interpreter only on the Account POST and exposes 
   expect(response.headers.get("cache-control")).toBe("no-store");
   await PATCH(new NextRequest(`http://console.test/api/control/${path.join("/")}/a`, { method: "PATCH", body: "{}", headers: { "X-Channel-Create-Contract": "webhook-v1" } }), { params: Promise.resolve({ path: [...path, "a"] }) });
   expect(new Headers(fetch.mock.calls[1][1]?.headers).get("X-Channel-Create-Contract")).toBeNull();
+});
+
+describe("Knowledge text import proxy",()=>{
+ const path=["v1","tenants","t","deployments","d","revisions","2","knowledge","docs","import"];
+ it("rejects streamed JSON over 2MiB before forwarding",async()=>{
+  const f=vi.spyOn(globalThis,"fetch").mockResolvedValue(Response.json({documents:1}));const bytes=new Uint8Array(2*1024*1024+1);const request=new NextRequest("http://console.test/api/control/"+path.join("/"),{method:"POST",body:bytes,headers:{"content-type":"application/json"}});const r=await POST(request,{params:Promise.resolve({path})});expect(r.status).toBe(413);expect(f).not.toHaveBeenCalled();
+ });
+ it("forwards only original owner cookie and exact JSON, with client abort to upstream",async()=>{
+  const cancel=new AbortController();const f=vi.spyOn(globalThis,"fetch").mockResolvedValue(Response.json({documents:1}));const body=JSON.stringify({name:"note.txt",text:"hello"});const r=await POST(new NextRequest("http://console.test/api/control/"+path.join("/"),{method:"POST",body,signal:cancel.signal,headers:{cookie:"session=opaque","content-type":"application/json","x-tenant-id":"spoof","x-user-id":"spoof"}}),{params:Promise.resolve({path})});expect(await r.json()).toEqual({documents:1});expect(new TextDecoder().decode(f.mock.calls[0][1]?.body as ArrayBuffer)).toBe(body);expect(new Headers(f.mock.calls[0][1]?.headers).has("x-tenant-id")).toBe(false);const signal=f.mock.calls[0][1]?.signal;expect(signal).toBeDefined();cancel.abort();expect(signal?.aborted).toBe(true);
+ });
 });

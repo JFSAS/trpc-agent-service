@@ -9,20 +9,50 @@ import { diagnosticRepair, ValidationReport } from "./validation-report";
 import { ProfileResourceEditor } from "../runtime-profiles/profile-resource-editor";
 import { deployment, input, invalidReport, profileRevision, revision, validReport } from "../../test/deployment-fixtures";
 import { selectionFrom } from "../../lib/deployment-editor-state";
-const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), getRevision: vi.fn(), listRevisions: vi.fn(), getAgent: vi.fn(), getProfile: vi.fn(), listAgents: vi.fn(), listVersions: vi.fn(), listProfiles: vi.fn(), listProfileRevisions: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), getRevision: vi.fn(), listRevisions: vi.fn(), getAgent: vi.fn(), getProfile: vi.fn(), listAgents: vi.fn(), listVersions: vi.fn(), listProfiles: vi.fn(), listProfileRevisions: vi.fn(), getTenant: vi.fn() }));
 vi.mock("../../lib/deployment-api", async (original) => ({ ...await original<typeof import("../../lib/deployment-api")>(), deploymentApi: { list: mocks.list, get: mocks.get, getRevision: mocks.getRevision, listRevisions: mocks.listRevisions } }));
-vi.mock("../../lib/control-api", () => ({ controlApi: { getAgent: mocks.getAgent, listAgents: mocks.listAgents, listAgentVersions: mocks.listVersions } }));
+vi.mock("../../lib/control-api", () => ({ controlApi: { getAgent: mocks.getAgent, listAgents: mocks.listAgents, listAgentVersions: mocks.listVersions, getTenant: mocks.getTenant } }));
 vi.mock("../../lib/runtime-profile-api", async (original) => ({ ...await original<typeof import("../../lib/runtime-profile-api")>(), runtimeProfileApi: { getProfile: mocks.getProfile, listProfiles: mocks.listProfiles, listRevisions: mocks.listProfileRevisions } }));
 beforeEach(() => {
   vi.resetAllMocks(); window.history.replaceState({}, "", "/");
   mocks.list.mockResolvedValue({ deployments: [deployment], total: 21 }); mocks.get.mockResolvedValue(deployment);
   mocks.getRevision.mockResolvedValue(revision); mocks.listRevisions.mockResolvedValue({ revisions: [revision], total: 21 });
+  mocks.getTenant.mockResolvedValue({ role: "OWNER" });
   mocks.listAgents.mockResolvedValue({ agents: [{ id: "a", name: "研究流程", latest_version_number: 3 }, { id: "b", name: "另一个流程", latest_version_number: null }], total: 2 });
   mocks.listVersions.mockResolvedValue({ versions: [{ version_number: 3, published_at: "2026-09-05" }], total: 21 });
   mocks.listProfiles.mockResolvedValue({ runtime_profiles: [{ id: "p", name: "研究资源", latest_revision_number: 2 }], total: 1 }); mocks.listProfileRevisions.mockResolvedValue({ revisions: [profileRevision], total: 1 });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("Deployment list and immutable views", () => {
+  it.each(["selected", "unused", "legacy", "mismatched"])("only exposes fixed selected managed Knowledge imports: %s", async (mode) => {
+    const view = structuredClone(revision.manifest_view);
+    view.resources.knowledge.docs = { kind: mode === "legacy" ? "qdrant_openai" : "managed_knowledge" };
+    view.agent_plan.nodes[view.agent_plan.root].knowledge_resources = mode === "unused" ? [] : ["docs"];
+    mocks.getRevision.mockResolvedValue({ ...revision, deployment_id: mode === "mismatched" ? "other" : "d", manifest_view: view });
+    render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={1} />);
+    await screen.findByText("发布技术信息");
+    if (mode === "selected") expect(screen.getByRole("region", { name: "Knowledge 文本导入" })).toBeInTheDocument();
+    else expect(screen.queryByRole("region", { name: "Knowledge 文本导入" })).toBeNull();
+  });
+
+  it.each([true, false])("shows the Artifact panel only for an explicitly enabled node and fixed published storage role: %s", async (enabled) => {
+    const view = structuredClone(revision.manifest_view);
+    view.agent_plan.nodes[view.agent_plan.root].artifact = { enabled, resource: "artifact" };
+    view.storage_roles.artifact = "artifact";
+    mocks.getRevision.mockResolvedValue({ ...revision, manifest_view: view });
+    render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={1} />);
+    await screen.findByRole("link", { name: "接入渠道" });
+    if (enabled) expect(screen.getByRole("region", { name: "Artifact 文件" })).toBeInTheDocument();
+    else expect(screen.queryByRole("region", { name: "Artifact 文件" })).toBeNull();
+  });
+  it("does not expose an Artifact operation panel from a mismatched returned revision", async () => {
+    const view = structuredClone(revision.manifest_view);view.agent_plan.nodes[view.agent_plan.root].artifact = { enabled: true, resource: "artifact" };view.storage_roles.artifact = "artifact";
+    mocks.getRevision.mockResolvedValue({ ...revision, deployment_id: "other", manifest_view: view });
+    render(<DeploymentRevisionDetail tenantId="t" deploymentId="d" revisionNumber={1} />);
+    await screen.findByText("发布技术信息");
+    expect(screen.queryByRole("region", { name: "Artifact 文件" })).toBeNull();
+    expect(mocks.getTenant).not.toHaveBeenCalled();
+  });
   it("uses paged metadata without N+1 reads or invented runtime statuses", async () => {
     render(<DeploymentList tenantId="t" />); await screen.findByText(deployment.name);
     expect(screen.getByText("尚未发布")).toBeInTheDocument(); expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.getRevision).not.toHaveBeenCalled();

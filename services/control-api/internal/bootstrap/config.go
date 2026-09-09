@@ -13,6 +13,10 @@ import (
 
 // Config contains the process configuration required by Control API V1.
 type Config struct {
+	PlatformBackendCatalogFile       string
+	PlatformBackendCatalogSHA256     string
+	PlatformBackendTargetsFile       string
+	PlatformBackendTargetsSHA256     string
 	Channel                          *ChannelConfig
 	Runtime                          *RuntimeConfig
 	ProfileCredentialKey             []byte
@@ -82,6 +86,10 @@ func LoadConfig() (Config, error) {
 	return Config{
 		Channel:                          channel,
 		Runtime:                          runtime,
+		PlatformBackendCatalogFile:       strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_CATALOG_FILE")),
+		PlatformBackendCatalogSHA256:     strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_CATALOG_SHA256")),
+		PlatformBackendTargetsFile:       strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_TARGETS_FILE")),
+		PlatformBackendTargetsSHA256:     strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_TARGETS_SHA256")),
 		ProfileCredentialKey:             credentialKey,
 		DeploymentExpectedContractDigest: expectedContractDigest,
 		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment(

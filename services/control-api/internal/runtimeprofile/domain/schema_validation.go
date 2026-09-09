@@ -165,6 +165,30 @@ func validateToolAuth(value any, pointer string, diagnostics *[]Diagnostic) {
 }
 
 func validateKnowledgeResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
+	if object["kind"] == string(KnowledgeKindManaged) {
+		selection := make(map[string]any, len(object))
+		for k, v := range object {
+			selection[k] = v
+		}
+		_, id := object["qdrant_api_key_credential_id"]
+		_, digest := object["credential_audience_digest"]
+		if id || digest {
+			requireFields(object, pointer, []string{"qdrant_api_key_credential_id", "credential_audience_digest"}, diagnostics)
+			validatePatternString(object, "qdrant_api_key_credential_id", pointer, "credential", diagnostics)
+			v, ok := object["credential_audience_digest"].(string)
+			if !ok || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(v) {
+				*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/credential_audience_digest", "invalid credential audience"))
+			}
+		}
+		delete(selection, "qdrant_api_key_credential_id")
+		delete(selection, "credential_audience_digest")
+		validateManagedSelection(pointer, selection, []string{"kind", "backend_id", "backend_revision", "embedding"}, diagnostics)
+		if v, ok := object["embedding"]; ok {
+			validateEmbedding(v, pointer+"/embedding", diagnostics)
+		}
+		return
+	}
+
 	kind, ok := validateResourceKind(object, pointer, string(KnowledgeKindQdrantOpenAI), diagnostics)
 	if !ok || kind != string(KnowledgeKindQdrantOpenAI) {
 		return
@@ -206,6 +230,59 @@ func validateEmbedding(value any, pointer string, diagnostics *[]Diagnostic) {
 }
 
 func validateStorageResource(_ string, pointer string, object map[string]any, diagnostics *[]Diagnostic) {
+	if k, ok := object["kind"].(string); ok && StorageKind(k).Managed() {
+		selection := object
+		if StorageKind(k) == StorageKindManagedArtifact {
+			selection = make(map[string]any, len(object))
+			for key, v := range object {
+				selection[key] = v
+			}
+			_, a := object["access_key_id_credential_id"]
+			_, z := object["secret_access_key_credential_id"]
+			_, d := object["credential_audience_digest"]
+			if a || z || d {
+				if a || z {
+					requireFields(object, pointer, []string{"credential_audience_digest"}, diagnostics)
+				} else {
+					*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer, "artifact credential association is empty"))
+				}
+				for _, key := range []string{"access_key_id_credential_id", "secret_access_key_credential_id"} {
+					if _, ok := object[key]; ok {
+						validatePatternString(object, key, pointer, "credential", diagnostics)
+					}
+				}
+				value, ok := object["credential_audience_digest"].(string)
+				if !ok || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(value) {
+					*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/credential_audience_digest", "credential audience digest is invalid"))
+				}
+			}
+			delete(selection, "access_key_id_credential_id")
+			delete(selection, "secret_access_key_credential_id")
+			delete(selection, "credential_audience_digest")
+		}
+
+		if StorageKind(k) == StorageKindManagedMemory || StorageKind(k) == StorageKindManagedSession {
+			selection = make(map[string]any, len(object))
+			for key, v := range object {
+				selection[key] = v
+			}
+			_, hasID := object["dsn_credential_id"]
+			_, hasAudience := object["credential_audience_digest"]
+			if hasID || hasAudience {
+				requireFields(object, pointer, []string{"dsn_credential_id", "credential_audience_digest"}, diagnostics)
+				validatePatternString(object, "dsn_credential_id", pointer, "credential", diagnostics)
+				value, ok := object["credential_audience_digest"].(string)
+				if !ok || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(value) {
+					*diagnostics = append(*diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_INVALID_IDENTIFIER", pointer+"/credential_audience_digest", "credential audience digest is invalid"))
+				}
+			}
+			delete(selection, "dsn_credential_id")
+			delete(selection, "credential_audience_digest")
+		}
+		validateManagedSelection(pointer, selection, []string{"kind", "backend_id", "backend_revision"}, diagnostics)
+		return
+	}
+
 	kind, ok := validateResourceKind(object, pointer, string(StorageKindPostgresState), diagnostics)
 	if !ok || kind != string(StorageKindPostgresState) {
 		return

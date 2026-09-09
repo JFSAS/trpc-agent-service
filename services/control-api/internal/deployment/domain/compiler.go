@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
 	"net/url"
 	"sort"
 	"strings"
@@ -21,6 +22,20 @@ import (
 func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	compilerVersion := CompilerVersionV1
 	diagnostics := validateCompileInput(input)
+	diagnostics = append(diagnostics, ValidateManagedSnapshots(input)...)
+	if input.Platform.Version == deploymentv1.WorkerV1PlatformVersion && agentUsesStorageRole(input.Agent.Spec, "memory") {
+		backend, ok := input.ManagedBackends["storage/memory"]
+		if !ok || !memoryRuntimePrincipal(backend) || input.Profile.Spec.Storage["memory"].Kind != profiledomain.StorageKindManagedMemory {
+			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/memory", "Worker V1 Memory requires managed PostgreSQL or Redis with memory_runtime principal"))
+		}
+	}
+	if input.Platform.Version == deploymentv1.WorkerV1PlatformVersion && input.Profile.Spec.Storage["session"].Kind == profiledomain.StorageKindManagedSession {
+		b, ok := input.ManagedBackends["storage/session"]
+		if !ok || b.Kind != datav1.Redis || b.Redis == nil || b.Redis.Username != "session_runtime" {
+			diagnostics = append(diagnostics, diagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourcePlatform, "/storage/session", "Worker V1 managed Session requires Redis with session_runtime principal"))
+		}
+	}
+	diagnostics = append(diagnostics, dataContractDiagnostics(input.Agent.Spec, input.Platform)...)
 	if len(errorDiagnostics(diagnostics)) > 0 {
 		return CompiledManifest{}, NewValidationReport(
 			compilerVersion, input.Platform.Digest, diagnostics,
@@ -31,7 +46,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	resolvedModels, resolvedTools, resolvedKnowledge := matchDeclaredRequirements(
 		input.Agent.Spec, input.Profile.Spec, used, &diagnostics,
 	)
-	selectedStorage, storageRoles := selectStorageRoles(input.Profile.Spec, &diagnostics)
+	selectedStorage, storageRoles := selectStorageRoles(input.Profile.Spec, &diagnostics, input.Agent.Spec)
 
 	plan := compileAgentPlan(
 		input.Agent.Spec, input.Profile.Spec,
@@ -40,7 +55,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	)
 	resources, uses, endpointHosts := compileResources(
 		used, resolvedModels, resolvedTools, resolvedKnowledge, selectedStorage,
-		input.Platform, &diagnostics,
+		input.Platform, input.ManagedBackends, &diagnostics,
 	)
 	if len(endpointHosts) > 128 {
 		diagnostics = append(diagnostics, diagnostic(
@@ -74,6 +89,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 				Digest: input.Profile.SpecDigest,
 			},
 		},
+		Runtime:   compileManifestRuntime(input.Agent.Spec),
 		AgentPlan: plan, Resources: resources,
 		ResolvedRequirements: ResolvedRequirements{
 			Models:    identityResolution(used.models, resolvedModels),
@@ -206,6 +222,9 @@ func collectUsedRequirements(spec agentdomain.Spec) usedRequirements {
 			used.knowledge[name] = true
 		}
 	}
+	if spec.Runtime != nil && spec.Runtime.Summary != nil && spec.Runtime.Summary.Enabled {
+		used.models[spec.Runtime.Summary.ModelSlot] = true
+	}
 	return used
 }
 
@@ -297,6 +316,7 @@ func matchDeclaredRequirements(
 func selectStorageRoles(
 	profile profiledomain.Spec,
 	diagnostics *[]Diagnostic,
+	agents ...agentdomain.Spec,
 ) (map[string]profiledomain.StorageResource, map[string]string) {
 	selected := make(map[string]profiledomain.StorageResource)
 	roles := make(map[string]string)
@@ -317,7 +337,8 @@ func selectStorageRoles(
 			"storage.session does not support the session runtime role",
 		))
 	}
-	if memory, exists := profile.Storage[StorageRoleMemory]; exists {
+	if memory, exists := profile.Storage[StorageRoleMemory]; exists &&
+		(!memory.Kind.Managed() || (len(agents) > 0 && agentUsesStorageRole(agents[0], StorageRoleMemory))) {
 		if storageSupportsRole(memory, profiledomain.CapabilityStorageMemory) {
 			selected[StorageRoleMemory] = memory
 			roles[StorageRoleMemory] = StorageRoleMemory
@@ -329,11 +350,31 @@ func selectStorageRoles(
 			))
 		}
 	}
+	if len(agents) > 0 {
+		for _, role := range []string{StorageRoleMemory, "artifact"} {
+			if !agentUsesStorageRole(agents[0], role) {
+				continue
+			}
+			r, ok := profile.Storage[role]
+			if !ok {
+				*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticStorageRoleMissing, SeverityError, DiagnosticSourceProfile, "/storage/"+role, "storage", role, "required runtime role is missing"))
+				continue
+			}
+			if role == "artifact" {
+				if r.Kind != profiledomain.StorageKindManagedArtifact {
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticStorageRoleUnsupported, SeverityError, DiagnosticSourceProfile, "/storage/artifact", "storage", role, "artifact requires a managed artifact resource"))
+					continue
+				}
+				selected[role] = r
+				roles[role] = role
+			}
+		}
+	}
 	return selected, roles
 }
 
 func storageSupportsRole(resource profiledomain.StorageResource, capability string) bool {
-	return resource.Kind == profiledomain.StorageKindPostgresState &&
+	return (resource.Kind == profiledomain.StorageKindPostgresState || resource.Kind.Managed()) &&
 		containsString(resource.ProvidedCapabilities(), capability)
 }
 
@@ -363,6 +404,7 @@ func compileAgentPlan(
 					"node callable entries do not satisfy the fixed provider naming contract",
 				))
 			}
+			compileNodeData(&node, source, id, platform, diagnostics)
 			node.Generation = cloneGeneration(source.Generation)
 			if len(node.CallableEntries) > platform.Limits.MaxCallableEntriesPerNode {
 				*diagnostics = append(*diagnostics, nodeResourceDiagnostic(
@@ -380,7 +422,7 @@ func compileAgentPlan(
 					"node max_output_tokens exceeds the platform execution limit",
 				))
 			}
-			if len(node.CallableEntries) > 0 {
+			if len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil {
 				model, exists := profile.Models[source.ModelSlot]
 				requirement := agent.Requirements.Models[source.ModelSlot]
 				if exists && !containsString(model.ProvidedCapabilities(), profiledomain.CapabilityToolCall) &&
@@ -417,6 +459,7 @@ func compileResources(
 	knowledge map[string]profiledomain.KnowledgeResource,
 	storage map[string]profiledomain.StorageResource,
 	platform PlatformExecutionContract,
+	backends map[string]datav1.Snapshot,
 	diagnostics *[]Diagnostic,
 ) (ManifestResources, []CredentialUse, []string) {
 	resources := ManifestResources{
@@ -495,6 +538,27 @@ func compileResources(
 				"knowledge adapter does not expose the frozen retrieval callable",
 			))
 		}
+		if resource.Kind == profiledomain.KnowledgeKindManaged {
+			snapshot := backends["knowledge/"+name].Clone()
+			host, _ := snapshot.EndpointHost()
+			hosts[host] = true
+			checkURLHost(resource.Embedding.BaseURL, "/knowledge/"+escapeJSONPointer(name)+"/embedding/base_url", "knowledge", name, allowedHosts, hosts, diagnostics)
+			credential := credentialUse(resource.Embedding.APIKeyCredentialID, CredentialPurposeEmbeddingAPIKey, audienceDigest(resource.Kind, resource.Embedding.BaseURL))
+			uses = append(uses, credential)
+			var qdrantUse *CredentialUse
+			if platform.Version == deploymentv1.WorkerV1PlatformVersion || resource.QdrantAPIKeyCredentialID != "" || resource.CredentialAudienceDigest != "" {
+				digest, err := snapshot.Digest()
+				u := credentialUse(resource.QdrantAPIKeyCredentialID, CredentialPurposeQdrantAPIKey, digest)
+				if err != nil || resource.CredentialAudienceDigest != digest || !validCredentialUse(u, CredentialPurposeQdrantAPIKey) {
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/knowledge/"+escapeJSONPointer(name), "knowledge", name, "Qdrant credential missing or bound to different target"))
+				} else {
+					qdrantUse = &u
+					uses = append(uses, u)
+				}
+			}
+			resources.Knowledge[name] = ManifestKnowledgeResource{Credential: qdrantUse, Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind, Embedding: ManifestEmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, Credential: credential}, Capability: profiledomain.CapabilityKnowledgeSearch}
+			continue
+		}
 		checkHost(resource.Host, "/knowledge/"+escapeJSONPointer(name)+"/host",
 			"knowledge", name, allowedHosts, hosts, diagnostics)
 		checkURLHost(resource.Embedding.BaseURL,
@@ -530,6 +594,39 @@ func compileResources(
 		adapter, supported := platform.StorageAdapters[resource.Kind]
 		if !supported {
 			*diagnostics = append(*diagnostics, unsupportedAdapter("storage", name, resource.Kind))
+		}
+		if resource.Kind.Managed() {
+			snapshot := backends["storage/"+name].Clone()
+			host, _ := snapshot.EndpointHost()
+			hosts[host] = true
+			compiledResource := ManifestStorageResource{Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind}
+			if managedPasswordBackend(resource.Kind, snapshot) && (resource.Kind == profiledomain.StorageKindManagedMemory || platform.Version == deploymentv1.WorkerV1PlatformVersion || resource.DSNCredentialID != "" || resource.CredentialAudienceDigest != "") {
+				digest, err := snapshot.Digest()
+				if err != nil || resource.CredentialAudienceDigest != digest || resource.DSNCredentialID == "" {
+					*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name)+"/dsn_credential_id", "storage", name, "Storage credential is missing or bound to a different target"))
+				} else {
+					compiledResource.Credential = credentialUse(resource.DSNCredentialID, CredentialPurposeDSNPassword, digest)
+					uses = append(uses, compiledResource.Credential)
+				}
+			} else if resource.Kind == profiledomain.StorageKindManagedArtifact && snapshot.Kind == datav1.S3 {
+				if platform.Version == deploymentv1.WorkerV1PlatformVersion || resource.AccessKeyIDCredentialID != "" || resource.SecretAccessKeyCredentialID != "" || resource.CredentialAudienceDigest != "" {
+					digest, err := snapshot.Digest()
+					creds := &ArtifactCredentials{AccessKeyID: credentialUse(resource.AccessKeyIDCredentialID, "access_key_id", digest), SecretAccessKey: credentialUse(resource.SecretAccessKeyCredentialID, "secret_access_key", digest)}
+					if err != nil || resource.CredentialAudienceDigest != digest || !validArtifactCredentials(creds, snapshot) {
+						*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name), "storage", name, "Artifact credentials missing or bound to a different target"))
+					} else {
+						compiledResource.Credentials = creds
+						uses = append(uses, creds.AccessKeyID, creds.SecretAccessKey)
+					}
+				}
+			} else if resource.DSNCredentialID != "" || resource.CredentialAudienceDigest != "" || resource.AccessKeyIDCredentialID != "" || resource.SecretAccessKeyCredentialID != "" {
+				*diagnostics = append(*diagnostics, resourceDiagnostic(DiagnosticCredentialUnavailable, SeverityError, DiagnosticSourceProfile, "/storage/"+escapeJSONPointer(name), "storage", name, "credential purpose is unsupported for this backend"))
+			}
+			if resource.Kind == profiledomain.StorageKindManagedArtifact {
+				compiledResource.MetadataContract = ArtifactMetadataContract
+			}
+			resources.Storage[name] = compiledResource
+			continue
 		}
 		checkHost(resource.Destination.Host,
 			"/storage/"+escapeJSONPointer(name)+"/destination/host",
@@ -724,4 +821,10 @@ func errorDiagnostics(diagnostics []Diagnostic) []Diagnostic {
 
 func escapeJSONPointer(value string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(value, "~", "~0"), "/", "~1")
+}
+
+// Only role-scoped runtime principals may receive Memory credentials.
+func memoryRuntimePrincipal(s datav1.Snapshot) bool {
+	return (s.Kind == datav1.PostgreSQL && s.PostgreSQL != nil && s.PostgreSQL.Username == "memory_runtime") ||
+		(s.Kind == datav1.Redis && s.Redis != nil && s.Redis.Username == "memory_runtime")
 }

@@ -43,3 +43,48 @@ logical EntryID, exactly 63 ASCII characters. Compiler and manifest validation
 use the same pure resolver intended for the future Worker. Invalid or duplicate
 entries and name collisions reject the whole node set; enumeration-order
 suffixes and remote-name guessing are not part of V1.
+
+### P0b2 resolved data components (contract-only first slice)
+
+`data_capabilities.go` and `data-capabilities.schema.json` define reusable,
+strictly decoded resolved components shared with the Control domain:
+
+- Memory: `resource`, SDK `tools`, optional `preload_limit` (-1 all, 0 off,
+  positive adaptive entry count). With no tools and no active preload, omit the
+  component rather than creating a runtime resource closure.
+- Artifact: `enabled: true`, `resource`. This enables a service, not implicit tools.
+- Summary: `enabled: true`, `model_resource`, positive `event_threshold`.
+- Artifact metadata contract: `worker-artifact-metadata-v1`.
+
+The aggregate DTO/schema now exposes optional `content.runtime.summary` and LLM
+node `memory`, `artifact`, and `add_session_summary`. Missing fields stay absent;
+explicit null, false, and empty enabled components are rejected by the aggregate
+schema. `add_session_summary` is represented by `*bool` and only accepts true.
+Compiler and persisted-read validation now cover these components, including
+Summary model closure, explicit per-node services, required storage roles, and
+final provider-name collisions. Ordinary tools retain deterministic `fn_*` names;
+Memory retains SDK names. Logical names alone do not cause false collisions.
+Disabled source components are omitted from execution output. Public views retain
+capability selections but omit managed physical targets and credentials.
+
+The static PlatformContract `runtime_data_capabilities` set pins which capabilities
+are allowed; omitted/empty preserves legacy contract bytes and grants none.
+Production `worker-v1` remains fail-closed for new declarations until the Worker
+release enables its verified adapters. Catalog loading never enables adapters or
+capabilities. Domain/application tests exercise explicit nonproduction contracts;
+they do not prove live backend execution.
+
+### PostgreSQL Memory credential use
+
+A `managed_memory` resource whose fixed backend kind is `postgresql` requires
+`credential: {credential_id, purpose: "dsn_password", audience_digest}`. Its
+audience must equal that backend's `Snapshot.Digest()` exactly, including tenant,
+role isolation and target. Profile stores this server-derived binding; compilation
+adds it to required credential uses. Shared and Control decoders reject missing,
+foreign-purpose, wrong-audience and null credentials. Redis Memory must not carry
+this field. Public views expose only `credential_present` for PG Memory.
+
+The current static Worker platform declaration preserves Summary and legacy
+Session and adds Memory. The Control publication precheck limits the new role to
+managed PostgreSQL with `memory_runtime`; the Worker-owned gate and actual SDK
+adapter must be integrated together before production Memory execution.

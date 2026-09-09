@@ -527,3 +527,98 @@ Adapter 是消费接入基础，不代表真实执行拥有方与 Worker 已经�
 
 默认 bootstrap 不开启内部解析路由，不注入许可型 verifier。完整集成验证以实际输出
 为准，本文不把测试替身或可选 Adapter 记作生产运行面完成。
+
+## PostgreSQL／Redis Memory 最小密码契约
+
+`managed_memory` 选择平台 PostgreSQL 或 Redis 后端时，公开 `config.storage.memory`
+仍只有 `kind`、`backend_id`、`backend_revision`。写入实际密码使用：
+
+```json
+{"credentials":{"storage":{"memory":{"dsn_password":{"action":"replace","value":"<password>"}}}}}
+```
+
+`value` 是密码而不是完整 DSN；`keep`／`clear` 沿用既有操作语义。
+平台目标固定 host、port、database、username、TLS；本运行契约要求
+`managed-postgres-v1` 或 `managed-redis-v1`、Memory 隔离及 `memory_runtime` 执行身份。
+其他托管角色不因此获得密码输入能力。Redis 是正式持久 Memory 后端，不配置隐式 TTL；
+密码仅用于认证，不能改变 Snapshot 固定的 Host/Port/Username/Database/TLS。
+
+Profile 使用方端口 `ManagedCredentialTargetResolver.ResolveManagedCredentialAudience`
+从可信目录解析租户作用域、确定 backend ID/revision 的 PostgreSQL／Redis Memory 目标，返回
+`Snapshot.Digest()`。服务端将这个摘要与生成的 `dsn_credential_id` 一起保存到
+内部 canonical 的 `credential_audience_digest`，不接受用户提交或在公开 config 返回。
+密码复用现有 Profile 私有加密存储，purpose 为 `dsn_password`。
+
+Deployment 实际启用托管 PostgreSQL／Redis Memory 时要求两项内部关联存在，并要求 Profile 保存的
+摘要与固定 Manifest Backend 的摘要完全一致。Manifest 的资源 `credential` 只保存
+`credential_id`、`purpose=dsn_password`、`audience_digest`；编译 required uses 包含它。
+Worker 复用现有受认证 `ResolveForAttempt` 取得密码，再用固定后端描述构造连接，
+不从环境变量补密码，不把密码写入 Manifest、Outbox 或事件。
+
+更换 backend ID/revision 后，`keep` 不会跨目标复用旧密码；必须显式 `replace`。
+未配置或已清除密码的 Draft 可保存，但实际托管 Memory 发布编译会返回凭据诊断。
+已发布 Revision 的状态和轮换使用固定关联、association token、主体授权与凭据 CAS；
+不读取当前目录，目录下架不自动清除状态或阻止既有引用轮换。轮换不改 Revision。
+公开状态键为 `credential_states.storage.memory.dsn_password`。
+
+现有凭据表对 purpose 只有非空约束，本改动不需要数据库迁移，也不修改历史迁移。
+
+Redis Memory 的历史无凭据 Manifest descriptor 保持 Canonical／详情读取与原公开投影；
+这不授予执行能力，新编译／发布仍要求固定凭据关联，Worker gate 也拒绝无凭据执行。
+本批使用协调同批发布；新 Redis Memory Manifest 不投递给旧 PG-only Worker，
+不滚动混用这两种实现。当前不新增协议字段或扩大运行契约版本。
+
+## Redis 托管 Session 密码与 Summary 边界
+
+`managed_session` 选择 Redis 时复用 `credentials.storage.session.dsn_password`，
+对应 `credential_states.storage.session.dsn_password`。输入值只用于认证，不是 DSN。
+公开配置仍为 kind/backend_id/backend_revision，内部同样成对保存
+`dsn_credential_id` 与 `credential_audience_digest=Snapshot.Digest()`。
+
+`ResolveManagedCredentialAudience(ctx, tenant, backendID, revision, role)` 按角色验证：
+Memory 允许 PostgreSQL／Redis 的 `memory_runtime`；Session 仅允许 Redis 的
+`session_runtime`。托管 PostgreSQL Session 暂不启用，旧 `postgres_state` 不受影响。
+保存／发布使用固定 Snapshot 的 Host/Port/Username/Database/TLS 与租户、角色范围。
+更换目标时 keep 拒绝、replace 重绑；已发布凭据的状态与轮换继续按不可变关联，
+不重新查询当前目录，不新增凭据生命周期。
+
+Worker 发布托管 Redis Session 必须携带匹配的密码引用；历史无凭据描述仍可读取，
+公开投影不额外增加 credential_present，Worker 拒绝执行缺少凭据的描述。
+Summary 与消息和状态共用同一 Session 后端快照。Session 身份仍包含
+DeploymentRevisionID，不跨 Revision 迁移 Session，也不引入新的 identity。
+本批仍协调同批发布，不将新 Session Manifest 交给旧 Worker。
+
+## Artifact S3 双凭据
+
+`managed_artifact` 选择固定平台 S3 Snapshot，公开配置仍是
+kind/backend_id/backend_revision。写入使用
+`credentials.storage.artifact.access_key_id` 与 `secret_access_key`，
+分别复用 keep/replace/clear 与现有已发布凭据轮换协议。
+两项均加密保存，内部字段为 access_key_id_credential_id、
+secret_access_key_credential_id 和 credential_audience_digest=Snapshot.Digest()。
+Draft 可暂存部分配置；新 Worker 发布必须两项齐全且匹配目标摘要。
+更换目标时所有保留的旧关联都会拒绝 keep，必须 replace 或 clear；
+发布后逐字段轮换独立于目录且不改 Revision，不宣称两个独立请求原子换对。
+
+Manifest 使用 credentials.access_key_id / credentials.secret_access_key，
+每项仅含 credential_id/purpose/audience_digest，purpose 与字段同名。
+endpoint、bucket、region、path_style、versioning 都来自固定 Snapshot；
+密码不得覆盖目标。公开 Manifest 只显示 credential_present。
+历史无 credentials 描述保持可读，但不通过新 Worker 执行门禁。
+Artifact 元数据继续沿用既有 Worker PostgreSQL metadata_contract，
+不增加用户数据库配置；需要 Artifact 的节点必须选择支持 tool_call 的模型。
+
+## 托管 Knowledge 的固定凭据
+
+目标解析接口泛化为 `ResolveManagedCredentialAudience`，存储角色语义不变；
+knowledge 角色只解析租户获准使用的固定 Qdrant Snapshot。
+`managed_knowledge` 复用 qdrant_api_key 输入、状态及轮换，内部成对保存
+qdrant_api_key_credential_id 与 credential_audience_digest=Snapshot.Digest()。
+Manifest.Credential 使用 qdrant_api_key 与该摘要，Embedding.Credential 继续使用
+既有 embedding_api_key 和 kind/BaseURL audience 算法，不改已有身份绑定。
+新 Worker 发布必须显式 Qdrant Key；历史无 Key 描述保持可读但不可执行。
+
+Knowledge 的 Worker scope 包含 tenant/profile/resource/backendDigest 与固定
+embedding model/baseURL/dimensions，不包含 DeploymentRevisionID；同配置重复发布可复用。
+导入绑定固定发布Revision与被Agent选择的resource，不接受用户提供scope或后端目标。
+不新增 chunk 配置、知识任务平台或后台导入调度。

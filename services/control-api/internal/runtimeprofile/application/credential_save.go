@@ -148,6 +148,12 @@ func (s *Service) SaveCredentialDraft(ctx context.Context, command SaveCredentia
 		if err != nil {
 			return err
 		}
+		if err := s.checkManaged(ctx, command.TenantID, next); err != nil {
+			return err
+		}
+		if err := s.bindManagedStorageCredentialTargets(ctx, command.TenantID, input, &next, previous); err != nil {
+			return err
+		}
 		// DSNs carry a password and destination. Resolve their non-secret part before
 		// comparing immutable purposes; do not persist the original URI.
 		values := make(map[string][]byte)
@@ -163,7 +169,7 @@ func (s *Service) SaveCredentialDraft(ctx context.Context, command SaveCredentia
 						continue
 					}
 					key := category + "/" + name + "/" + purpose
-					if category == "storage" {
+					if category == "storage" && purpose == "dsn" {
 						destination, password, err := ParseStorageCredential(*action.Value)
 						if err != nil {
 							return err

@@ -1,8 +1,18 @@
 package domain
 
+import (
+	datav1 "github.com/liuzengh/trpc-agent-service/api/runtime/data/v1"
+	"time"
+)
+
 // Plan is the runtime-ready projection of one fully validated immutable
 // Manifest. It carries only the V1 closure, never mutable Profile values.
 type Plan struct {
+	Knowledge                                                  *KnowledgePlan
+	Artifact                                                   *ArtifactPlan
+	Memory                                                     *MemoryPlan
+	MaxToolCalls                                               int64
+	Summary                                                    *SummaryPlan
 	TenantID, ManifestID, ManifestDigest, DeploymentRevisionID string
 	ProfileID                                                  string
 	ProfileRevision                                            int64
@@ -12,8 +22,41 @@ type Plan struct {
 	NodeMaxOutputTokens                                        *int64
 	MaxOutputTokens, MaxRunSeconds                             int64
 	ModelCredential, SessionCredential                         CredentialUse
+	SessionBackend                                             *datav1.Snapshot
 	SessionTarget                                              StorageTarget
 }
+
+// SummaryPlan is the fixed model dependency for Session summary generation.
+// It shares the execution per-output ceiling, not an accumulated token budget.
+type SummaryPlan struct {
+	ModelEndpoint, ModelName string
+	ModelCredential          CredentialUse
+	EventThreshold           int64
+	AddSessionSummary        bool
+}
+
+// MemoryPlan binds explicit node options to a fixed tenant backend and credential.
+type MemoryPlan struct {
+	AgentID      string
+	Backend      datav1.Snapshot
+	Credential   CredentialUse
+	Tools        []string
+	PreloadLimit int
+}
+
+type KnowledgePlan struct {
+	Resource                          string
+	Backend                           datav1.Snapshot
+	Credential, EmbeddingCredential   CredentialUse
+	EmbeddingModel, EmbeddingEndpoint string
+	Dimensions                        int64
+}
+
+type ArtifactPlan struct {
+	Backend                      datav1.Snapshot
+	AccessKeyID, SecretAccessKey CredentialUse
+}
+
 type CredentialUse struct{ CredentialID, Purpose, AudienceDigest string }
 type StorageTarget struct {
 	Host                        string
@@ -29,10 +72,43 @@ func (p Plan) Uses() []CredentialUse {
 	if p.SessionCredential.CredentialID != "" {
 		uses = append(uses, p.SessionCredential)
 	}
+	if p.Summary != nil && p.Summary.ModelCredential.CredentialID != "" {
+		use := p.Summary.ModelCredential
+		duplicate := false
+		for _, existing := range uses {
+			if existing == use {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			uses = append(uses, use)
+		}
+	}
+	if p.Memory != nil && p.Memory.Credential.CredentialID != "" {
+		use := p.Memory.Credential
+		found := false
+		for _, existing := range uses {
+			if existing == use {
+				found = true
+			}
+		}
+		if !found {
+			uses = append(uses, use)
+		}
+	}
+	if p.Artifact != nil {
+		uses = append(uses, p.Artifact.AccessKeyID, p.Artifact.SecretAccessKey)
+	}
+	if p.Knowledge != nil {
+		uses = append(uses, p.Knowledge.Credential, p.Knowledge.EmbeddingCredential)
+	}
 	return uses
 }
 
 type RuntimeResult struct {
+	MemoryDigest                           string
+	MemoryTimeout                          time.Duration
 	FinalText                              string
 	Snapshot                               []byte
 	InputTokens, OutputTokens, TotalTokens int64

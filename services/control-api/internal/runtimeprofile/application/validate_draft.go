@@ -29,5 +29,11 @@ func (s *Service) ValidateProfileDraft(
 		return domain.ValidationReport{}, ErrDraftRevisionConflict
 	}
 	_, report := domain.ValidateForPublication(draft.Spec, draft.Revision)
+	if report.Valid {
+		if err := s.checkManagedDocument(ctx, command.TenantID, draft.Spec); err != nil {
+			report.Valid = false
+			report.Diagnostics = append(report.Diagnostics, domain.Diagnostic{Code: "RUNTIME_PROFILE_BACKEND_UNAVAILABLE", Severity: domain.SeverityError, Pointer: "", Message: "one or more selected platform backends are unavailable"})
+		}
+	}
 	return report, nil
 }
