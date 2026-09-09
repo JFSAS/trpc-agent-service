@@ -17,7 +17,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' HUP TERM
 n=0
-until docker exec "$CID" pg_isready -U platform_admin -d agent_platform >/dev/null 2>&1; do
+# Use TCP and an actual database query: the image bootstrap socket server can
+# report ready before POSTGRES_DB exists and before the final server starts.
+until docker exec "$CID" psql -h 127.0.0.1 -U platform_admin -d agent_platform \
+ -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1; do
  n=$((n+1)); test "$n" -lt 60 || exit 1; sleep 1
 done
 PORT=$(docker port "$CID" 5432/tcp | sed -n 's/^127\.0\.0\.1://p')
