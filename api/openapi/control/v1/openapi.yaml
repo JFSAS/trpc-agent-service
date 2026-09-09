@@ -1826,12 +1826,27 @@ components:
           description: "Publication accepts postgres_state only."
         destination:
           $ref: "#/components/schemas/RuntimeProfileStorageDestination"
+    RuntimeProfileExecutorConfig:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [sdk_sandbox]
     RuntimeProfileConfig:
       type: "object"
       additionalProperties: false
       description: "Non-secret typed editor configuration. Draft resource fields may be incomplete or fail publication validation. Credential values and internal IDs are never accepted here. Canonical publication retains the closed V1 kind/capability rules."
       required: ["models", "tools", "knowledge", "storage"]
       properties:
+        executors:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          additionalProperties:
+            $ref: '#/components/schemas/RuntimeProfileExecutorConfig'
         models:
           type: "object"
           additionalProperties:

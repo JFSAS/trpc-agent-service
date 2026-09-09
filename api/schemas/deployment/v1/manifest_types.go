@@ -76,6 +76,7 @@ type AgentPlan struct {
 // ManifestNode is a closed union. MarshalJSON omits every inactive branch so
 // zero values cannot silently become executable options.
 type ManifestNode struct {
+	Workspace         *ManifestWorkspace
 	Memory            *ManifestMemory
 	Artifact          *ManifestArtifact
 	AddSessionSummary *bool
@@ -98,20 +99,21 @@ func (n ManifestNode) MarshalJSON() ([]byte, error) {
 	switch n.Kind {
 	case "llm":
 		return json.Marshal(struct {
-			Kind               string            `json:"kind"`
-			Name               string            `json:"name,omitempty"`
-			Instruction        string            `json:"instruction"`
-			ModelResource      string            `json:"model_resource"`
-			ToolResources      []string          `json:"tool_resources"`
-			KnowledgeResources []string          `json:"knowledge_resources"`
-			CallableEntries    []string          `json:"callable_entries"`
-			Generation         *Generation       `json:"generation,omitempty"`
-			Memory             *ManifestMemory   `json:"memory,omitempty"`
-			Artifact           *ManifestArtifact `json:"artifact,omitempty"`
-			AddSessionSummary  *bool             `json:"add_session_summary,omitempty"`
+			Kind               string             `json:"kind"`
+			Name               string             `json:"name,omitempty"`
+			Instruction        string             `json:"instruction"`
+			ModelResource      string             `json:"model_resource"`
+			ToolResources      []string           `json:"tool_resources"`
+			KnowledgeResources []string           `json:"knowledge_resources"`
+			CallableEntries    []string           `json:"callable_entries"`
+			Generation         *Generation        `json:"generation,omitempty"`
+			Memory             *ManifestMemory    `json:"memory,omitempty"`
+			Artifact           *ManifestArtifact  `json:"artifact,omitempty"`
+			AddSessionSummary  *bool              `json:"add_session_summary,omitempty"`
+			Workspace          *ManifestWorkspace `json:"workspace,omitempty"`
 		}{
 			n.Kind, n.Name, n.Instruction, n.ModelResource,
-			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary,
+			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary, n.Workspace,
 		})
 	case "sequence", "parallel":
 		return json.Marshal(struct {
@@ -143,17 +145,18 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 	switch discriminator.Kind {
 	case "llm":
 		var wire struct {
-			Kind               string            `json:"kind"`
-			Name               string            `json:"name,omitempty"`
-			Instruction        string            `json:"instruction"`
-			ModelResource      string            `json:"model_resource"`
-			ToolResources      []string          `json:"tool_resources"`
-			KnowledgeResources []string          `json:"knowledge_resources"`
-			CallableEntries    []string          `json:"callable_entries"`
-			Generation         *Generation       `json:"generation,omitempty"`
-			Memory             *ManifestMemory   `json:"memory,omitempty"`
-			Artifact           *ManifestArtifact `json:"artifact,omitempty"`
-			AddSessionSummary  *bool             `json:"add_session_summary,omitempty"`
+			Kind               string             `json:"kind"`
+			Name               string             `json:"name,omitempty"`
+			Instruction        string             `json:"instruction"`
+			ModelResource      string             `json:"model_resource"`
+			ToolResources      []string           `json:"tool_resources"`
+			KnowledgeResources []string           `json:"knowledge_resources"`
+			CallableEntries    []string           `json:"callable_entries"`
+			Generation         *Generation        `json:"generation,omitempty"`
+			Memory             *ManifestMemory    `json:"memory,omitempty"`
+			Artifact           *ManifestArtifact  `json:"artifact,omitempty"`
+			AddSessionSummary  *bool              `json:"add_session_summary,omitempty"`
+			Workspace          *ManifestWorkspace `json:"workspace,omitempty"`
 		}
 		if err := strictDecodeJSON(data, &wire); err != nil {
 			return err
@@ -163,7 +166,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			ModelResource: wire.ModelResource, ToolResources: wire.ToolResources,
 			KnowledgeResources: wire.KnowledgeResources,
 			CallableEntries:    wire.CallableEntries, Generation: wire.Generation,
-			Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary,
+			Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary, Workspace: wire.Workspace,
 		}
 		return nil
 	case "sequence", "parallel":
@@ -198,6 +201,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 }
 
 type ManifestResources struct {
+	Executors map[string]ManifestExecutorResource  `json:"executors,omitempty"`
 	Models    map[string]ManifestModelResource     `json:"models"`
 	Tools     map[string]ManifestToolResource      `json:"tools"`
 	Knowledge map[string]ManifestKnowledgeResource `json:"knowledge"`
@@ -311,6 +315,7 @@ type ManifestStorageResource struct {
 }
 
 type ResolvedRequirements struct {
+	Executors map[string]string `json:"executors,omitempty"`
 	Models    map[string]string `json:"models"`
 	Tools     map[string]string `json:"tools"`
 	Knowledge map[string]string `json:"knowledge"`

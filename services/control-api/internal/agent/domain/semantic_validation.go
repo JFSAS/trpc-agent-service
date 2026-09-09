@@ -8,6 +8,7 @@ import (
 func validateSemantics(spec Spec) []Diagnostic {
 	var diagnostics []Diagnostic
 	validateDataSemantics(spec, &diagnostics)
+	validateWorkspaceSemantics(spec, &diagnostics)
 	if _, exists := spec.Nodes[spec.Root]; !exists {
 		diagnostics = append(diagnostics, Diagnostic{
 			Code: "AGENT_SPEC_ROOT_NOT_FOUND", Severity: SeverityError,

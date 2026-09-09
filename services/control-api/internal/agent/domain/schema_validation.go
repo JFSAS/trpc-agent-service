@@ -46,8 +46,11 @@ func validateRequirements(value any, diagnostics *[]Diagnostic) {
 		addTypeDiagnostic("/requirements", diagnostics)
 		return
 	}
-	validateAllowedFields(requirements, "/requirements", []string{"models", "tools", "knowledge"}, diagnostics)
+	validateAllowedFields(requirements, "/requirements", []string{"models", "tools", "knowledge", "executors"}, diagnostics)
 	requireFields(requirements, "/requirements", []string{"models", "tools", "knowledge"}, diagnostics)
+	if v, exists := requirements["executors"]; exists {
+		validateRequirementMap(v, "/requirements/executors", 16, false, diagnostics)
+	}
 	if models, exists := requirements["models"]; exists {
 		validateRequirementMap(models, "/requirements/models", MaxModelSlots, true, diagnostics)
 	}
@@ -142,7 +145,7 @@ func validateNode(id, pointer string, node map[string]any, diagnostics *[]Diagno
 	var allowed, required []string
 	switch NodeKind(kind) {
 	case NodeKindLLM:
-		allowed = []string{"kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation", "memory", "artifact", "add_session_summary"}
+		allowed = []string{"kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation", "memory", "artifact", "add_session_summary", "workspace"}
 		required = []string{"kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"}
 	case NodeKindSequence, NodeKindParallel:
 		allowed = []string{"kind", "name", "children"}

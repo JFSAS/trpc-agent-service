@@ -17,7 +17,7 @@ var (
 func validateSchemaShape(root map[string]any) []Diagnostic {
 	var diagnostics []Diagnostic
 	validateAllowedFields(root, "", []string{
-		"schema_version", "credential_protocol_version", "models", "tools", "knowledge", "storage",
+		"schema_version", "credential_protocol_version", "models", "tools", "knowledge", "storage", "executors",
 	}, &diagnostics)
 	requireFields(root, "", []string{
 		"schema_version", "credential_protocol_version", "models", "tools", "knowledge", "storage",
@@ -41,6 +41,9 @@ func validateSchemaShape(root map[string]any) []Diagnostic {
 		} else if value != CredentialProtocolVersionV1 {
 			diagnostics = append(diagnostics, errorDiagnostic("RUNTIME_PROFILE_SPEC_UNSUPPORTED_VERSION", "/credential_protocol_version", "credential_protocol_version is not supported"))
 		}
+	}
+	if value, exists := root["executors"]; exists {
+		validateResourceMap(value, "executors", "executor", 16, validateExecutorResource, &diagnostics)
 	}
 	if value, exists := root["models"]; exists {
 		validateResourceMap(value, "models", "model", MaxModelResources, validateModelResource, &diagnostics)

@@ -35,6 +35,7 @@ type Spec struct {
 }
 
 type Requirements struct {
+	Executors map[string]CapabilityRequirement `json:"executors,omitempty"`
 	Models    map[string]ModelRequirement      `json:"models"`
 	Tools     map[string]CapabilityRequirement `json:"tools"`
 	Knowledge map[string]CapabilityRequirement `json:"knowledge"`
@@ -56,6 +57,7 @@ type Generation struct {
 // Node is a discriminated union. MarshalJSON emits only fields belonging to
 // the selected kind so the canonical document cannot leak inactive options.
 type Node struct {
+	Workspace         *Workspace
 	Kind              NodeKind
 	Name              string
 	Instruction       string
@@ -73,6 +75,7 @@ type Node struct {
 
 func (n *Node) UnmarshalJSON(data []byte) error {
 	type wireNode struct {
+		Workspace         *Workspace  `json:"workspace"`
 		Kind              NodeKind    `json:"kind"`
 		Name              string      `json:"name"`
 		Instruction       string      `json:"instruction"`
@@ -92,7 +95,7 @@ func (n *Node) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*n = Node{
-		Kind: wire.Kind, Name: wire.Name, Instruction: wire.Instruction,
+		Workspace: wire.Workspace, Kind: wire.Kind, Name: wire.Name, Instruction: wire.Instruction,
 		ModelSlot: wire.ModelSlot, ToolSlots: wire.ToolSlots,
 		KnowledgeSlots: wire.KnowledgeSlots, Generation: wire.Generation, Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary,
 		Children: wire.Children, Body: wire.Body, MaxIterations: wire.MaxIterations,
@@ -104,6 +107,7 @@ func (n Node) MarshalJSON() ([]byte, error) {
 	switch n.Kind {
 	case NodeKindLLM:
 		return json.Marshal(struct {
+			Workspace         *Workspace  `json:"workspace,omitempty"`
 			Kind              NodeKind    `json:"kind"`
 			Name              string      `json:"name,omitempty"`
 			Instruction       string      `json:"instruction"`
@@ -114,7 +118,7 @@ func (n Node) MarshalJSON() ([]byte, error) {
 			Memory            *Memory     `json:"memory,omitempty"`
 			Artifact          *Artifact   `json:"artifact,omitempty"`
 			AddSessionSummary *bool       `json:"add_session_summary,omitempty"`
-		}{n.Kind, n.Name, n.Instruction, n.ModelSlot, n.ToolSlots, n.KnowledgeSlots, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary})
+		}{n.Workspace, n.Kind, n.Name, n.Instruction, n.ModelSlot, n.ToolSlots, n.KnowledgeSlots, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary})
 	case NodeKindSequence, NodeKindParallel:
 		return json.Marshal(struct {
 			Kind     NodeKind `json:"kind"`

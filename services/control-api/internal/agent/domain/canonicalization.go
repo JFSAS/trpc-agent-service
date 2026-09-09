@@ -13,6 +13,7 @@ func normalizeSpec(spec Spec) Spec {
 		Root:          spec.Root,
 		Runtime:       cloneRuntime(spec.Runtime),
 		Requirements: Requirements{
+			Executors: make(map[string]CapabilityRequirement, len(spec.Requirements.Executors)),
 			Models:    make(map[string]ModelRequirement, len(spec.Requirements.Models)),
 			Tools:     make(map[string]CapabilityRequirement, len(spec.Requirements.Tools)),
 			Knowledge: make(map[string]CapabilityRequirement, len(spec.Requirements.Knowledge)),
@@ -30,7 +31,16 @@ func normalizeSpec(spec Spec) Spec {
 	for name, requirement := range spec.Requirements.Knowledge {
 		normalized.Requirements.Knowledge[name] = requirement
 	}
+	for name, r := range spec.Requirements.Executors {
+		normalized.Requirements.Executors[name] = r
+	}
 	for id, node := range spec.Nodes {
+		if node.Workspace != nil {
+			w := *node.Workspace
+			w.Tools = append([]string{}, w.Tools...)
+			sort.Strings(w.Tools)
+			node.Workspace = &w
+		}
 		node = cloneNodeData(node)
 		node.ToolSlots = append([]string{}, node.ToolSlots...)
 		node.KnowledgeSlots = append([]string{}, node.KnowledgeSlots...)

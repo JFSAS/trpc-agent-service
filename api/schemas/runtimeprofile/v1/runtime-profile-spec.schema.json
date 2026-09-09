@@ -58,6 +58,25 @@
       "additionalProperties": {
         "$ref": "#/$defs/storage_resource"
       }
+    },
+    "executors": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "$ref": "#/$defs/resource_key"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "const": "sdk_sandbox"
+          }
+        }
+      }
     }
   },
   "$defs": {

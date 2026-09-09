@@ -30,10 +30,11 @@ type CredentialAction struct {
 	Value                      *string `json:"value,omitempty"`
 }
 type ProfileConfig struct {
-	Models    map[string]ModelConfig     `json:"models"`
-	Tools     map[string]ToolConfig      `json:"tools"`
-	Knowledge map[string]KnowledgeConfig `json:"knowledge"`
-	Storage   map[string]StorageConfig   `json:"storage"`
+	Executors map[string]domain.ExecutorResource `json:"executors,omitempty"`
+	Models    map[string]ModelConfig             `json:"models"`
+	Tools     map[string]ToolConfig              `json:"tools"`
+	Knowledge map[string]KnowledgeConfig         `json:"knowledge"`
+	Storage   map[string]StorageConfig           `json:"storage"`
 }
 type ModelConfig struct {
 	Kind         domain.ModelKind `json:"kind"`
@@ -190,14 +191,19 @@ func (w ProfileWrite) validate() error {
 		return domain.ErrCredentialInput
 	}
 	if len(w.Config.Models) > domain.MaxModelResources || len(w.Config.Tools) > domain.MaxToolResources ||
-		len(w.Config.Knowledge) > domain.MaxKnowledgeResources || len(w.Config.Storage) > domain.MaxStorageResources {
+		len(w.Config.Executors) > 16 || len(w.Config.Knowledge) > domain.MaxKnowledgeResources || len(w.Config.Storage) > domain.MaxStorageResources {
 		return domain.ErrCredentialInput
 	}
-	for _, keys := range [][]string{mapKeys(w.Config.Models), mapKeys(w.Config.Tools), mapKeys(w.Config.Knowledge), mapKeys(w.Config.Storage)} {
+	for _, keys := range [][]string{mapKeys(w.Config.Models), mapKeys(w.Config.Tools), mapKeys(w.Config.Knowledge), mapKeys(w.Config.Storage), mapKeys(w.Config.Executors)} {
 		for _, key := range keys {
 			if !resourceName.MatchString(key) {
 				return domain.ErrCredentialInput
 			}
+		}
+	}
+	for _, executor := range w.Config.Executors {
+		if executor.Kind != "sdk_sandbox" {
+			return domain.ErrCredentialInput
 		}
 	}
 	// Incomplete Drafts are allowed, but credential-bearing URL components must
