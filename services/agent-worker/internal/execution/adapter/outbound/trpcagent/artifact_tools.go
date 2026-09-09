@@ -39,6 +39,10 @@ func ValidArtifactName(s string) bool {
 	return len(s) <= 255 && s != "" && s != "." && s != ".." && utf8.ValidString(s) && !strings.ContainsAny(s, "/\\\x00\r\n") && strings.TrimSpace(s) == s
 }
 
+func ValidArtifactMIME(s string) bool {
+	return len(s) > 0 && len(s) <= 256 && utf8.ValidString(s) && !strings.ContainsAny(s, "\r\n\x00")
+}
+
 type ArtifactResult struct {
 	Name      string `json:"name"`
 	Version   int    `json:"version"`
@@ -101,7 +105,7 @@ func (t *artifactTool) Call(ctx context.Context, raw []byte) (any, error) {
 	if dec.Decode(&args) != nil || !errors.Is(dec.Decode(new(any)), io.EOF) || (t.name != "artifact_list" && !ValidArtifactName(args.Name)) || (args.Version != nil && *args.Version < 0) {
 		return nil, errors.New("invalid artifact arguments")
 	}
-	if t.name == "artifact_save" && (int64(len(args.Content)) > t.state.maxBytes || args.MimeType == "" || strings.ContainsAny(args.MimeType, "\r\n")) {
+	if t.name == "artifact_save" && (int64(len(args.Content)) > t.state.maxBytes || !ValidArtifactMIME(args.MimeType)) {
 		return nil, errors.New("invalid artifact bytes or media type")
 	}
 	cc, err := agent.NewCallbackContext(ctx)

@@ -48,7 +48,7 @@ func (q artifactQueries) Artifact(ctx context.Context, r proof.ArtifactRequest) 
 	if err != nil || p.Artifact == nil {
 		return out, httpadapter.ErrAttemptDenied
 	}
-	if r.Operation == "save" && (r.MimeType == "" || int64(len(r.Content)) > p.Artifact.Backend.Limits.MaxBytes) {
+	if r.Operation == "save" && (!trpcagent.ValidArtifactMIME(r.MimeType) || int64(len(r.Content)) > p.Artifact.Backend.Limits.MaxBytes) {
 		return out, httpadapter.ErrArtifactCapacity
 	}
 	scope := trpcagent.ArtifactSessionInfo(r.TenantID, run.SessionID)

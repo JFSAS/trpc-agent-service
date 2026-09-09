@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"trpc.group/trpc-go/trpc-agent-go/artifact"
 	"trpc.group/trpc-go/trpc-agent-go/artifact/inmemory"
@@ -57,5 +58,16 @@ func TestArtifactFilenameBoundary(t *testing.T) {
 	}
 	if !ValidArtifactName("报告.txt") {
 		t.Fatal("valid Unicode filename rejected")
+	}
+}
+
+func TestArtifactMIMEBoundary(t *testing.T) {
+	for _, v := range []string{"", strings.Repeat("x", 257), "text/plain\x00", "text/plain\r\n"} {
+		if ValidArtifactMIME(v) {
+			t.Fatal("accepted invalid MIME")
+		}
+	}
+	if !ValidArtifactMIME("application/octet-stream") {
+		t.Fatal("rejected normal MIME")
 	}
 }
