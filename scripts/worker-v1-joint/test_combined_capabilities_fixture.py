@@ -68,6 +68,16 @@ class CombinedFixtureTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'parent failed'):h.close()
         h.summary_provider.close.assert_called_once();h.embedding_provider.close.assert_called_once();self.assertEqual(records[0]['result'],'FAIL')
 
+    def test_fixture_assertions_are_raised_after_parent_cleanup(self):
+        h=self.harness();h.redact=lambda s:s;events=[];h.record=lambda n,v:events.append(v['result'])
+        h.model.errors=['observed fixture mismatch']
+        def cleanup():
+            events.append('owned_parent_resources_closed')
+        with patch.object(f.ArtifactHarness,'close',side_effect=cleanup):
+            with self.assertRaisesRegex(RuntimeError,'observed fixture mismatch'):h.close()
+        self.assertEqual(events,['owned_parent_resources_closed','FAIL'])
+        h.summary_provider.close.assert_called_once();h.embedding_provider.close.assert_called_once()
+
     def test_real_fixture_http_calls_all_three_tool_families_before_final(self):
         h=Mock();h.secret.return_value='fixture-private';h.model_name='joint-fixture';m=f.CombinedModelFixture(h)
         try:
@@ -79,8 +89,12 @@ class CombinedFixtureTests(unittest.TestCase):
             results=[{'id':'memory-entry'},{'results':[{'memory':f.MEMORY_TEXT}]},metadata,dict(metadata,content_base64=f.base64.b64encode(f.FILE_BYTES).decode()),{'documents':[{'text':f.DOCUMENT_TEXT}]}]
             expected=['memory_add','memory_load','artifact_save','artifact_load',f.CALLABLE_NAME]
             for name,result in zip(expected,results):
-                self.assertEqual(post()['tool_calls'][0]['function']['name'],name)
-                body['messages'].append({'role':'tool','content':json.dumps(result)})
+                call=post()['tool_calls'][0]
+                self.assertEqual(call['function']['name'],name)
+                body['messages'].append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result)})
+                # Real SDK Summary keeps a bounded recent tool-history window.
+                # Provider fixture must acknowledge actual IDs, not count window rows.
+                body['messages']=body['messages'][:1]+body['messages'][1:][-2:]
             self.assertEqual(post()['content'],f.FINAL_TEXT);self.assertEqual(m.outputs[0]['plan'],expected)
         finally:m.close()
 

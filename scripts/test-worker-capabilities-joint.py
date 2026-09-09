@@ -93,13 +93,17 @@ def main():
             assert_artifact(loaded_file,FILE_NAME,0,FILE_BYTES,loaded=True,mime_type='text/plain')
             docs=next(row['result'] for row in observed if row['name']==CALLABLE_NAME)
             assert DOCUMENT_TEXT in [x['text'] for x in docs['documents']]
-            assert h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id='+h.quote(run_id))==[['APPLIED']]
+            memory_status=h.sql('SELECT memory_status FROM worker.execution_completions WHERE run_id='+h.quote(run_id))
+            assert memory_status==[['APPLIED']]
+            route=json.loads(h.sql('SELECT request_json::text FROM worker.execution_runs WHERE run_id='+h.quote(run_id))[0][0])['Route']
+            assert route['ManifestRef']==h.manifest_id and route['ManifestDigest']==h.manifest_digest
+            assert actual['attempts']==1,'normal combination must not hide a retried attempt'
             memory=h.memory_state();assert len(memory)==1 and memory[0]['revision']==index+1
             assert [e['memory']['memory'] for e in memory[0]['content']['entries']]==[MEMORY_TEXT]
             objects=h.object_state();metadata=h.metadata_state();assert len(objects)==1 and objects[0]['bytes_hex']==FILE_BYTES.hex() and len(metadata['files'])==1 and len(metadata['versions'])==1
             assert metadata['versions'][0]['object_key']==objects[0]['key'] and metadata['versions'][0]['content_sha256']==objects[0]['sha256']
             assert h.knowledge_state()==knowledge
-            previous={'run_id':run_id,'input':text,'run':actual,'head':accepted,'candidate':result['candidate'],'completion':result['completion'],'delivery':delivery,'primary_calls':primary,'summary_calls':summaries,'formal_summary':previous_summary,'tool_observations':observed,'memory':memory,'artifact_metadata':metadata,'s3_objects':objects,'knowledge':h.knowledge_state(),'embedding_requests':h.embedding_provider.embeddings()[embedding_offset:]}
+            previous={'run_id':run_id,'input':text,'run':actual,'head':accepted,'candidate':result['candidate'],'completion':result['completion'],'memory_status':memory_status,'actual_route':route,'delivery':delivery,'primary_calls':primary,'summary_calls':summaries,'formal_summary':previous_summary,'tool_observations':observed,'memory':memory,'artifact_metadata':metadata,'s3_objects':objects,'knowledge':h.knowledge_state(),'embedding_requests':h.embedding_provider.embeddings()[embedding_offset:]}
             evidence['rounds'].append(previous);save()
         assert previous_summary and len(evidence['rounds'])==3
         evidence.update(result='PASS',catalog_restarts=h.catalog_restarts,all_primary_calls=primary_records(),all_summary_calls=summary_records(),all_embedding_requests=h.embedding_provider.embeddings(),final_memory=h.memory_state(),final_artifact_metadata=h.metadata_state(),final_s3=h.object_state(),final_knowledge=h.knowledge_state());save()

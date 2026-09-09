@@ -102,6 +102,8 @@ class CombinedHarness(ArtifactHarness,KnowledgeHarness,MemoryHarness,_summary.Su
         try:super().close()
         except BaseException as exc:errors.append(exc)
         finally:
+            fixture_errors=getattr(getattr(self,'model',None),'errors',[])
+            if isinstance(fixture_errors,list) and fixture_errors:errors.append(RuntimeError(str(fixture_errors)))
             for name in ('summary_provider','embedding_provider'):
                 provider=getattr(self,name,None)
                 if provider is not None and provider is not getattr(self,'model',None):
@@ -114,7 +116,7 @@ class CombinedHarness(ArtifactHarness,KnowledgeHarness,MemoryHarness,_summary.Su
 class CombinedModelFixture:
     """Synthetic LLM only. Calls existing Memory/Artifact/SDK Knowledge tools."""
     def __init__(self,h):
-        self.key=h.secret();self.requests=[];self.outputs=[];self.errors=[];self.lock=threading.Lock();owner=self
+        self.key=h.secret();self.requests=[];self.outputs=[];self.errors=[];self.progress={};self.lock=threading.Lock();owner=self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*_):pass
             def do_POST(self):
@@ -129,9 +131,20 @@ class CombinedModelFixture:
                 with owner.lock:owner.requests.append(copy.deepcopy(req));number=len(owner.requests)
                 assert req['model']==h.model_name and sorted(t['function']['name'] for t in req['tools'])==sorted(TOOLS)
                 messages=req['messages'];start=max(i for i,m in enumerate(messages) if m.get('role')=='user');text=messages[start]['content'];round_index=round_inputs().index(text)
-                results=[]
-                for m in messages[start+1:]:
-                    if m.get('role')=='tool':results.append(json.loads(m['content']))
+                state=owner.progress.setdefault(round_index,{'calls':[],'results':{}})
+                tool_messages=[m for m in messages[start+1:] if m.get('role')=='tool']
+                ids={call['id'] for call in state['calls']}
+                if ids and not any(m.get('tool_call_id') in ids for m in tool_messages):
+                    # A fresh SDK invocation cannot inherit this fixture's prior
+                    # observed attempt results just because the input repeats.
+                    state={'calls':[],'results':{}};owner.progress[round_index]=state;ids=set()
+                for message in tool_messages:
+                    if message.get('tool_call_id') in ids:
+                        try:value=json.loads(message['content'])
+                        except ValueError:value={'error':message['content']}
+                        state['results'][message['tool_call_id']]=value
+                assert all(call['id'] in state['results'] for call in state['calls']), 'previous actual tool result not observed'
+                results=[state['results'][call['id']] for call in state['calls']]
                 plan=[]
                 if round_index==0:plan.append(('memory_add',{'memory':MEMORY_TEXT}))
                 plan.append(('memory_load',{}))
@@ -139,7 +152,9 @@ class CombinedModelFixture:
                 plan.extend([('artifact_load',{'name':FILE_NAME,'version':0}),(CALLABLE_NAME,{'query':'What is the orchid knowledge canary and service window?'})])
                 step=len(results)
                 if step<len(plan):
-                    name,args=plan[step];delta={'role':'assistant','tool_calls':[{'index':0,'id':'combined-call-'+str(number),'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};finish='tool_calls'
+                    name,args=plan[step];call_id='combined-call-'+str(number)
+                    state['calls'].append({'id':call_id,'name':name})
+                    delta={'role':'assistant','tool_calls':[{'index':0,'id':call_id,'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};finish='tool_calls'
                 else:
                     by_name={name:value for (name,_),value in zip(plan,results)}
                     assert any(r['memory']==MEMORY_TEXT for r in by_name['memory_load']['results'])
@@ -158,4 +173,5 @@ class CombinedModelFixture:
         with self.lock:return copy.deepcopy(self.requests)
     def close(self):
         self.server.shutdown();self.server.server_close();self.thread.join(timeout=5)
-        assert not self.thread.is_alive();assert not self.errors,self.errors
+        assert not self.thread.is_alive()
+        # Harness checks fixture assertions after all owned process resources close.
