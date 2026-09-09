@@ -10,6 +10,15 @@ import combined_capabilities_fixture as f
 
 
 class CombinedFixtureTests(unittest.TestCase):
+    def test_summary_match_preserves_actual_content_bytes(self):
+        summary='摘要 "quote" \\ path\n\n下一行\ttab'
+        for content in ('prefix\n'+summary+'\nsuffix',[{'type':'text','text':'prefix '+summary}],[None,[{'type':'text','text':summary}]]):
+            with self.subTest(content=content):self.assertTrue(f.has_summary_text([{'role':'system','content':content}],summary))
+        for content in (None,123,{'image_url':summary},[{'type':'image_url','image_url':summary}],json.dumps(summary),summary.replace('\n',' ')):
+            with self.subTest(content=content):self.assertFalse(f.has_summary_text([{'role':'system','content':content}],summary))
+        self.assertFalse(f.has_summary_text([None,{'content':'text'}],None))
+        self.assertFalse(f.has_summary_text([{'content':'text'}],''))
+
     def harness(self,live=False):
         h=f.CombinedHarness.__new__(f.CombinedHarness);h.live=live;h.model_name='deepseek-v4-flash' if live else 'joint-fixture'
         h.model=Mock(url='http://127.0.0.1:19001',key='main-private',summary_key='summary-private',embedding_key='embedding-private',embedding_model='joint-embedding-fixture',dimensions=3)

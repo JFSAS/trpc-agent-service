@@ -13,7 +13,7 @@ import traceback
 
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parent/'worker-v1-joint'))
-from combined_capabilities_fixture import CombinedHarness,round_inputs,MEMORY_TEXT,FILE_NAME,FILE_BYTES,DOCUMENT_TEXT,TOOLS,FINAL_TEXT,CALLABLE_NAME
+from combined_capabilities_fixture import CombinedHarness,round_inputs,has_summary_text,MEMORY_TEXT,FILE_NAME,FILE_BYTES,DOCUMENT_TEXT,TOOLS,FINAL_TEXT,CALLABLE_NAME
 from knowledge_joint_fixture import DOCUMENT_NAME
 from faults import run,head,wait_success,submit
 import channel_lab_fixture as gateway_fixture
@@ -73,7 +73,7 @@ def main():
                 assert delivery['final_text']==primary[-1]['text'],'Lab differs from actual live model Final'
             else:assert delivery['final_text']==FINAL_TEXT
             if previous_summary:
-                assert previous_summary in json.dumps(primary[0]['request']['messages']),'next primary did not consume exact formally accepted summary'
+                assert has_summary_text(primary[0]['request']['messages'],previous_summary),'next primary did not consume exact formally accepted summary'
             stored=result['candidate']['content']['snapshot']['session'].get('summaries',{})
             if summaries:
                 assert len(stored)==1 and next(iter(stored.values()))['summary']==summaries[-1]['text'],'formal summary differs from actual summary response'
@@ -105,6 +105,7 @@ def main():
             assert metadata['versions'][0]['object_key']==objects[0]['key'] and metadata['versions'][0]['content_sha256']==objects[0]['sha256']
             assert h.knowledge_state()==knowledge
             previous={'run_id':run_id,'input':text,'run':actual,'head':accepted,'candidate':result['candidate'],'completion':result['completion'],'memory_status':memory_status,'actual_route':route,'delivery':delivery,'primary_calls':primary,'summary_calls':summaries,'formal_summary':previous_summary,'tool_observations':observed,'memory':memory,'artifact_metadata':metadata,'s3_objects':objects,'knowledge':h.knowledge_state(),'embedding_requests':h.embedding_provider.embeddings()[embedding_offset:]}
+            previous['durable_snapshot']=h.failure_snapshot(run_id)
             evidence['rounds'].append(previous);save()
         assert previous_summary and len(evidence['rounds'])==3
         evidence.update(result='PASS',catalog_restarts=h.catalog_restarts,all_primary_calls=primary_records(),all_summary_calls=summary_records(),all_embedding_requests=h.embedding_provider.embeddings(),final_memory=h.memory_state(),final_artifact_metadata=h.metadata_state(),final_s3=h.object_state(),final_knowledge=h.knowledge_state());save()

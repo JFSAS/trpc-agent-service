@@ -32,6 +32,17 @@ TOOLS=MEMORY_TOOLS+ARTIFACT_TOOLS+[CALLABLE_NAME]
 FINAL_TEXT='Combined verified: '+MEMORY_TEXT+' '+FILE_TEXT.strip()+' '+DOCUMENT_TEXT
 
 
+def has_summary_text(messages,summary):
+    """Compare actual content text, not JSON's escaped representation."""
+    if not isinstance(summary,str) or not summary:return False
+    def texts(value):
+        if isinstance(value,str):yield value
+        elif isinstance(value,list):
+            for part in value:yield from texts(part)
+        elif isinstance(value,dict) and isinstance(value.get('text'),str):yield value['text']
+    return any(summary in text for message in messages if isinstance(message,dict) for text in texts(message.get('content')))
+
+
 def round_inputs():
     return [
         '组合验收第一轮。必须实际调用工具完成：1) memory_add 将完整字符串 '+MEMORY_TEXT+' 保存一次；2) memory_load 读回；3) artifact_save 保存 name='+FILE_NAME+'，mime_type=text/plain，content_base64='+base64.b64encode(FILE_BYTES).decode()+'，只保存一次；4) artifact_load 读取该文件 version=0；5) 调用知识检索工具查询 orchid canary 与 service window。依据实际工具结果给简短最终确认，包含知识中的 canary。不要声称未调用的操作成功。',
