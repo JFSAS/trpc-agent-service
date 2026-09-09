@@ -417,6 +417,31 @@
         },
         "generation": {
           "$ref": "#/$defs/generation"
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "executor_resource",
+            "tools"
+          ],
+          "properties": {
+            "executor_resource": {
+              "$ref": "#/$defs/resource_key"
+            },
+            "tools": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "workspace_exec",
+                  "workspace_save_artifact"
+                ]
+              }
+            }
+          }
         }
       }
     },
@@ -544,6 +569,29 @@
         },
         "storage": {
           "$ref": "#/$defs/storage_resources"
+        },
+        "executors": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "$ref": "#/$defs/resource_key"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "adapter_version"
+            ],
+            "properties": {
+              "kind": {
+                "const": "sdk_sandbox"
+              },
+              "adapter_version": {
+                "const": "sdk-sandbox-v1"
+              }
+            }
+          }
         }
       }
     },
@@ -894,6 +942,16 @@
         },
         "knowledge": {
           "$ref": "#/$defs/resolved_map"
+        },
+        "executors": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "$ref": "#/$defs/resource_key"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/resource_key"
+          }
         }
       }
     },

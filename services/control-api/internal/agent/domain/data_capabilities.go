@@ -93,6 +93,7 @@ func validateRuntime(value any, d *[]Diagnostic) {
 	dataInteger(s, "event_threshold", p, 1, d)
 }
 func validateNodeData(p string, node map[string]any, d *[]Diagnostic) {
+	validateWorkspaceShape(p, node, d)
 	if value, exists := node["memory"]; exists {
 		q := p + "/memory"
 		if o, ok := dataObject(value, q, []string{"tools", "preload_limit"}, []string{"tools"}, d); ok {

@@ -73,6 +73,7 @@ func (l *Ledger) FinalizeMemory(ctx context.Context, accepted domain.Completion,
 		}
 		if !success {
 			event.Content.Text = memoryFailureFinal
+			event.Content.Attachments = nil
 			payload, err = codec.EncodeReplyIntent(event)
 			if err != nil {
 				return err

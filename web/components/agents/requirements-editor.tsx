@@ -19,6 +19,7 @@ export function RequirementsEditor({ state, dispatch, disabled }: {
       <RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.models} kind="models" />
       <RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.tools} kind="tools" />
       <RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.knowledge} kind="knowledge" />
+      <RequirementGroup disabled={disabled} dispatch={dispatch} entries={state.spec.requirements.executors ?? {}} kind="executors" />
     </section>
   );
 }
@@ -30,11 +31,11 @@ function RequirementGroup({ kind, entries, dispatch, disabled }: {
   disabled: boolean;
 }) {
   const [slot, setSlot] = useState("");
-  const [capability, setCapability] = useState(kind === "models" ? "chat" : "");
+  const [capability, setCapability] = useState(kind === "models" ? "chat" : kind === "executors" ? "workspace" : "");
   const [capabilityTouched, setCapabilityTouched] = useState(false);
   const errorID = useId();
-  const title = kind === "models" ? "Models" : kind === "tools" ? "Tools" : "Knowledge";
-  const limit = kind === "models" ? AGENT_SPEC_LIMITS.modelSlots : kind === "tools" ? AGENT_SPEC_LIMITS.toolSlots : AGENT_SPEC_LIMITS.knowledgeSlots;
+  const title = kind === "models" ? "Models" : kind === "tools" ? "Tools" : kind === "executors" ? "Executors" : "Knowledge";
+  const limit = kind === "models" ? AGENT_SPEC_LIMITS.modelSlots : kind === "tools" ? AGENT_SPEC_LIMITS.toolSlots : kind === "executors" ? AGENT_SPEC_LIMITS.executorSlots : AGENT_SPEC_LIMITS.knowledgeSlots;
   const slotError = Object.keys(entries).length >= limit
     ? `${title} 最多声明 ${limit} 个槽位。`
     : slot && !isAgentSpecIdentifier(slot)
@@ -53,7 +54,7 @@ function RequirementGroup({ kind, entries, dispatch, disabled }: {
     if (kind === "models") dispatch({ type: "requirement.model.set", slot, capabilities });
     else dispatch({ type: "requirement.capability.set", kind, slot, capability });
     setSlot("");
-    setCapability(kind === "models" ? "chat" : "");
+    setCapability(kind === "models" ? "chat" : kind === "executors" ? "workspace" : "");
     setCapabilityTouched(false);
   }
 
@@ -87,6 +88,7 @@ function RequirementGroup({ kind, entries, dispatch, disabled }: {
                     if (kind !== "models") dispatch({ type: "requirement.capability.set", kind, slot: slotID, capability: event.target.value });
                   }}
                   style={requirementInputStyle}
+                  readOnly={kind === "executors"}
                   value={item.capability}
                 />
               )}
@@ -116,6 +118,7 @@ function RequirementGroup({ kind, entries, dispatch, disabled }: {
           onChange={(event) => { setCapability(event.target.value); setCapabilityTouched(true); }}
           placeholder={kind === "models" ? "chat, tool_call" : "web.search"}
           style={requirementInputStyle}
+          readOnly={kind === "executors"}
           value={capability}
         />
         <Button aria-label={`添加 ${title} Slot`} disabled={!canAdd} onClick={add} style={requirementActionStyle} type="button" variant="secondary"><Plus size={12} /></Button>
@@ -131,6 +134,7 @@ function parseCapabilities(value: string): string[] {
 }
 
 function validateCapabilities(kind: RequirementKind, capabilities: readonly string[]): string {
+  if (kind === "executors" && (capabilities.length !== 1 || capabilities[0] !== "workspace")) return "Executor capability 必须为 workspace。";
   if (capabilities.length === 0 || capabilities.some((capability) => !capability)) return "Capability 必填。";
   if (kind === "models" && capabilities.length > AGENT_SPEC_LIMITS.capabilitiesPerModel) return `每个 Model 最多声明 ${AGENT_SPEC_LIMITS.capabilitiesPerModel} 个 Capability。`;
   if (new Set(capabilities).size !== capabilities.length) return "Capability 不可重复。";

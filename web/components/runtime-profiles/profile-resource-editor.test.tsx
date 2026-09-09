@@ -232,3 +232,23 @@ describe("Runtime Profile resource forms", () => {
   });
 
 });
+
+it("adds only sdk_sandbox executors without connection or credential fields", async () => {
+  const changed = vi.fn();render(<Harness changed={changed} />);
+  await selectCategory("Executors");
+  fireEvent.change(screen.getByLabelText("新资源名称"), { target: { value: "sandbox" } });
+  fireEvent.click(screen.getByRole("button", { name: "添加资源" }));
+  expect(changed.mock.lastCall?.[0].executors).toEqual({ sandbox: { kind: "sdk_sandbox" } });
+  expect(changed.mock.lastCall?.[1]).toEqual({});
+  expect(screen.queryByLabelText("Server URL")).toBeNull();
+  expect(screen.queryByLabelText(/Token 新值/)).toBeNull();
+  expect(screen.getByText(/添加资源不会自动启用任何节点能力/)).toBeInTheDocument();
+});
+it("shows immutable executor declarations without editable settings", async () => {
+  const changed = vi.fn();render(<Harness config={{ ...initial, executors: { sandbox: { kind: "sdk_sandbox" } } }} readOnly changed={changed} />);
+  await selectCategory("Executors");
+  expect(screen.getByText("sdk_sandbox")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "添加资源" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "删除资源 sandbox" })).toBeNull();
+  expect(changed).not.toHaveBeenCalled();
+});

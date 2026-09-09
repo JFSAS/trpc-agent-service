@@ -59,6 +59,7 @@ func (b *controlDelivery) DispatchAccount(ctx context.Context, r d.ClaimRequest)
 }
 
 type controlSenders struct {
+	artifacts      app.ArtifactReader
 	telegramAPIURL string
 	use            *use.Service
 	wecom          *wecom.Provider
@@ -132,7 +133,7 @@ func (b controlSenders) Reserve(ctx context.Context, r app.SendRequest) (app.Res
 			close()
 			return nil, d.ErrUnauthorized
 		}
-		provider, err := telegram.NewProvider(map[string]*bot.Bot{bound.AccountID: client})
+		provider, err := telegram.NewProvider(map[string]*bot.Bot{bound.AccountID: client}, b.artifacts)
 		if err != nil {
 			close()
 			return nil, err

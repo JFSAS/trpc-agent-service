@@ -31,14 +31,19 @@ type FinalVerifier interface {
 	VerifyFinal(context.Context, proof.FinalRequest) (proof.FinalResponse, error)
 }
 type Options struct {
+	ReplyArtifacts                       ReplyArtifactReader
 	Knowledge                            KnowledgeImporter
 	Artifacts                            ArtifactOperator
 	Tracer                               trace.Tracer
 	ControlPrincipals, GatewayPrincipals []string
 	Timeout                              time.Duration
-	MaxConcurrent                        int
+	// MaxConcurrent bounds each independent class: proof reads and data operations.
+	MaxConcurrent int
 }
 type Handler struct {
+	downloadSlots     chan struct{}
+	finalCallers      map[string]bool
+	replyArtifacts    ReplyArtifactReader
 	knowledgeImporter KnowledgeImporter
 	artifacts         ArtifactOperator
 	tracer            trace.Tracer
@@ -76,9 +81,19 @@ func New(attempts AttemptVerifier, finals FinalVerifier, o Options) (*Handler, e
 			return nil, errors.New("Control and Gateway proof identities must be distinct")
 		}
 	}
-	h := &Handler{knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
+	finalCallers := map[string]bool{}
+	for id := range control {
+		finalCallers[id] = true
+	}
+	for id := range gateway {
+		finalCallers[id] = true
+	}
+	h := &Handler{finalCallers: finalCallers, replyArtifacts: o.ReplyArtifacts, knowledgeImporter: o.Knowledge, artifacts: o.Artifacts, tracer: o.Tracer, attempts: attempts, finals: finals, control: control, gateway: gateway, timeout: o.Timeout, slots: make(chan struct{}, o.MaxConcurrent), downloadSlots: make(chan struct{}, o.MaxConcurrent), mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST "+proof.AttemptVerifyPath, h.attempt)
 	h.mux.HandleFunc("POST "+proof.FinalVerifyPath, h.final)
+	if o.ReplyArtifacts != nil {
+		h.mux.HandleFunc("POST "+proof.ReplyArtifactPath, h.replyArtifact)
+	}
 	if o.Artifacts != nil {
 		h.mux.HandleFunc("POST "+proof.ArtifactPath, h.artifact)
 	}
@@ -141,10 +156,17 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request, limit int) ([]byt
 	return raw, true
 }
 func (h *Handler) bounded(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc, bool) {
+	// Data requests may synchronously cause Control to verify a committed Final.
+	// Reserve a separately bounded proof class; a full download class must never
+	// occupy the slot needed by that callback. Neither class is unbounded.
+	slots := h.downloadSlots
+	if r.URL.Path == proof.AttemptVerifyPath || r.URL.Path == proof.FinalVerifyPath {
+		slots = h.slots
+	}
 	select {
-	case h.slots <- struct{}{}:
+	case slots <- struct{}{}:
 		ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
-		return ctx, func() { cancel(); <-h.slots }, true
+		return ctx, func() { cancel(); <-slots }, true
 	default:
 		respondError(w, http.StatusServiceUnavailable, "PROOF_UNAVAILABLE")
 		return nil, nil, false
@@ -190,7 +212,7 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 func (h *Handler) final(w http.ResponseWriter, r *http.Request) {
-	if !h.authorize(w, r, h.gateway) {
+	if !h.authorize(w, r, h.finalCallers) {
 		return
 	}
 	ctx, cancel, ok := h.bounded(w, r)
@@ -207,7 +229,7 @@ func (h *Handler) final(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "INVALID_PROOF_REQUEST")
 		return
 	}
-	// Only the already-authorized Gateway proof endpoint inherits internal W3C.
+	// Only the already-authorized Control/Gateway proof endpoint inherits internal W3C.
 	ctx = tracecontext.FromHeaders(r.Header).Restore(ctx)
 	ctx, span := telemetrytrace.Start(h.tracer, ctx, "worker.reply.verify", trace.WithSpanKind(trace.SpanKindServer))
 	response, err := h.finals.VerifyFinal(ctx, request)

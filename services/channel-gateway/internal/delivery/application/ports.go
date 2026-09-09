@@ -61,3 +61,9 @@ type TracedClaim struct {
 type TracedClaimer interface {
 	ClaimTraced(context.Context, domain.ClaimRequest) ([]TracedClaim, error)
 }
+
+// ArtifactReader returns bytes for an attachment already bound to a committed
+// Final; implementations authenticate to Worker, never to an object store.
+type ArtifactReader interface {
+	ReadReplyArtifact(context.Context, domain.Intent, domain.Attachment) ([]byte, error)
+}

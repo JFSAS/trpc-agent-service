@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	finaldeploymentpg "github.com/liuzengh/trpc-agent-service/services/control-api/internal/deployment/adapter/outbound/postgres"
 	"github.com/liuzengh/trpc-agent-service/services/control-api/internal/platformbackend"
 	backendconfig "github.com/liuzengh/trpc-agent-service/services/control-api/internal/platformbackend/adapter/outbound/configfile"
 	"net/http"
@@ -153,10 +154,14 @@ func New(ctx context.Context, config Config) (*App, error) {
 		_ = runtimeRouter.SetTrustedProxies(nil)
 		runtimeRouter.Use(gin.RecoveryWithWriter(nil))
 	}
+	var finalArtifacts profileapp.FinalArtifactAuthorizer
+	if proofVerifier, ok := executionVerifier.(finalProofVerifier); ok {
+		finalArtifacts = finalArtifactAuthorization{verifier: proofVerifier, manifests: finaldeploymentpg.NewStore(pool)}
+	}
 	runtimeProfileModule, err := runtimeprofile.NewModule(runtimeprofile.Dependencies{
 		ManagedCredentialTargets: deploymentBackendAccess{targets: backendTargets, tenants: activeTenantMemberLookup{tenants: tenantModule.Service}},
 		Backends:                 profileBackendAccess{catalog: backendCatalog},
-		ExecutionVerifier:        executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
+		FinalArtifacts:           finalArtifacts, ExecutionVerifier: executionVerifier, AuthenticateWorker: authenticateWorker, RuntimeRoutes: runtimeRouter,
 		DB: pool, Routes: router,
 		Authenticate:  identityModule.AuthenticationMiddleware(),
 		CredentialKey: config.ProfileCredentialKey,

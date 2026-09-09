@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local Telegram protocol laboratory. No product database access."""
 import argparse
+import hashlib
 import http.client
 import json
 import os
@@ -34,6 +35,7 @@ class Lab:
         CREATE TABLE IF NOT EXISTS bots(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, token TEXT UNIQUE NOT NULL, secret TEXT NOT NULL, webhook TEXT NOT NULL DEFAULT '', webhook_secret TEXT NOT NULL DEFAULT '', allowed TEXT NOT NULL DEFAULT '[]');
         CREATE TABLE IF NOT EXISTS updates(id INTEGER PRIMARY KEY AUTOINCREMENT, bot INTEGER NOT NULL, body TEXT NOT NULL, ack INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, retry REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'queued');
         CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, bot INTEGER NOT NULL, direction TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS documents(file_id TEXT PRIMARY KEY,bot INTEGER NOT NULL,name TEXT NOT NULL,mime_type TEXT NOT NULL,sha256 TEXT NOT NULL,body BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS model_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         ''')
@@ -129,9 +131,12 @@ class Lab:
                         self.cv.wait(min(deadline-time.monotonic(), 1))
                 finally:
                     self.pollers.discard(bid)
-            if method == 'sendMessage':
-                chat, text = int(data['chat_id']), data['text']
-                if not text or len(text)>4096:
+            if method in ('sendMessage', 'sendDocument'):
+                document = data.get('document') if method == 'sendDocument' else None
+                if method == 'sendDocument' and (not isinstance(document, dict) or not isinstance(document.get('bytes'), bytes) or not document.get('filename')):
+                    raise Error(400, 'document must be an actual multipart upload')
+                chat, text = int(data['chat_id']), data.get('caption', '') if document else data['text']
+                if not document and (not text or len(text)>4096):
                     raise Error(400, 'text must contain 1..4096 characters')
                 known = self.db.execute("SELECT body FROM messages WHERE bot=? AND direction='in'", (bid,)).fetchall()
                 source = [json.loads(r[0]) for r in known]
@@ -144,6 +149,17 @@ class Lab:
                     raise Error(400, 'reply source not found')
                 c = self.db.execute('INSERT INTO messages(bot,direction,body) VALUES(?,?,?)', (bid, 'out', '{}'))
                 msg = {'message_id': 1000000000+c.lastrowid, 'date': int(time.time()), 'chat': {'id': chat, 'type': 'private' if chat > 0 else 'supergroup'}, 'text': text}
+                if document:
+                    body = document['bytes']
+                    digest = hashlib.sha256(body).hexdigest()
+                    file_id = 'lab_document_'+str(c.lastrowid)
+                    mime = document['mime_type']
+                    self.db.execute('INSERT INTO documents VALUES(?,?,?,?,?,?)', (file_id,bid,document['filename'],mime,digest,body))
+                    msg.pop('text', None)
+                    msg['document'] = {'file_id':file_id,'file_unique_id':digest,'file_name':document['filename'],'mime_type':mime,'file_size':len(body),'sha256':digest}
+                    if text: msg['caption'] = text
+                if data.get('message_thread_id'): msg['message_thread_id'] = int(data['message_thread_id'])
+                if reply: msg['reply_to_message'] = next(m for m in source if m['chat']['id']==chat and m['message_id']==int(reply['message_id']))
                 self.db.execute('UPDATE messages SET body=? WHERE id=?', (json.dumps(msg), c.lastrowid))
                 self.db.commit()
                 return msg
@@ -297,6 +313,21 @@ def server(lab, address):
         def do_GET(self):
             if self.path == '/healthz':
                 return self.respond(200, {'status': 'ok', 'mode': 'simulated'})
+            if self.path.startswith('/lab/documents/'):
+                file_id = self.path.removeprefix('/lab/documents/')
+                with lab.cv:
+                    item = lab.db.execute('SELECT body,sha256 FROM documents WHERE file_id=?', (file_id,)).fetchone()
+                if item is None: return self.respond(404, {'error':'document not found'})
+                self.send_response(200)
+                self.send_header('Content-Type','application/octet-stream')
+                self.send_header('Content-Disposition','attachment')
+                self.send_header('X-Content-Type-Options','nosniff')
+                self.send_header('X-Content-SHA256',item['sha256'])
+                self.send_header('Cache-Control','no-store')
+                self.send_header('Content-Length',str(len(item['body'])))
+                self.end_headers()
+                self.wfile.write(item['body'])
+                return
             if self.path == '/lab/state':
                 return self.respond(200, lab.snapshot())
             if self.path != '/':
@@ -313,8 +344,9 @@ def server(lab, address):
             try:
                 if self.path.startswith('/lab/') and (self.headers.get('Origin') != 'http://'+self.headers.get('Host','') or self.headers.get('Content-Type') != 'application/json'):
                     raise Error(403, 'same-origin JSON required')
+                limit = 51*1024*1024 if self.path.startswith('/bot') and self.path.endswith('/sendDocument') else 1024*1024
                 size = int(self.headers.get('Content-Length', 0))
-                if not 0 <= size <= 1024*1024:
+                if not 0 <= size <= limit:
                     raise Error(413, 'request too large')
                 if self.headers.get('Transfer-Encoding', '').lower() == 'chunked':
                     chunks, total = [], 0
@@ -326,7 +358,7 @@ def server(lab, address):
                                 raise Error(400, 'unsupported trailers')
                             break
                         total += count
-                        if total > 1024*1024:
+                        if total > limit:
                             raise Error(413, 'request too large')
                         chunk = self.rfile.read(count)
                         if len(chunk) != count or self.rfile.read(2) != b'\r\n':
@@ -342,7 +374,12 @@ def server(lab, address):
                     from email.parser import BytesParser
                     from email.policy import default
                     mail = BytesParser(policy=default).parsebytes(b'Content-Type: '+content_type.encode()+b'\r\nMIME-Version: 1.0\r\n\r\n'+raw)
-                    data = {part.get_param('name',header='content-disposition'):part.get_payload(decode=True).decode() for part in mail.iter_parts()}
+                    data = {}
+                    for part in mail.iter_parts():
+                        name = part.get_param('name',header='content-disposition')
+                        if name in data: raise Error(400, 'duplicate multipart field')
+                        body = part.get_payload(decode=True)
+                        data[name] = {'filename':part.get_filename(),'mime_type':part.get_content_type(),'bytes':body} if part.get_filename() is not None else body.decode()
                 else:
                     data = {k:v[0] for k,v in urllib.parse.parse_qs(raw.decode()).items()}
                 if self.path == '/v1/chat/completions':

@@ -38,7 +38,12 @@ const (
 )
 
 // Spec is the typed, validated representation of RuntimeProfileSpec V1.
+type ExecutorResource struct {
+	Kind string `json:"kind"`
+}
+
 type Spec struct {
+	Executors                 map[string]ExecutorResource  `json:"executors,omitempty"`
 	SchemaVersion             string                       `json:"schema_version"`
 	CredentialProtocolVersion string                       `json:"credential_protocol_version"`
 	Models                    map[string]ModelResource     `json:"models"`

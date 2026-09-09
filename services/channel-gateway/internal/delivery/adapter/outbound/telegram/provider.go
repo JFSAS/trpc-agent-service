@@ -3,7 +3,10 @@
 package telegramadapter
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"regexp"
 	"strconv"
@@ -22,7 +25,10 @@ const maxCallTimeout = time.Minute
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
-type Provider struct{ accounts map[string]*bot.Bot }
+type Provider struct {
+	accounts  map[string]*bot.Bot
+	artifacts application.ArtifactReader
+}
 
 var _ application.SenderProvider = (*Provider)(nil)
 
@@ -30,8 +36,14 @@ var _ application.SenderProvider = (*Provider)(nil)
 // performs no authentication or HTTP request. The composition owner must supply
 // authenticated clients with bounded transport and sanitized SDK error handlers,
 // and must not mutate a client's token/configuration while this Provider uses it.
-func NewProvider(accounts map[string]*bot.Bot) (*Provider, error) {
+func NewProvider(accounts map[string]*bot.Bot, readers ...application.ArtifactReader) (*Provider, error) {
 	p := &Provider{accounts: make(map[string]*bot.Bot, len(accounts))}
+	if len(readers) > 1 {
+		return nil, domain.ErrInvalid
+	}
+	if len(readers) == 1 {
+		p.artifacts = readers[0]
+	}
 	for account, client := range accounts {
 		if !idPattern.MatchString(account) || client == nil {
 			return nil, domain.ErrInvalid
@@ -62,10 +74,12 @@ func (p *Provider) Reserve(ctx context.Context, req application.SendRequest) (ap
 	}
 	// Telegram validation already rejects both mutable pointer fields (Origin and
 	// Owner), so this value copy owns every captured payload and capability field.
-	return &reservation{client: client, request: req}, nil
+	req.Claim.Intent.Attachments = append([]domain.Attachment(nil), req.Claim.Intent.Attachments...)
+	return &reservation{client: client, request: req, artifacts: p.artifacts}, nil
 }
 
 type reservation struct {
+	artifacts      application.ArtifactReader
 	client         *bot.Bot
 	request        application.SendRequest
 	mu             sync.Mutex
@@ -142,9 +156,37 @@ func (r *reservation) SendFinal(parent context.Context, a domain.Attempt) domain
 	}
 	// The certainty boundary is entering the SDK call. Subsequent network errors,
 	// cancellation and malformed responses cannot prove that no bytes were sent.
-	message, err := r.client.SendMessage(callCtx, params)
+	var message *models.Message
+	documentSent := false
+	if attachment, ok := domain.AttachmentAt(a.Target, a.Intent, r.request.Claim.Part.Index); ok {
+		documentSent = true
+		// Public Telegram Bot API multipart document limit (50 MB).
+		if attachment.SizeBytes > 50*1024*1024 {
+			return notSent(domain.ErrorPermanent)
+		}
+		if r.artifacts == nil {
+			return notSent(domain.ErrorPermanent)
+		}
+		body, readErr := r.artifacts.ReadReplyArtifact(callCtx, a.Intent, attachment)
+		if readErr != nil {
+			if errors.Is(readErr, domain.ErrInvalid) || errors.Is(readErr, domain.ErrUnauthorized) {
+				return notSent(domain.ErrorPermanent)
+			}
+			return notSent(domain.ErrorTemporary)
+		}
+		hash := sha256.Sum256(body)
+		if int64(len(body)) != attachment.SizeBytes || hex.EncodeToString(hash[:]) != attachment.SHA256 {
+			return notSent(domain.ErrorPermanent)
+		}
+		message, err = r.client.SendDocument(callCtx, &bot.SendDocumentParams{ChatID: chatID, MessageThreadID: threadID, ReplyParameters: params.ReplyParameters, Document: &models.InputFileUpload{Filename: attachment.Name, Data: bytes.NewReader(body)}})
+	} else {
+		message, err = r.client.SendMessage(callCtx, params)
+	}
 	if err != nil {
 		return classify(err)
+	}
+	if documentSent && (message == nil || message.Document == nil || message.Document.FileID == "") {
+		return domain.Result{Certainty: domain.CertaintyUnknown, ErrorClass: domain.ErrorPermanent}
 	}
 	if message == nil || message.ID <= 0 || message.Chat.ID != chatID || (threadID != 0 && message.MessageThreadID != threadID) {
 		return domain.Result{Certainty: domain.CertaintyUnknown, ErrorClass: domain.ErrorPermanent}

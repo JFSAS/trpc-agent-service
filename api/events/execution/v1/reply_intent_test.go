@@ -56,7 +56,7 @@ func TestReplyIntentRejectsNoncanonicalTime(t *testing.T) {
 
 func TestReplyIntentInvalidFixtures(t *testing.T) {
 	files, err := filepath.Glob("fixtures/reply-intent/invalid/*.json")
-	if err != nil || len(files) != 4 {
+	if err != nil || len(files) != 8 {
 		t.Fatalf("invalid fixtures: %v %v", files, err)
 	}
 	for _, name := range files {
@@ -170,4 +170,19 @@ func TestReplyIntentConcurrentCodec(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestReplyAttachmentFixtureZeroVersion(t *testing.T) {
+	raw, err := os.ReadFile("fixtures/reply-intent-attachment.valid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := contract.DecodeReplyIntent(raw)
+	if err != nil || len(in.Content.Attachments) != 1 || in.Content.Attachments[0].Version != 0 {
+		t.Fatal(in, err)
+	}
+	encoded, err := contract.EncodeReplyIntent(in)
+	if err != nil || !bytes.Contains(encoded, []byte(`"version":0`)) {
+		t.Fatal(string(encoded), err)
+	}
 }

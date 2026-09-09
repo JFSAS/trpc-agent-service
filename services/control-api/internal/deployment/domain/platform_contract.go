@@ -183,7 +183,7 @@ func (c PlatformExecutionContract) CalculateDigest() (string, error) {
 
 func (c PlatformExecutionContract) Validate() error {
 	for _, capability := range c.RuntimeDataCapabilities {
-		if capability != "memory" && capability != "artifact" && capability != "summary" {
+		if capability != "memory" && capability != "artifact" && capability != "summary" && capability != "workspace" {
 			return ErrInvalidPlatformExecutionContract
 		}
 	}
@@ -355,7 +355,7 @@ func cloneMap[K comparable, V any](source map[K]V) map[K]V {
 func WorkerV1PlatformExecutionContract() PlatformExecutionContract {
 	c := DefaultPlatformExecutionContract()
 	c.Version = deploymentv1.WorkerV1PlatformVersion
-	c.RuntimeDataCapabilities = []string{"summary", "memory", "artifact"}
+	c.RuntimeDataCapabilities = []string{"summary", "memory", "artifact", "workspace"}
 	c.StorageAdapters[profiledomain.StorageKindManagedArtifact] = AdapterContract{Version: StorageAdapterManagedArtifactV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedSession] = AdapterContract{Version: StorageAdapterManagedSessionV1}
 	c.StorageAdapters[profiledomain.StorageKindManagedMemory] = AdapterContract{Version: StorageAdapterManagedMemoryV1}

@@ -236,7 +236,7 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 		if e != nil {
 			return fail(e)
 		}
-		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{Tracer: traces.Tracer("channel-gateway")})
+		dispatcher, e := deliveryapp.NewDispatcher(deliveryLedger, controlSenders{artifacts: workerProof, use: use, wecom: provider, telegramAPIURL: c.TelegramAPIURL}, deliveryapp.DispatchOptions{Tracer: traces.Tracer("channel-gateway")})
 		if e != nil {
 			return fail(e)
 		}

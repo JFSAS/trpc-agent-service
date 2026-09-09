@@ -101,7 +101,7 @@ func TestProofCallerIdentityIsEndpointSpecific(t *testing.T) {
 		body       []byte
 		ids        []string
 		status     int
-	}{{"missing TLS", proof.FinalVerifyPath, finalBody(), nil, 401}, {"header spoof", proof.FinalVerifyPath, finalBody(), nil, 401}, {"wrong workload", proof.FinalVerifyPath, finalBody(), []string{workerID}, 403}, {"multiple URI", proof.FinalVerifyPath, finalBody(), []string{gatewayID, controlID}, 403}, {"Gateway cannot query active lease", proof.AttemptVerifyPath, attemptBody(), []string{gatewayID}, 403}, {"Control cannot query Final", proof.FinalVerifyPath, finalBody(), []string{controlID}, 403}, {"Control active", proof.AttemptVerifyPath, attemptBody(), []string{controlID}, 200}, {"Gateway final", proof.FinalVerifyPath, finalBody(), []string{gatewayID}, 200}} {
+	}{{"missing TLS", proof.FinalVerifyPath, finalBody(), nil, 401}, {"header spoof", proof.FinalVerifyPath, finalBody(), nil, 401}, {"wrong workload", proof.FinalVerifyPath, finalBody(), []string{workerID}, 403}, {"multiple URI", proof.FinalVerifyPath, finalBody(), []string{gatewayID, controlID}, 403}, {"Gateway cannot query active lease", proof.AttemptVerifyPath, attemptBody(), []string{gatewayID}, 403}, {"Control committed Final", proof.FinalVerifyPath, finalBody(), []string{controlID}, 200}, {"Control active", proof.AttemptVerifyPath, attemptBody(), []string{controlID}, 200}, {"Gateway final", proof.FinalVerifyPath, finalBody(), []string{gatewayID}, 200}} {
 		t.Run(test.name, func(t *testing.T) {
 			h, a, f := fixture(t)
 			r := request(test.path, test.body, test.ids...)

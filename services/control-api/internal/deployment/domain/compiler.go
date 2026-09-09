@@ -46,6 +46,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 	resolvedModels, resolvedTools, resolvedKnowledge := matchDeclaredRequirements(
 		input.Agent.Spec, input.Profile.Spec, used, &diagnostics,
 	)
+	executors, resolvedExecutors := compileExecutors(input, &diagnostics)
 	selectedStorage, storageRoles := selectStorageRoles(input.Profile.Spec, &diagnostics, input.Agent.Spec)
 
 	plan := compileAgentPlan(
@@ -57,6 +58,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 		used, resolvedModels, resolvedTools, resolvedKnowledge, selectedStorage,
 		input.Platform, input.ManagedBackends, &diagnostics,
 	)
+	resources.Executors = executors
 	if len(endpointHosts) > 128 {
 		diagnostics = append(diagnostics, diagnostic(
 			DiagnosticLimitExceeded, SeverityError, DiagnosticSourcePlatform,
@@ -92,6 +94,7 @@ func Compile(input CompileInput) (CompiledManifest, ValidationReport) {
 		Runtime:   compileManifestRuntime(input.Agent.Spec),
 		AgentPlan: plan, Resources: resources,
 		ResolvedRequirements: ResolvedRequirements{
+			Executors: resolvedExecutors,
 			Models:    identityResolution(used.models, resolvedModels),
 			Tools:     identityResolution(used.tools, resolvedTools),
 			Knowledge: identityResolution(used.knowledge, resolvedKnowledge),
@@ -405,6 +408,9 @@ func compileAgentPlan(
 				))
 			}
 			compileNodeData(&node, source, id, platform, diagnostics)
+			if source.Workspace != nil {
+				node.Workspace = &ManifestWorkspace{ExecutorResource: source.Workspace.ExecutorSlot, Tools: append([]string{}, source.Workspace.Tools...)}
+			}
 			node.Generation = cloneGeneration(source.Generation)
 			if len(node.CallableEntries) > platform.Limits.MaxCallableEntriesPerNode {
 				*diagnostics = append(*diagnostics, nodeResourceDiagnostic(
@@ -422,7 +428,7 @@ func compileAgentPlan(
 					"node max_output_tokens exceeds the platform execution limit",
 				))
 			}
-			if len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil {
+			if node.Workspace != nil || len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil {
 				model, exists := profile.Models[source.ModelSlot]
 				requirement := agent.Requirements.Models[source.ModelSlot]
 				if exists && !containsString(model.ProvidedCapabilities(), profiledomain.CapabilityToolCall) &&

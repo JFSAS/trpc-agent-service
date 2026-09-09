@@ -131,3 +131,16 @@ Proxy tests use an independent local HTTP upstream to verify model/header mappin
 JSON, incremental SSE, redirected/error response handling, key redaction,
 configuration persistence and echo switching. They do not claim any real provider
 is connected until its credentials are configured and a real chat succeeds.
+
+### Actual document uploads
+
+The simulated Telegram API accepts multipart `sendDocument` with real file
+bytes. String file IDs/URLs/ref text are rejected in this mode. Received bytes
+are stored in SQLite `documents.body` (BLOB), alongside filename, MIME and
+SHA-256; the outgoing message contains a Telegram-style `document` receipt.
+Original reply source and thread are recorded. `/lab/state` exposes metadata,
+not inline file bytes. `GET /lab/documents/{file_id}` returns the stored bytes
+as a download with length and `X-Content-SHA256`; chat bubbles provide a download
+link and file size/hash. This remains a local protocol laboratory, not evidence
+of external Telegram delivery. The multipart MIME type is recorded as sent by
+the client, which can be application/octet-stream even for text files.

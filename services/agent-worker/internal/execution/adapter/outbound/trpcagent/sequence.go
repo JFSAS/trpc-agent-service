@@ -16,6 +16,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/agent/cycleagent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/parallelagent"
+	"trpc.group/trpc-go/trpc-agent-go/artifact"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/memory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
@@ -73,6 +74,9 @@ func executionNodes(req Request) (map[string]NodeConfig, string, error) {
 			if _, err := nodeOutputLimit(n.Model, req.MaxOutputTokens); err != nil {
 				return err
 			}
+			if err := validateWorkspaceSelection(req, n); err != nil {
+				return err
+			}
 			if n.Memory != nil && req.Memory == nil || n.Artifact && req.Artifact == nil || n.AddSessionSummary && req.Summary == nil {
 				return errors.New("node capability service missing")
 			}
@@ -109,6 +113,7 @@ func nodeOutputLimit(m Model, published int64) (int64, error) {
 }
 
 type executionAssembly struct {
+	workspace     *WorkspaceAssembly
 	root          agent.Agent
 	runnerOptions []runner.Option
 	models        map[string]*modelTransport
@@ -169,6 +174,21 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 			return nil, err
 		}
 		a.runnerOptions = append(a.runnerOptions, runner.WithMemoryService(memoryService))
+	}
+	if req.Workspace != nil {
+		var service artifact.Service
+		if req.Artifact != nil {
+			service = req.Artifact.Service
+		}
+		a.workspace, err = NewWorkspaceAssembly(req.Workspace.ExecTool, req.Workspace.SaveArtifactTool, service)
+		if err != nil {
+			return nil, err
+		}
+		if req.Artifact != nil {
+			v := *req.Artifact
+			v.Service = a.workspace.Service()
+			req.Artifact = &v
+		}
 	}
 	if req.Artifact != nil {
 		if nilCapabilityService(req.Artifact.Service) || req.Artifact.MaxBytes < 1 {
@@ -233,6 +253,17 @@ func (e Executor) assemble(ctx context.Context, req Request, nodes map[string]No
 		}
 		max := int(limit)
 		options := []llmagent.Option{llmagent.WithModel(m), llmagent.WithInstruction(n.Instruction), llmagent.WithGenerationConfig(model.GenerationConfig{MaxTokens: &max, Temperature: n.Model.Temperature, Stream: true}), llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithCodeExecutor(nil), llmagent.WithPreloadMemory(0), llmagent.WithAddSessionSummary(n.AddSessionSummary), llmagent.WithSyncSummaryIntraRun(false), llmagent.WithMaxHistoryRuns(0), llmagent.WithPreserveSameBranch(true)}
+		for _, name := range n.WorkspaceTools {
+			if a.workspace == nil {
+				return nil, errors.New("workspace service missing")
+			}
+			t, err := a.workspace.Tool(name)
+			if err != nil {
+				return nil, err
+			}
+			ordinary = append(ordinary, t)
+			names = append(names, name)
+		}
 		if len(ordinary) > 0 {
 			options = append(options, llmagent.WithTools(ordinary))
 		}
@@ -354,5 +385,34 @@ func (a *executionAssembly) wait(timeout time.Duration) bool {
 }
 
 func compositeHasLeafConfig(n NodeConfig) bool {
-	return n.Instruction != "" || n.Model.Endpoint != "" || n.Model.Name != "" || n.Model.APIKey != "" || n.Model.Temperature != nil || n.Model.MaxOutputTokens != nil || n.Memory != nil || n.Artifact || n.Knowledge != nil || len(n.Tools) > 0 || n.AddSessionSummary
+	return len(n.WorkspaceTools) > 0 || n.Instruction != "" || n.Model.Endpoint != "" || n.Model.Name != "" || n.Model.APIKey != "" || n.Model.Temperature != nil || n.Model.MaxOutputTokens != nil || n.Memory != nil || n.Artifact || n.Knowledge != nil || len(n.Tools) > 0 || n.AddSessionSummary
+}
+
+func validateWorkspaceSelection(req Request, n NodeConfig) error {
+	if len(n.WorkspaceTools) == 0 {
+		return nil
+	}
+	if req.Workspace == nil || len(n.WorkspaceTools) > 2 {
+		return errors.New("workspace service missing")
+	}
+	seen := map[string]bool{}
+	for _, name := range n.WorkspaceTools {
+		if seen[name] {
+			return errors.New("duplicate workspace tool")
+		}
+		seen[name] = true
+		switch name {
+		case "workspace_exec":
+			if nilCapabilityService(req.Workspace.ExecTool) {
+				return errors.New("workspace execution missing")
+			}
+		case "workspace_save_artifact":
+			if !n.Artifact || req.Artifact == nil || nilCapabilityService(req.Workspace.SaveArtifactTool) {
+				return errors.New("workspace save requires node artifact")
+			}
+		default:
+			return errors.New("unknown workspace tool")
+		}
+	}
+	return nil
 }

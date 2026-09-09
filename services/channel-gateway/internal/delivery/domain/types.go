@@ -20,7 +20,16 @@ var (
 
 // Intent has no destination. Delivery obtains the immutable original destination
 // from Admission and verifies a committed Final with the Execution owner.
+type Attachment struct {
+	Name      string `json:"name"`
+	Version   int64  `json:"version"`
+	MIMEType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+}
+
 type Intent struct {
+	Attachments                                     []Attachment `json:",omitempty"`
 	ID, AdmissionID, RunID, AttemptID, CompletionID string
 	ExecutionGeneration, Sequence                   int64
 	Text                                            string

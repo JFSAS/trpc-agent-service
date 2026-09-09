@@ -40,6 +40,9 @@ func projectSequence(c protocol.ManifestContent, publication manifest.Publicatio
 			first = false
 		}
 		node := domain.NodePlan{Kind: "llm", Instruction: leaf.Instruction, ModelEndpoint: leaf.ModelEndpoint, ModelName: leaf.ModelName, ModelCredential: leaf.ModelCredential, Temperature: leaf.Temperature, MaxOutputTokens: leaf.NodeMaxOutputTokens, ToolResources: append([]string(nil), n.ToolResources...), Artifact: n.Artifact != nil, AddSessionSummary: n.AddSessionSummary != nil && *n.AddSessionSummary}
+		if n.Workspace != nil {
+			node.Workspace = &domain.WorkspacePlan{ExecutorResource: n.Workspace.ExecutorResource, Tools: append([]string(nil), n.Workspace.Tools...)}
+		}
 		for _, t := range leaf.Tools {
 			tools[t.Resource] = t
 		}
@@ -68,6 +71,10 @@ func projectSequence(c protocol.ManifestContent, publication manifest.Publicatio
 	}
 	visit(c.AgentPlan.Root)
 	p.NodeID = c.AgentPlan.Root
+	p.Executors = make(map[string]domain.ExecutorPlan, len(c.Resources.Executors))
+	for key, r := range c.Resources.Executors {
+		p.Executors[key] = domain.ExecutorPlan{Kind: r.Kind, AdapterVersion: r.AdapterVersion}
+	}
 	p.Nodes = nodes
 	p.Knowledges = knowledges
 	keys := make([]string, 0, len(tools))

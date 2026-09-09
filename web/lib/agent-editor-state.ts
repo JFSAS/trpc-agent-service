@@ -23,7 +23,7 @@ export interface AgentEditorState {
   focusRevision?: number;
 }
 
-export type RequirementKind = "models" | "tools" | "knowledge";
+export type RequirementKind = "models" | "tools" | "knowledge" | "executors";
 export type NodeAddMode = "child" | "wrap-selected" | "wrap-root";
 
 export type AgentEditorAction =
@@ -42,7 +42,7 @@ export type AgentEditorAction =
   | { type: "child.move"; parentID: string; from: number; to: number }
   | { type: "loop.body.set"; nodeID: string; body: string }
   | { type: "requirement.model.set"; slot: string; capabilities: string[] }
-  | { type: "requirement.capability.set"; kind: "tools" | "knowledge"; slot: string; capability: string }
+  | { type: "requirement.capability.set"; kind: "tools" | "knowledge" | "executors"; slot: string; capability: string }
   | { type: "requirement.delete"; kind: RequirementKind; slot: string };
 
 export function createAgentEditorState(spec: AgentSpecV1): AgentEditorState {
@@ -156,7 +156,7 @@ export function agentEditorReducer(state: AgentEditorState, action: AgentEditorA
       });
     }
     case "requirement.delete": {
-      const current = state.spec.requirements[action.kind];
+      const current = state.spec.requirements[action.kind] ?? {};
       if (!(action.slot in current)) return state;
       const next = { ...current };
       delete next[action.slot];
@@ -548,6 +548,10 @@ function validateSlots(
   diagnostics: AgentSpecDiagnostic[],
 ): void {
   const pointer = `/nodes/${escapeJSONPointer(nodeID)}`;
+  if (node.workspace) {
+    if (!Object.hasOwn(spec.requirements.executors ?? {}, node.workspace.executor_slot)) diagnostics.push(error("AGENT_SPEC_EXECUTOR_SLOT_NOT_FOUND", `${pointer}/workspace/executor_slot`, "Executor Slot 未声明。", nodeID));
+    if (node.workspace.tools.includes("workspace_save_artifact") && node.artifact?.enabled !== true) diagnostics.push(error("AGENT_SPEC_WORKSPACE_ARTIFACT_REQUIRED", `${pointer}/workspace/tools`, "workspace_save_artifact 需要同节点显式启用 Artifact 服务。", nodeID));
+  }
   if (!spec.requirements.models[node.model_slot]) {
     diagnostics.push(error("AGENT_SPEC_MODEL_SLOT_NOT_FOUND", `${pointer}/model_slot`, "Model Slot 未声明。", nodeID));
   }

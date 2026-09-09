@@ -13,6 +13,7 @@ export interface CapabilityRequirementV1 {
 }
 
 export interface AgentRequirementsV1 {
+  executors?: Record<string, CapabilityRequirementV1>;
   models: Record<string, ModelRequirementV1>;
   tools: Record<string, CapabilityRequirementV1>;
   knowledge: Record<string, CapabilityRequirementV1>;
@@ -22,6 +23,9 @@ export interface GenerationOptionsV1 {
   temperature?: number;
   max_output_tokens?: number;
 }
+
+export const WORKSPACE_TOOLS = ["workspace_exec", "workspace_save_artifact"] as const;
+export type WorkspaceTool = (typeof WORKSPACE_TOOLS)[number];
 
 export const MEMORY_TOOLS = ["memory_add", "memory_update", "memory_delete", "memory_clear", "memory_search", "memory_load"] as const;
 export type MemoryTool = (typeof MEMORY_TOOLS)[number];
@@ -38,6 +42,7 @@ export interface LLMNodeV1 extends NamedNodeV1 {
   tool_slots: string[];
   knowledge_slots: string[];
   generation?: GenerationOptionsV1;
+  workspace?: { executor_slot: string; tools: WorkspaceTool[] };
   memory?: { tools: MemoryTool[]; preload_limit?: number };
   artifact?: { enabled: boolean };
   add_session_summary?: boolean;
@@ -89,6 +94,7 @@ export const AGENT_SPEC_LIMITS = {
   depth: 16,
   children: 64,
   modelSlots: 16,
+  executorSlots: 16,
   toolSlots: 64,
   knowledgeSlots: 32,
   capabilitiesPerModel: 16,
@@ -185,7 +191,8 @@ function isRenderableMap(value: unknown, isEntry: (entry: unknown) => boolean): 
 function isRenderableRequirements(value: unknown): boolean {
   const isCapability = (entry: unknown) => hasRenderableFields(entry, ["capability"])
     && typeof entry.capability === "string";
-  return hasRenderableFields(value, ["models", "tools", "knowledge"])
+  return hasRenderableFields(value, ["models", "tools", "knowledge"], ["executors"])
+    && (!("executors" in value) || isRenderableMap(value.executors, isCapability))
     && isRenderableMap(value.models, (entry) => hasRenderableFields(entry, ["capabilities"])
       && isRenderableStringArray(entry.capabilities))
     && isRenderableMap(value.tools, isCapability)
@@ -200,7 +207,7 @@ function isRenderableNode(value: unknown): boolean {
   if (!isRenderableRecord(value) || ("name" in value && typeof value.name !== "string")) return false;
   switch (value.kind) {
     case "llm":
-      return hasRenderableFields(value, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], ["name", "generation", "memory", "artifact", "add_session_summary"])
+      return hasRenderableFields(value, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], ["name", "generation", "memory", "artifact", "add_session_summary", "workspace"])
         && renderableNodeData(value)
         && typeof value.instruction === "string"
         && typeof value.model_slot === "string"
@@ -274,7 +281,13 @@ function validateRequirements(value: unknown, diagnostics: AgentSpecDiagnostic[]
     diagnostics.push(invalidType("/requirements"));
     return;
   }
-  allowedFields(value, "/requirements", ["models", "tools", "knowledge"], diagnostics);
+  allowedFields(value, "/requirements", ["models", "tools", "knowledge", "executors"], diagnostics);
+  if ("executors" in value) {
+    validateRequirementMap(value.executors, "/requirements/executors", AGENT_SPEC_LIMITS.executorSlots, false, diagnostics);
+    if (isRecord(value.executors)) for (const [slot, entry] of Object.entries(value.executors)) {
+      if (isRecord(entry) && entry.capability !== "workspace") diagnostics.push(diagnostic("AGENT_SPEC_EXECUTOR_CAPABILITY_UNSUPPORTED", `/requirements/executors/${escapeJSONPointer(slot)}/capability`, "Executor capability 必须为 workspace。"));
+    }
+  }
   requiredFields(value, "/requirements", ["models", "tools", "knowledge"], diagnostics);
   if ("models" in value) {
     validateRequirementMap(value.models, "/requirements/models", AGENT_SPEC_LIMITS.modelSlots, true, diagnostics);
@@ -362,7 +375,7 @@ function validateNode(node: Record<string, unknown>, pointer: string, nodeID: st
   }
 
   if (node.kind === "llm") {
-    allowedFields(node, pointer, ["kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation", "memory", "artifact", "add_session_summary"], diagnostics);
+    allowedFields(node, pointer, ["kind", "name", "instruction", "model_slot", "tool_slots", "knowledge_slots", "generation", "memory", "artifact", "add_session_summary", "workspace"], diagnostics);
     validateNodeData(node, pointer, diagnostics);
     requiredFields(node, pointer, ["kind", "instruction", "model_slot", "tool_slots", "knowledge_slots"], diagnostics);
     validateOptionalName(node, pointer, diagnostics);
@@ -460,7 +473,7 @@ function validateStringArray(
       if (seen.has(item)) {
         const duplicateCode = pointer.endsWith("/children")
           ? "AGENT_SPEC_DUPLICATE_CHILD"
-          : "AGENT_SPEC_LIMIT_EXCEEDED";
+          : pointer.endsWith("/workspace/tools") ? "AGENT_SPEC_DUPLICATE_WORKSPACE_TOOL" : "AGENT_SPEC_LIMIT_EXCEEDED";
         diagnostics.push(diagnostic(duplicateCode, itemPointer, "数组元素必须唯一。", nodeID));
       }
       seen.add(item);
@@ -559,7 +572,10 @@ function renderableRuntime(value: unknown): boolean {
   ));
 }
 function renderableNodeData(value: Record<string, unknown>): boolean {
-  return (!("memory" in value) || (hasRenderableFields(value.memory, ["tools"], ["preload_limit"])
+  return (!("workspace" in value) || (hasRenderableFields(value.workspace, ["executor_slot", "tools"])
+    && typeof value.workspace.executor_slot === "string" && isRenderableStringArray(value.workspace.tools)
+    && value.workspace.tools.every((tool) => WORKSPACE_TOOLS.includes(tool as WorkspaceTool))))
+    && (!("memory" in value) || (hasRenderableFields(value.memory, ["tools"], ["preload_limit"])
     && isRenderableStringArray(value.memory.tools) && value.memory.tools.every((tool) => MEMORY_TOOLS.includes(tool as MemoryTool))
     && (!("preload_limit" in value.memory) || isFiniteNumber(value.memory.preload_limit))))
     && (!("artifact" in value) || (hasRenderableFields(value.artifact, ["enabled"]) && typeof value.artifact.enabled === "boolean"))
@@ -585,6 +601,16 @@ function validateRuntime(value: unknown, d: AgentSpecDiagnostic[]) {
   if ("event_threshold" in s) dataInteger(s.event_threshold, `${p}/event_threshold`, 1, d);
 }
 function validateNodeData(node: Record<string, unknown>, p: string, d: AgentSpecDiagnostic[]) {
+  if ("workspace" in node && dataObject(node.workspace, `${p}/workspace`, ["executor_slot", "tools"], ["executor_slot", "tools"], d)) {
+    const w = node.workspace;
+    if ("executor_slot" in w) validateIdentifier(w.executor_slot, `${p}/workspace/executor_slot`, d);
+    if ("tools" in w) {
+      validateStringArray(w.tools, `${p}/workspace/tools`, 1, 2, isAgentCapability, d);
+      if (Array.isArray(w.tools)) w.tools.forEach((tool, index) => {
+        if (typeof tool === "string" && !WORKSPACE_TOOLS.includes(tool as WorkspaceTool)) d.push(diagnostic("AGENT_SPEC_WORKSPACE_TOOL_UNSUPPORTED", `${p}/workspace/tools/${index}`, "Workspace 工具不受支持。"));
+      });
+    }
+  }
   if ("memory" in node && dataObject(node.memory, `${p}/memory`, ["tools", "preload_limit"], ["tools"], d)) {
     const m = node.memory;
     if ("tools" in m) {

@@ -28,6 +28,7 @@ const categories: { key: ResourceCategory; label: string; detail: string; limit:
   { key: "models", label: "Models", detail: "模型服务", limit: 16, kind: "openai_compatible", icon: BrainCircuit },
   { key: "tools", label: "Tools", detail: "MCP 工具", limit: 64, kind: "mcp_streamable_http", icon: Boxes },
   { key: "knowledge", label: "Knowledge", detail: "知识检索", limit: 32, kind: "qdrant_openai", icon: Search },
+  { key: "executors", label: "Executors", detail: "工作区执行器", limit: 16, kind: "sdk_sandbox", icon: Boxes },
   { key: "storage", label: "Storage", detail: "状态存储", limit: 16, kind: "postgres_state", icon: Database },
 ];
 const namePattern = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -37,6 +38,7 @@ function own<T>(map: Record<string, T> | undefined, key: string): T | undefined 
 }
 function initialResource(category: ResourceCategory): ResourceConfig {
   switch (category) {
+    case "executors": return { kind: "sdk_sandbox" };
     case "models": return { kind: "openai_compatible", model: "", base_url: "", capabilities: ["chat"] };
     case "tools": return { kind: "mcp_streamable_http", server_url: "", toolset_name: "", tool_name: "", auth: { kind: "none" }, capability: "web.search" };
     case "knowledge": return { kind: "qdrant_openai", host: "", port: 6334, tls: true, collection: "", embedding: { model: "", base_url: "", dimensions: undefined } };
@@ -163,7 +165,12 @@ export function ProfileResourceEditor({ tenantId = "", config, credentials, cred
   const cancelDelete = () => setDeleteTarget(null);
 
   let form: ReactNode = null;
-  if (name && category === "models") {
+  if (name && category === "executors") {
+    form = <FormSection title="SDK Sandbox" description="仅声明 sdk_sandbox 执行器；执行环境由部署管理，不接受 URL、主机路径或环境秘密。">
+      <p>使用与 Agent Executors Requirement 相同的槽位名称。在 LLM 节点显式选择执行器及 workspace 工具；添加资源不会自动启用任何节点能力。</p>
+      <p>workspace_save_artifact 还需同节点启用 Artifact，并在此 Profile 配置对应的 Artifact 存储。</p>
+    </FormSection>;
+  } else if (name && category === "models") {
     const model = own(config.models, name) ?? {};
     form = <>
       <FormSection title="模型连接" description="手动填写 OpenAI-compatible 服务参数，不执行模型发现或连接测试。">
@@ -281,7 +288,7 @@ export function ProfileResourceEditor({ tenantId = "", config, credentials, cred
     </div>
     {deleteTarget && <ProfileDialog title={`删除资源 ${deleteTarget.name}`} onClose={cancelDelete} busy={disabled} footer={<><Button type="button" variant="secondary" onClick={cancelDelete} disabled={disabled}>取消</Button><Button type="button" variant="danger" disabled={disabled || readOnly || protectDelete} onClick={() => {
       if (readOnly || disabled || protectDelete) return;
-      const resources = { ...config[deleteTarget.category] };
+      const resources: Record<string, ResourceConfig> = { ...config[deleteTarget.category] };
       delete resources[deleteTarget.name];
       onChange({ ...config, [deleteTarget.category]: resources }, dropResourceActions(credentials, deleteTarget.category, deleteTarget.name));
       setDeleteTarget(null); setChosenName(Object.keys(resources)[0] ?? ""); addNameRef.current?.focus();

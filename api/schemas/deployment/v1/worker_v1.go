@@ -49,10 +49,23 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	}
 	// Validate node authority locally, then validate the union once. A resource
 	// shared by two leaves is one global dependency, not an extra for either leaf.
+	selectedExecutors := map[string]bool{}
 	selectedModels, selectedTools, selectedKnowledge := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	toolModels := map[string]bool{}
 	memorySelected, artifactSelected := false, false
 	for _, node := range leaves {
+		if node.Workspace != nil {
+			w := node.Workspace
+			if w.Validate() != nil || c.Execution.MaxToolCalls < 1 {
+				return reject("invalid workspace selection")
+			}
+			selectedExecutors[w.ExecutorResource] = true
+			for _, tool := range w.Tools {
+				if tool == "workspace_save_artifact" && node.Artifact == nil {
+					return reject("workspace save requires node artifact")
+				}
+			}
+		}
 		if node.AddSessionSummary != nil && (!*node.AddSessionSummary || c.Runtime == nil) {
 			return reject("summary consumption requires enabled runtime summary")
 		}
@@ -95,7 +108,7 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 		if !slices.Equal(callables, actualCallables) {
 			return reject("selected callable authority")
 		}
-		if (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(callables) > 0 {
+		if node.Workspace != nil || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil || len(callables) > 0 {
 			toolModels[node.ModelResource] = true
 		}
 	}
@@ -110,6 +123,15 @@ func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	}
 	if len(c.Resources.Knowledge) != len(selectedKnowledge) || !workerV1Bindings(c.ResolvedRequirements.Knowledge, selectedKnowledge) {
 		return reject("explicit knowledge resource closure")
+	}
+	if len(c.Resources.Executors) > 16 || len(c.Resources.Executors) != len(selectedExecutors) || !workerV1Bindings(c.ResolvedRequirements.Executors, selectedExecutors) {
+		return reject("executor closure")
+	}
+	for name := range selectedExecutors {
+		r, ok := c.Resources.Executors[name]
+		if !ok || r.Validate() != nil {
+			return reject("workspace executor adapter")
+		}
 	}
 	sessionKey, ok := c.StorageRoles["session"]
 	session, exists := c.Resources.Storage[sessionKey]
@@ -327,7 +349,7 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 			if len(node.Children) < 1 || len(node.Children) > 64 {
 				return reject(node.Kind + " requires 1..64 unique children")
 			}
-			if node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil || node.Body != "" || node.MaxIterations != 0 {
+			if node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Workspace != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil || node.Body != "" || node.MaxIterations != 0 {
 				return reject(node.Kind + " cannot contain llm or data options")
 			}
 			for _, child := range node.Children {
@@ -339,7 +361,7 @@ func workerV1LLMNodes(plan AgentPlan) ([]ManifestNode, error) {
 			if node.Body == "" || node.MaxIterations < 1 || node.MaxIterations > 32 {
 				return reject("loop requires one body and explicit max_iterations in 1..32")
 			}
-			if node.Children != nil || node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
+			if node.Children != nil || node.Instruction != "" || node.ModelResource != "" || node.ToolResources != nil || node.KnowledgeResources != nil || node.CallableEntries != nil || node.Workspace != nil || node.Generation != nil || node.Memory != nil || node.Artifact != nil || node.AddSessionSummary != nil {
 				return reject("loop cannot contain children, llm or data options")
 			}
 			if err := visit(node.Body, depth+1); err != nil {

@@ -127,3 +127,9 @@ describe("Runtime Profile workspace", () => {
     expect(diagnosticTarget({ ...base, pointer: "/schema_version" })).toBeNull();
   });
 });
+
+it("routes executor diagnostics to the existing Profile editor category", () => {
+  const diagnostic = { code: "INVALID", severity: "error" as const, pointer: "/executors/sandbox/kind", resource_key: "sandbox", resource_kind: "executor" as const, message: "bad" };
+  expect(diagnosticTarget(diagnostic)).toEqual({ category: "executors", name: "sandbox", pointer: diagnostic.pointer });
+  expect(diagnosticTarget({ ...diagnostic, resource_kind: null, resource_key: null, pointer: "/config/executors/sandbox/kind" })?.category).toBe("executors");
+});

@@ -52,3 +52,42 @@ side effect, one-shot concurrency, fixed-target/attempt fencing, cancellation,
 release, typed rejection/migration, malformed and wrong-target responses,
 connection loss and persisted multipart text. These tests do not contact the
 real Telegram API or establish production credential/IM acceptance.
+
+## Accepted Artifact attachments
+
+ReplyIntent v1 keeps its required text and optionally adds
+`content.attachments: [{name, version, mime_type, size_bytes, sha256}]`.
+`version: 0` is a fixed version, not latest. Names are basenames; SHA-256 is
+64 lowercase hexadecimal characters. URLs, paths and inline file content are
+not accepted. MIME parameters are valid when the media type parses correctly.
+Absent attachments preserve existing text-only canonical bytes/digests.
+
+Gateway verifies the committed Final before persisting an immutable plan:
+text parts first, then one document part per attachment. Existing JSON intent
+storage and ordered part rows preserve these descriptors without new DDL.
+Attachment bodies contain descriptor JSON; part index distinguishes documents
+from text, so user text resembling JSON never becomes an upload instruction.
+Every document uses the existing claim/MarkCalling/result boundary. Rejected or
+unknown document delivery is not converted into acceptance, and later parts
+cannot bypass an unaccepted preceding part. An accepted handoff receipt means
+planned, not that every provider part has been delivered.
+
+For a document part, the configured Worker mTLS client POSTs
+`/internal/v1/reply-artifacts` with exactly
+`{intent_id, run_id, completion_id, name, version}`. Worker owns authorization
+against its durable accepted intent, scope and fixed Manifest credentials.
+Gateway requires matching Content-Type, Content-Length and X-Content-SHA256,
+then checks actual bytes/hash before calling the Telegram SDK `SendDocument`
+with `InputFileUpload`. It never obtains object-store credentials. Original
+chat, thread and reply source are retained. An accepted document response must
+include a valid message and document file ID.
+
+The public Telegram multipart file limit is 50 MB; larger documents are marked
+not-sent/permanent without fetching bytes. See
+[Telegram sendDocument](https://core.telegram.org/bots/api#senddocument).
+The pinned SDK sends upload parts as application/octet-stream; Telegram may
+infer the document MIME type. This does not alter the Worker content integrity
+checks or put raw file content into the execution event.
+
+WeCom attachment plans are explicitly unsupported in this slice rather than
+silently delivering text while claiming that files were delivered.

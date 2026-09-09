@@ -9,6 +9,8 @@ import (
 // Share resolved component semantics rather than maintaining a second codec.
 // Manifest integration follows compiler closure; pendingDataContractDiagnostics
 // remains in force until that complete integration is delivered.
+type ManifestWorkspace = deploymentv1.ManifestWorkspace
+type ManifestExecutorResource = deploymentv1.ManifestExecutorResource
 type ManifestMemory = deploymentv1.ManifestMemory
 type ManifestArtifact = deploymentv1.ManifestArtifact
 type ManifestSummary = deploymentv1.ManifestSummary
@@ -29,7 +31,7 @@ func validateDataCapabilityPresence(raw []byte) error {
 	}
 	present := len(wire.Runtime) > 0
 	for _, n := range wire.AgentPlan.Nodes {
-		for _, key := range []string{"memory", "artifact", "add_session_summary"} {
+		for _, key := range []string{"memory", "artifact", "add_session_summary", "workspace"} {
 			for candidate := range n {
 				if strings.EqualFold(candidate, key) {
 					present = true

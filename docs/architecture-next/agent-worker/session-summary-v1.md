@@ -194,3 +194,22 @@ Control/Gateway/Worker 与 Channel Lab HTTP，模型为确定性 HTTP fixture。
 当前工作树同时有尚未完成的 Workspace 附件装配，其缺失共享字段导致直接编译失败；
 本次通过结果仅对应上述已提交源码及文档变更，不代表未提交附件改动通过回归。
 模型使用确定性 HTTP fixture，IM 使用真实 Channel Lab HTTP，不新增付费模型调用。
+
+
+### 当前整合源码闭环复验（3d1c59e，2026-09-09）
+
+此前 Workspace 未完成导致的编译状态是历史记录；本轮直接在已整合 Workspace 的
+`3d1c59e` Worker 源码上运行，不再使用旧版本导出源码替代当前代码。
+
+- accepted-head race 门禁：1 个主测试、5 个子分支全部通过，零跳过。
+- Reader → Factory → SDK → PostgreSQL 纵向门禁：5 Run 全部断言通过，零跳过。
+- 全进程联合门禁：正式 Control HTTP 发布、凭据解析、Channel Lab 入站、Gateway、
+  Worker SDK、正式 Session 摘要保存、下一轮精确消费、Final 和 usage 均通过。
+  3 个成功 Run 与 1 个摘要 401 失败 Run；失败轮无候选且 accepted head 保持不变。
+- 修复两个独立 PG 门禁的启动竞态：由 socket `pg_isready` 改为 TCP 连接目标数据库
+  执行 `SELECT 1`，避免初始化临时服务器提前报告 ready。修复后两门禁均重跑通过。
+- 原始命令、结果和回滚副本见 `/private/tmp/worker-summary-closure-20260910/VERIFICATION.txt`；
+  联合事实见该目录 `joint/summary-joint.json`。全部临时资源清理通过。
+
+本轮模型为确定性 HTTP fixture，渠道为 Channel Lab；未调用付费模型、未执行真实
+Telegram 验收，未更换常驻服务、Bot 或主目录。运行能力与存储协议没有新增字段。

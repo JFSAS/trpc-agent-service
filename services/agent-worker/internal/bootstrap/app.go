@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/liuzengh/trpc-agent-service/platform/telemetrytrace"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/inbound/httpadapter"
+	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/finalartifacthttp"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/manifestadapter"
 	ledgerpg "github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/postgresadapter"
 	"github.com/liuzengh/trpc-agent-service/services/agent-worker/internal/execution/adapter/outbound/runtimeadapter"
@@ -196,8 +197,13 @@ func New(ctx context.Context, c Config) (*App, error) {
 	}
 	reply.Tracer = a.tracing.Tracer("agent-worker")
 	a.reply = reply
+	finalArtifactCredentials, err := finalartifacthttp.New(finalartifacthttp.Options{BaseURL: c.ControlURL, WorkerID: c.WorkerID, Client: client, Timeout: c.Timing.RequestTimeout.Value(), MaxResponseBytes: c.Limits.MaxCredentialResponseBytes})
+	if err != nil {
+		return nil, errors.New("configure completed Artifact credential adapter")
+	}
+	replyArtifacts := replyArtifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader, credentials: replyArtifactCredentialResolver{projection: a.projection, client: finalArtifactCredentials}}
 	queries := proofQueries{ledger: a.ledger, manifests: reader}
-	handler, err := httpadapter.New(queries, queries, httpadapter.Options{Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
+	handler, err := httpadapter.New(queries, queries, httpadapter.Options{ReplyArtifacts: replyArtifacts, Knowledge: knowledgeQueries{manifests: reader}, Artifacts: artifactQueries{pool: a.pool, ledger: a.ledger, manifests: reader}, Tracer: a.tracing.Tracer("agent-worker"), ControlPrincipals: c.ControlPrincipals, GatewayPrincipals: c.GatewayPrincipals, Timeout: c.Timing.ProofTimeout.Value(), MaxConcurrent: c.Limits.MaxProofQueries})
 	if err != nil {
 		return nil, err
 	}

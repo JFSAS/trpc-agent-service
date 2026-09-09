@@ -79,6 +79,7 @@ type AgentPlan struct {
 // ManifestNode is a closed union. MarshalJSON omits every inactive branch so
 // zero values cannot silently become executable options.
 type ManifestNode struct {
+	Workspace         *ManifestWorkspace
 	Memory            *ManifestMemory
 	Artifact          *ManifestArtifact
 	AddSessionSummary *bool
@@ -112,9 +113,10 @@ func (n ManifestNode) MarshalJSON() ([]byte, error) {
 			Memory             *ManifestMemory         `json:"memory,omitempty"`
 			Artifact           *ManifestArtifact       `json:"artifact,omitempty"`
 			AddSessionSummary  *bool                   `json:"add_session_summary,omitempty"`
+			Workspace          *ManifestWorkspace      `json:"workspace,omitempty"`
 		}{
 			n.Kind, n.Name, n.Instruction, n.ModelResource,
-			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary,
+			n.ToolResources, n.KnowledgeResources, n.CallableEntries, n.Generation, n.Memory, n.Artifact, n.AddSessionSummary, n.Workspace,
 		})
 	case agentdomain.NodeKindSequence, agentdomain.NodeKindParallel:
 		return json.Marshal(struct {
@@ -157,6 +159,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			Memory             *ManifestMemory         `json:"memory,omitempty"`
 			Artifact           *ManifestArtifact       `json:"artifact,omitempty"`
 			AddSessionSummary  *bool                   `json:"add_session_summary,omitempty"`
+			Workspace          *ManifestWorkspace      `json:"workspace,omitempty"`
 		}
 		if err := strictDecodeJSON(data, &wire); err != nil {
 			return err
@@ -166,7 +169,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 			ModelResource: wire.ModelResource, ToolResources: wire.ToolResources,
 			KnowledgeResources: wire.KnowledgeResources,
 			CallableEntries:    wire.CallableEntries, Generation: wire.Generation,
-			Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary,
+			Memory: wire.Memory, Artifact: wire.Artifact, AddSessionSummary: wire.AddSessionSummary, Workspace: wire.Workspace,
 		}
 		return nil
 	case agentdomain.NodeKindSequence, agentdomain.NodeKindParallel:
@@ -201,6 +204,7 @@ func (n *ManifestNode) UnmarshalJSON(data []byte) error {
 }
 
 type ManifestResources struct {
+	Executors map[string]ManifestExecutorResource  `json:"executors,omitempty"`
 	Models    map[string]ManifestModelResource     `json:"models"`
 	Tools     map[string]ManifestToolResource      `json:"tools"`
 	Knowledge map[string]ManifestKnowledgeResource `json:"knowledge"`
@@ -313,6 +317,7 @@ type ManifestStorageResource struct {
 }
 
 type ResolvedRequirements struct {
+	Executors map[string]string `json:"executors,omitempty"`
 	Models    map[string]string `json:"models"`
 	Tools     map[string]string `json:"tools"`
 	Knowledge map[string]string `json:"knowledge"`
@@ -347,6 +352,7 @@ type ManifestView struct {
 type PublicManifestView = ManifestView
 
 type ManifestResourceView struct {
+	Executors map[string]ManifestExecutorResource      `json:"executors,omitempty"`
 	Models    map[string]ManifestModelResourceView     `json:"models"`
 	Tools     map[string]ManifestToolResourceView      `json:"tools"`
 	Knowledge map[string]ManifestKnowledgeResourceView `json:"knowledge"`
@@ -416,6 +422,7 @@ func NewManifestView(content ManifestContent) ManifestView {
 		ResolvedRequirements: normalized.ResolvedRequirements,
 		StorageRoles:         cloneMap(normalized.StorageRoles), Execution: normalized.Execution,
 		Resources: ManifestResourceView{
+			Executors: cloneMap(normalized.Resources.Executors),
 			Models:    make(map[string]ManifestModelResourceView, len(normalized.Resources.Models)),
 			Tools:     make(map[string]ManifestToolResourceView, len(normalized.Resources.Tools)),
 			Knowledge: make(map[string]ManifestKnowledgeResourceView, len(normalized.Resources.Knowledge)),

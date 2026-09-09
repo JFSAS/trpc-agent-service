@@ -25,6 +25,7 @@ func NewHandler(resolver Resolver) *Handler { return &Handler{resolver: resolver
 
 func (h *Handler) Register(routes gin.IRoutes) {
 	routes.POST("/internal/v1/runtime-profiles/credentials/resolve", h.resolve)
+	routes.POST(FinalArtifactResolvePath, h.resolveFinalArtifact)
 }
 
 func (h *Handler) resolve(c *gin.Context) {

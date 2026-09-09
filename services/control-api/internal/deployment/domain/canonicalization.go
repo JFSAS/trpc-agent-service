@@ -279,6 +279,11 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 			}
 			node.Memory = &memory
 		}
+		if node.Workspace != nil {
+			w := *node.Workspace
+			w.Tools = sortedUnique(w.Tools)
+			node.Workspace = &w
+		}
 		if node.Artifact != nil {
 			artifact := *node.Artifact
 			node.Artifact = &artifact
@@ -306,10 +311,14 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.AgentPlan.Nodes[id] = node
 	}
 	normalized.Resources = ManifestResources{
+		Executors: make(map[string]ManifestExecutorResource, len(content.Resources.Executors)),
 		Models:    make(map[string]ManifestModelResource, len(content.Resources.Models)),
 		Tools:     make(map[string]ManifestToolResource, len(content.Resources.Tools)),
 		Knowledge: make(map[string]ManifestKnowledgeResource, len(content.Resources.Knowledge)),
 		Storage:   make(map[string]ManifestStorageResource, len(content.Resources.Storage)),
+	}
+	for name, resource := range content.Resources.Executors {
+		normalized.Resources.Executors[name] = resource
 	}
 	for name, resource := range content.Resources.Models {
 		resource.Capabilities = sortedUnique(resource.Capabilities)
@@ -345,6 +354,7 @@ func normalizeManifestContent(content ManifestContent) ManifestContent {
 		normalized.Resources.Storage[name] = resource
 	}
 	normalized.ResolvedRequirements = ResolvedRequirements{
+		Executors: cloneMap(content.ResolvedRequirements.Executors),
 		Models:    cloneMap(content.ResolvedRequirements.Models),
 		Tools:     cloneMap(content.ResolvedRequirements.Tools),
 		Knowledge: cloneMap(content.ResolvedRequirements.Knowledge),

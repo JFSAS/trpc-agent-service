@@ -195,6 +195,11 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	if err != nil {
 		return fail(err)
 	}
+	if len(result.Attachments) > 0 {
+		if _, _, err = EncodeFinalIntent(g.Run, g.AttemptID, g.Generation, result.FinalText, result.Attachments); err != nil {
+			return fail(ErrRuntimeFailed)
+		}
+	}
 	var memoryRuntime AcceptedMemoryRuntime
 	if result.MemoryDigest != "" {
 		var ok bool
@@ -212,7 +217,7 @@ func (p *Processor) Advance(ctx context.Context, r domain.Run) (advanceErr error
 	if err != nil {
 		return fail(err)
 	}
-	finish := domain.Finish{Grant: g, Status: domain.Succeeded, Candidate: candidate, FinalText: result.FinalText, MemoryDigest: result.MemoryDigest}
+	finish := domain.Finish{Grant: g, Status: domain.Succeeded, Candidate: candidate, FinalText: result.FinalText, MemoryDigest: result.MemoryDigest, Attachments: append([]domain.Attachment(nil), result.Attachments...)}
 	accepted := func(c domain.Completion) error {
 		if memoryRuntime == nil {
 			return nil

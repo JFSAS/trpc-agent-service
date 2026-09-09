@@ -82,7 +82,7 @@ func validateManifestSemantics(content ManifestContent) error {
 				return ErrInvalidManifestContent
 			}
 			model, exists := profile.Models[node.ModelResource]
-			if !exists || ((len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil) && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
+			if !exists || ((node.Workspace != nil || len(node.CallableEntries) > 0 || (node.Memory != nil && len(node.Memory.Tools) > 0) || node.Artifact != nil) && !containsString(model.Capabilities, profiledomain.CapabilityToolCall)) {
 				return ErrInvalidManifestContent
 			}
 			if node.Generation != nil && node.Generation.MaxOutputTokens != nil &&
@@ -120,6 +120,9 @@ func validateManifestSemantics(content ManifestContent) error {
 			KnowledgeSlots: node.KnowledgeResources, Generation: node.Generation,
 			Children: node.Children, Body: node.Body, MaxIterations: node.MaxIterations,
 		}
+	}
+	if validateWorkspaceManifest(content, &agent) != nil {
+		return ErrInvalidManifestContent
 	}
 	// Reuse the owner's closed node shape, key/field limits, references,
 	// single-parent tree, reachability, depth, and generation validation.
