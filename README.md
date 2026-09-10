@@ -209,10 +209,10 @@ docker compose -p channel-lab-dev \
 指定的工具链）、Python 3.11+ 和 OpenSSL。从仓库根目录执行：
 
 ```bash
-./scripts/compose-managed.sh up
+just managed-up
 ```
 
-首次执行会构建镜像、生成独立配置与内部证书，并启动 **Web、Control、Worker、Gateway、
+`just managed-up` 首次执行会构建镜像、生成独立配置与内部证书，并启动 **Web、Control、Worker、Gateway、
 PostgreSQL、NATS、Redis、Qdrant、MinIO**。无需额外 profile，也不需要单独启动 Web。
 Go 服务在宿主构建，Web 在镜像构建阶段安装依赖并完成构建。
 
@@ -230,7 +230,7 @@ Go 服务在宿主构建，Web 在镜像构建阶段安装依赖并完成构建�
 用控制台中的实际 Tenant ID 授权目录访问：
 
 ```bash
-./scripts/compose-managed.sh grant --tenant-id ACTUAL_TENANT_ID
+just managed-grant ACTUAL_TENANT_ID
 ```
 
 该操作更新静态后端目录与发布契约，并重启 Control、Worker；**不要直接对已承载业务的
@@ -241,10 +241,11 @@ Go 服务在宿主构建，Web 在镜像构建阶段安装依赖并完成构建�
 常用维护命令：
 
 ```bash
-./scripts/compose-managed.sh config          # 校验配置，不输出展开后的秘密
-./scripts/compose-managed.sh status          # 查看服务状态
-./scripts/compose-managed.sh stop            # 停止服务，保留容器和持久卷
-./scripts/compose-managed.sh up --skip-build # 已完成首次构建时，复用镜像与配置启动
+just managed-config                 # 校验配置，不输出展开后的秘密
+just managed-status                 # 查看服务状态
+just managed-stop                   # 停止服务，保留容器和持久卷
+just managed-restart-backends       # 同卷重启 PostgreSQL/Redis/Qdrant/MinIO
+just managed-up --skip-build        # 已完成首次构建时，复用镜像与配置启动
 ```
 
 请保留配置目录和持久卷，不通过删除配置目录来“重置”已有数据库的身份与密码。

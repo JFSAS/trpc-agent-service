@@ -1,6 +1,6 @@
 # 默认本地全栈入口
 
-使用 `scripts/compose-managed.sh up` 一次启动 Web、Control、Worker、Gateway、PG/NATS
+使用 `just managed-up` 一次启动 Web、Control、Worker、Gateway、PG/NATS
 和 Redis/Qdrant/MinIO。配置只需初始化一次，后续复用私密 state 与命名卷。
 完整说明见 [MANAGED_LOCAL.md](MANAGED_LOCAL.md)。下文保留基础 Compose 的底层配置参考。
 
@@ -301,7 +301,8 @@ just nats-config
 
 ## 4. 启动、检查与停止
 
-下列为 base/local 历史入口；完整 Worker V1 使用 [新指南 §7](WORKER_V1.md#7-构建校验与启动)
+下列 `just compose-*` 为 base/local 历史入口，只启动 Control、Gateway 与 PG/NATS；
+完整本地平台请改用 `just managed-up`。完整 Worker V1 使用 [新指南 §7](WORKER_V1.md#7-构建校验与启动)
 固定三个 Compose 文件组合，并先注入显式配置目录、证书、Session DSN 与 release pin。
 已准备相应 base/local 运行配置时，从仓库根目录执行：
 

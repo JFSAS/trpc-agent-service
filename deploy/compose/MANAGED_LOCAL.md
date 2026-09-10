@@ -9,10 +9,10 @@ Qdrant、MinIO；不需要额外 profile，不是只启动存储的示例。
 目录调用。首次生成配置/证书/服务密码并构建镜像；重复调用复用原私密 state。
 
 ```sh
-/Users/jfs/Projects/trpc-agent-service-worker/scripts/compose-managed.sh up
+just managed-up
 ```
 
-仓库移动后使用对应仓库根目录下的 `scripts/compose-managed.sh`。第一次运行可传
+从仓库根目录调用 `just managed-up`。第一次运行可传
 `--state-dir /absolute/private/directory --project distinct-project`；已有 state 的项目、
 端口、身份和密码保持固定，不因环境中的旧 DSN 改为另一套数据库。
 
@@ -74,7 +74,7 @@ ACL default off、AOF、appendfsync always、noeviction；MinIO 为专用应用�
 再在尚未发布业务的独立环境中显式授权：
 
 ```sh
-scripts/compose-managed.sh grant --tenant-id ACTUAL_TENANT_ID
+just managed-grant ACTUAL_TENANT_ID
 ```
 
 该命令生成静态 tenant allowlist、固定 catalog/targets 文件 SHA，使用实际 Control
@@ -94,7 +94,7 @@ scripts/compose-managed.sh grant --tenant-id ACTUAL_TENANT_ID
 保持基础设施可用，业务 collection 不创建，Knowledge 明确未配置，不默认 1536。
 
 需要 Knowledge 时，先以生成器 `grant --help` 查看显式维度/collection/vector/distance
-参数，绑定与实际 Embedding 相同的值，再执行 `scripts/compose-managed.sh up --skip-build`
+参数，绑定与实际 Embedding 相同的值，再执行 `just managed-up --skip-build`
 计算 pin、运行 backend-init。已启用 backend revision 1 的维度/距离等字段不接受改写；不能把存储
 连通性的一维专用 smoke collection 当业务 Embedding。所有初始化均拒绝覆盖维度
 或距离不匹配的既有 collection。
@@ -107,11 +107,11 @@ scripts/compose-managed.sh grant --tenant-id ACTUAL_TENANT_ID
 ## 运行与验收
 
 ```sh
-scripts/compose-managed.sh config              # 只校验，不打印展开后的秘密
-scripts/compose-managed.sh status
-scripts/compose-managed.sh restart-backends    # 同卷重启 PG/Redis/Qdrant/MinIO
-scripts/compose-managed.sh stop                # 停服务，保留容器和卷
-scripts/compose-managed.sh up --skip-build      # 复用配置、镜像和卷恢复
+just managed-config              # 只校验，不打印展开后的秘密
+just managed-status
+just managed-restart-backends    # 同卷重启 PG/Redis/Qdrant/MinIO
+just managed-stop                # 停服务，保留容器和卷
+just managed-up --skip-build     # 复用配置、镜像和卷恢复
 ```
 
 联合验收入口为 `scripts/test-compose-managed-data.py`：bootstrap 创建专属 owner/tenant；

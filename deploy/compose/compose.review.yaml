@@ -1,0 +1,31 @@
+# Reviewer demo overlay, included by `just demo`.
+# Adds the local Channel Lab so a reviewer gets a simulated IM surface and a
+# deterministic `lab-echo` model without any external credentials.
+services:
+  # Point the console Help link at the published documentation site. Override
+  # DOCS_SITE_URL to use a different deployment or a local preview.
+  web:
+    environment:
+      DOCS_SITE_URL: ${DOCS_SITE_URL:-https://jfsas.github.io/trpc-agent-service/docs/}
+
+  channel-gateway:
+    depends_on:
+      channel-lab:
+        condition: service_healthy
+
+  channel-lab:
+    image: ${CHANNEL_LAB_IMAGE:-trpc-agent-service/channel-lab:managed-local}
+    build: !reset null
+    ports:
+      - 127.0.0.1:${CHANNEL_LAB_HTTP_PORT:-18090}:8080
+    command: ["--webhook-origin", "${CHANNEL_LAB_GATEWAY_ORIGIN:-http://channel-gateway:8090}"]
+    volumes:
+      - channel-lab-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  channel-lab-data:

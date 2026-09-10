@@ -21,3 +21,7 @@ vendor/
 # Generated verification and one-off output.
 artifacts/
 verification/
+
+# Python bytecode from the managed-local tooling.
+__pycache__/
+*.pyc

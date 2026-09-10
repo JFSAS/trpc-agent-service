@@ -1,4 +1,4 @@
-# Default managed-local overlay, included by scripts/compose-managed.sh.
+# Default managed-local overlay, included by `just managed-up`.
 # Backends have no host ports; private files remain owner-readable only.
 services:
   control-api:
