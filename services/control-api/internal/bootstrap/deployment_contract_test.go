@@ -22,7 +22,6 @@ func TestLoadConfigPreservesReleasePinnedDeploymentDigest(t *testing.T) {
 	configTestEnvironment(t)
 	want := "sha256:" + strings.Repeat("a", 64)
 	t.Setenv("CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST", want)
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", "release.example")
 	config, err := LoadConfig()
 	if err != nil {
 		t.Fatal(err)

@@ -217,7 +217,6 @@ and [workload configuration](CHANNEL_RUNTIME.md#7-wecom-显式连接预检).
 | `CONTROL_DATABASE_URL` | yes | — | Business PostgreSQL connection using the least-privileged Control runtime role |
 | `CONTROL_MIGRATION_DATABASE_URL` | yes | — | Independent Control schema-owner/migrator connection; never defaults to the runtime connection |
 | `CONTROL_PROFILE_CREDENTIAL_KEY` | yes | — | Externally generated base64-encoded 32-byte Profile encryption/MAC master key |
-| `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` | no | closed built-in V1 host set | Comma-separated exact lowercase hosts accepted by the Deployment Compiler |
 | `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` | yes | — | Release-pinned `sha256:` digest shared by all replicas; startup fails before DB access if the effective platform contract differs |
 | `CONTROL_HTTP_ADDRESS` | no | `:8080` | HTTP listen address |
 | `CONTROL_SESSION_LIFETIME` | no | `24h` | Fixed session lifetime |
@@ -296,16 +295,15 @@ There is no built-in key. All replicas and restarts using the same credential da
 must reuse the same key; changing it without a separate key-rotation design breaks
 existing encrypted values and conditional-write MACs. Preserve it independently
 from database backups and never commit or log it.
-Prepare the Deployment contract digest once per release with the final host
-configuration and the exact binary being deployed:
+Prepare the Deployment contract digest once per release with the exact binary
+being deployed:
 
 ```sh
-CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='model.example,state.example' \
-  go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
+go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 ```
 
-The CLI reads only host configuration plus the frozen contract; it needs neither
-a database nor a Profile credential key and prints a single digest. Persist that
+The CLI reads only the frozen contract; it needs neither a database nor a
+Profile credential key and prints a single digest. Persist that
 output as `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` in shared release
 configuration. Do not calculate and assign the expected value separately inside
 each replica's startup command. `LoadConfig` requires the digest and validates its

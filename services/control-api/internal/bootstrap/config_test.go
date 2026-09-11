@@ -100,7 +100,6 @@ func configTestEnvironment(t *testing.T) []byte {
 	t.Setenv("CONTROL_BOOTSTRAP_MODE", "disabled")
 	t.Setenv("CONTROL_SESSION_LIFETIME", "")
 	t.Setenv("CONTROL_SESSION_COOKIE_SECURE", "")
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", "")
 	digest, err := DeploymentContractDigestFromEnvironment()
 	if err != nil {
 		t.Fatal(err)

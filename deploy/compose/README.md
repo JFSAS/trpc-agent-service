@@ -130,14 +130,13 @@ bootstrap 用户密码与 Profile Key 是不同配置。Key 与数据库备份�
 多副本的 `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` 必须由同一份部署发布配置
 显式注入，格式为 `sha256:` 加 64 位小写十六进制。Compose 拒绝缺值；Control API
 在打开数据库、执行迁移和启动 HTTP 之前计算实际 Platform Contract Digest，
-只有与预期值一致才继续启动。Host、冻结实现契约或资源上限不同的副本因此不会进入服务。
+只有与预期值一致才继续启动。冻结契约、托管目录或资源上限不同的副本因此不会进入服务。
 现有 `/healthz` 仍返回 204；不匹配的进程在监听前退出，没有可用健康端点。
 
-在发布准备阶段，使用待发布二进制和最终 Host 配置预计算一次；CLI 不需要数据库、
+在发布准备阶段，使用待发布二进制预计算一次；CLI 不需要数据库、
 Profile 加密 Key 或预期 Digest，也不会启动服务：
 
 ```sh
-export CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='api.openai.com,mcp.example.com,qdrant.internal,state.example.test,postgres'
 go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 # 或：control-api -print-deployment-contract-digest
 ```
@@ -145,9 +144,9 @@ go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 将本次二进制实际输出保存为本次发布配置，并向所有 Control 副本注入同一
 `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`；Worker JSON 的 `platform_contract_digest`
 也必须相同。不要从历史报告复制旧 pin。`.env.example` 与 Worker bootstrap example 保存了
-当前示例 Host 集合对应的 pin；修改 Host 或发布契约后需重新预计算并统一更新。
-计算时必须传入实际 Host 配置。不要在各副本的启动脚本中把自身计算结果自动赋给
-expected 值，那会绕过多副本一致性门禁。Digest 是平台配置身份，不是凭据。
+当前冻结契约对应的 pin；修改契约或托管目录后需重新预计算并统一更新。
+不要在各副本的启动脚本中把自身计算结果自动赋给 expected 值，那会绕过多副本一致性门禁。
+Digest 是平台配置身份，不是凭据。
 
 ### Telegram 账户配置（显式 fixture 来源）
 
@@ -331,7 +330,7 @@ docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.local.ya
 - NATS 短时断连、尚未越过 freshness/budget 限制时，readiness 可保持 204 并带
   `X-Gateway-State: degraded`。超限后返回 503。
 - `CONTROL_BOOTSTRAP_MODE` 默认 `auto`；已有 Operator 时不重复创建。
-- `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` 是无通配符的精确目标 Host 集合，真实部署须按平台策略配置；同一发布固定 expected contract digest。
+- 资源出站 Host 由 Deployment Compiler 从 Profile 推导并写入 Manifest；同一发布固定 expected contract digest。
 - Control 在监听前执行自己的迁移；`/healthz` 返回204，与 Gateway 双 listener 的探针各自独立。
 
 也可直接使用镜像中的同一个二进制检查内部管理端口：

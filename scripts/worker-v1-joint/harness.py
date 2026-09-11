@@ -186,7 +186,7 @@ class Harness:
             self.command(['openssl','x509','-req','-in',csr,'-CA',ca,'-CAkey',ca_key,'-CAcreateserial','-out',cert,'-days','1','-extfile',ext])
             key.chmod(0o600);self.certs[name+'_cert']=str(cert);self.certs[name+'_key']=str(key)
     def control_start(self, channel_env):
-        env={'CONTROL_DATABASE_URL':self.dsns['control_runtime'],'CONTROL_MIGRATION_DATABASE_URL':self.dsns['control_migrator'],'CONTROL_PROFILE_CREDENTIAL_KEY':base64.b64encode(secrets.token_bytes(32)).decode(),'CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS':'127.0.0.1','CONTROL_HTTP_ADDRESS':'127.0.0.1:'+str(self.ports['control']),'CONTROL_SESSION_COOKIE_SECURE':'false','CONTROL_BOOTSTRAP_MODE':'auto','CONTROL_BOOTSTRAP_USERNAME':'joint-admin','CONTROL_BOOTSTRAP_PASSWORD':self.secret(),'CONTROL_BOOTSTRAP_DISPLAY_NAME':'Joint fixture admin',**channel_env}
+        env={'CONTROL_DATABASE_URL':self.dsns['control_runtime'],'CONTROL_MIGRATION_DATABASE_URL':self.dsns['control_migrator'],'CONTROL_PROFILE_CREDENTIAL_KEY':base64.b64encode(secrets.token_bytes(32)).decode(),'CONTROL_HTTP_ADDRESS':'127.0.0.1:'+str(self.ports['control']),'CONTROL_SESSION_COOKIE_SECURE':'false','CONTROL_BOOTSTRAP_MODE':'auto','CONTROL_BOOTSTRAP_USERNAME':'joint-admin','CONTROL_BOOTSTRAP_PASSWORD':self.secret(),'CONTROL_BOOTSTRAP_DISPLAY_NAME':'Joint fixture admin',**channel_env}
         self.secrets.append(env['CONTROL_PROFILE_CREDENTIAL_KEY']);self.admin_password=env['CONTROL_BOOTSTRAP_PASSWORD']
         self.contract_digest=self.command([self.binaries['control-api'],'--print-deployment-contract-digest'],env=env).strip()
         env['CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST']=self.contract_digest

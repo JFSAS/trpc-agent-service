@@ -14,7 +14,6 @@ func TestPrintDeploymentContractDigestRequiresNoDatabaseOrKey(t *testing.T) {
 	t.Setenv("CONTROL_PROFILE_CREDENTIAL_KEY", "")
 	t.Setenv("CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST", "")
 	t.Setenv("CONTROL_BOOTSTRAP_MODE", "invalid")
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", "model.example,state.example")
 	want, err := bootstrap.DeploymentContractDigestFromEnvironment()
 	if err != nil {
 		t.Fatal(err)

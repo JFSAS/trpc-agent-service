@@ -17,8 +17,7 @@ Validate 和 Publish 共用 Compiler 门禁；公共 `api/schemas/deployment/v1.
 不在进程启动时自动制造 expected 值：
 
 ```bash
-CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='<固定主机列表>' \
-  go run ./services/control-api/cmd/control-api --print-deployment-contract-digest
+go run ./services/control-api/cmd/control-api --print-deployment-contract-digest
 ```
 
 上线前逐一检查已有 Binding 指向的固定 Manifest：旧版本保持不可变但不是 Worker V1 的运行契约，

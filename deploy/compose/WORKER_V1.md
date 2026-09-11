@@ -212,12 +212,12 @@ V1 不新增累计输出上限或 Token 预占结算；现有 Manifest `max_outp
 
 ## 6. 发布契约、Session 目标与预备
 
-先配置 Control 的 endpoint host allowlist。共享 Compose Session 的目标 host 为 `postgres`，
-必须显式列入 `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS`；模型 host 也要列入，修改 host
-集合或发布契约后重新计算 release pin，并同时更新 Control env 与 Worker JSON：
+出站 Host 不再需要发布前审批：Compiler 会把该 Deployment 实际访问的精确 Host 集合
+写入 Manifest。修改发布契约或托管目录后重新计算 release pin，并同时更新 Control env
+与 Worker JSON：
 
 ```bash
-# 使用本次构建的 Control binary，并保留与启动时相同的 allowlist 环境。
+# 使用本次构建的 Control binary。
 go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 ```
 
