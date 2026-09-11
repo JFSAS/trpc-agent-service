@@ -16,7 +16,7 @@ f=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(f)
 class LauncherTests(unittest.TestCase):
     def fixture(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);state=Path(temp.name)
-        values={'COMPOSE_PROJECT_NAME':'unit-managed','CONTROL_API_IMAGE':'control:test','CHANNEL_GATEWAY_IMAGE':'gateway:test','AGENT_WORKER_IMAGE':'worker:test','WEB_IMAGE':'web:test','BACKEND_TOOLS_IMAGE':'tools:test','CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS':'postgres,redis','CONTROL_PLATFORM_BACKEND_CATALOG_SHA256':'a'*64,'CONTROL_PLATFORM_BACKEND_TARGETS_SHA256':'b'*64,'CONTROL_DATABASE_URL':'postgres://private-state-only','CONTROL_BOOTSTRAP_DISPLAY_NAME':'Managed Local Operator'}
+        values={'COMPOSE_PROJECT_NAME':'unit-managed','CONTROL_API_IMAGE':'control:test','CHANNEL_GATEWAY_IMAGE':'gateway:test','AGENT_WORKER_IMAGE':'worker:test','WEB_IMAGE':'web:test','BACKEND_TOOLS_IMAGE':'tools:test','CONTROL_PLATFORM_BACKEND_CATALOG_SHA256':'a'*64,'CONTROL_PLATFORM_BACKEND_TARGETS_SHA256':'b'*64,'CONTROL_DATABASE_URL':'postgres://private-state-only','CONTROL_BOOTSTRAP_DISPLAY_NAME':'Managed Local Operator'}
         (state/'compose.env').write_text(''.join(k+'='+v+'\n' for k,v in values.items()))
         return state,values
     def main(self,args,runner=None):
@@ -55,7 +55,7 @@ class LauncherTests(unittest.TestCase):
         with patch.object(f,'run',side_effect=self.fake_runner(events)):f.pin(state,values)
         cmd,kw=events[0]
         self.assertEqual(cmd[-2:],['control:test','--print-deployment-contract-digest'])
-        self.assertEqual([cmd[i+1] for i,v in enumerate(cmd) if v=='-e'],['CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS','CONTROL_PLATFORM_BACKEND_CATALOG_SHA256','CONTROL_PLATFORM_BACKEND_TARGETS_SHA256'])
+        self.assertEqual([cmd[i+1] for i,v in enumerate(cmd) if v=='-e'],['CONTROL_PLATFORM_BACKEND_CATALOG_SHA256','CONTROL_PLATFORM_BACKEND_TARGETS_SHA256'])
         self.assertNotIn(values['CONTROL_DATABASE_URL'],' '.join(cmd))
         self.assertEqual(kw['env']['CONTROL_PLATFORM_BACKEND_TARGETS_SHA256'],values['CONTROL_PLATFORM_BACKEND_TARGETS_SHA256'])
     def test_malformed_digest_stops_before_generator_pin(self):

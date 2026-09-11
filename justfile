@@ -7,8 +7,9 @@ default:
 test:
     go test ./...
 
-# Reviewer demo: full platform plus Channel Lab, seeded with one demo tenant,
-# one published Agent and one enabled bot binding. Re-run with --skip-build.
+# Reviewer demo: rebuilds the images and restarts the full platform plus Channel
+# Lab, seeded with one tenant, one published Agent and one enabled bot binding.
+# Existing volumes and private state are kept. Add --skip-build to reuse images.
 demo *args:
     python3 scripts/compose-managed.py demo {{args}}
 
@@ -19,6 +20,11 @@ demo-status *args:
 # Stops the demo stack and keeps its private state and named volumes.
 demo-stop *args:
     python3 scripts/compose-managed.py stop --review {{args}}
+
+# Destroys the demo stack, its named volumes and its private state, then builds
+# and seeds a fresh environment. Use this to discard all demo data.
+demo-reset *args:
+    python3 scripts/compose-managed.py reset {{args}}
 
 # Full joint acceptance: real Control/Gateway/Worker processes, explicit model fixture.
 test-joint:

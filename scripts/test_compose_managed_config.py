@@ -17,7 +17,7 @@ class ManagedConfigTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.state=Path(cls.temp.name)/'state'
-        cls.settings=config.initial_settings(project='unit-managed',allowed_hosts=['api.example.test'])
+        cls.settings=config.initial_settings(project='unit-managed')
         config.initialize(cls.state,cls.settings)
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()

@@ -24,9 +24,10 @@ DEFAULT_STATE = Path.home() / '.local/share/trpc-agent-service/managed-local'
 REVIEW_STATE = Path.home() / '.local/share/trpc-agent-service/managed-review'
 REVIEW_PROJECT = 'trpc-agent-review'
 REVIEW_PORTS = {'web': 24000, 'control': 29080, 'gateway': 29090, 'gateway_admin': 29091, 'worker': 29083}
-REVIEW_ALLOWED_HOSTS = ['channel-lab']
 REVIEW_OVERLAY = ROOT / 'deploy/compose/compose.review.yaml'
 CHANNEL_LAB_IMAGE = 'trpc-agent-service/channel-lab:managed-local'
+WORKSPACE_WORKER_IMAGE = 'trpc-agent-service/agent-worker-workspace:managed-local'
+WORKSPACE_SECCOMP_FILE = ROOT / 'deploy/compose/workspace/seccomp.json'
 CHANNEL_LAB_URL = 'http://127.0.0.1:18090'
 REVIEW_DOCS_URL = 'https://jfsas.github.io/trpc-agent-service/docs/'
 FILES = [ROOT / 'deploy/compose' / name for name in (
@@ -59,6 +60,55 @@ def read_env(state):
 
 def stack_files(review):
     return [*FILES, REVIEW_OVERLAY] if review else list(FILES)
+
+
+def remove_project(project):
+    """Remove every container, volume and network one Compose project owns.
+
+    Driven by Compose labels rather than `compose down`, so a reset still works
+    after the private state that named those volumes has been archived.
+    """
+    def owned(kind, *extra):
+        return run(['docker', *kind, '-q',
+                    '--filter', 'label=com.docker.compose.project='+project], capture=True).split()
+    containers = owned(('ps', '-a'))
+    if containers: run(['docker', 'rm', '-f', *containers])
+    volumes = owned(('volume', 'ls'))
+    if volumes: run(['docker', 'volume', 'rm', '-f', *volumes])
+    networks = owned(('network', 'ls'))
+    if networks: run(['docker', 'network', 'rm', *networks])
+    print('DEMO_RESET=REMOVED project=' + project + ' containers=' + str(len(containers))
+          + ' volumes=' + str(len(volumes)) + ' networks=' + str(len(networks)))
+
+
+def discard_state(state):
+    """Delete the previous private state; the next run regenerates it.
+
+    Refuses any path shallow enough to be a home directory, a volume root or
+    the filesystem root, so a mistyped --state-dir cannot erase a broad tree.
+    """
+    if not state.exists(): return
+    if state == Path(state.anchor) or state == Path.home() or len(state.parts) < 3:
+        raise RuntimeError('refusing to delete an unexpected state directory: ' + str(state))
+    shutil.rmtree(state)
+    print('DEMO_RESET=DISCARDED ' + str(state))
+
+
+def grant_tenants(state, review, tenants):
+    """Authorize tenants in the platform catalog, then repin and restart the pair.
+
+    The catalog feeds the release contract digest, so Control and Worker are
+    recreated together; no other service depends on the granted scope.
+    """
+    command = [sys.executable, GENERATOR, 'grant', '--state-dir', state]
+    for tenant in tenants: command += ['--tenant-id', tenant]
+    # This entry is for an unused local stack; don't switch active deployments.
+    run(command)
+    values = read_env(state)
+    pin(state, values)
+    run(compose(state, values, review)+['up','-d','--no-deps','--force-recreate','control-api','agent-worker'])
+    ready(values)
+    return read_env(state)
 
 
 def _columns(text):
@@ -123,8 +173,7 @@ def compose(state, values, review=False):
 
 
 def pin(state, values):
-    names = ['CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS', 'CONTROL_PLATFORM_BACKEND_CATALOG_SHA256',
-             'CONTROL_PLATFORM_BACKEND_TARGETS_SHA256']
+    names = ['CONTROL_PLATFORM_BACKEND_CATALOG_SHA256', 'CONTROL_PLATFORM_BACKEND_TARGETS_SHA256']
     environment = os.environ.copy()
     cmd = ['docker', 'run', '--rm']
     for name in names:
@@ -160,24 +209,30 @@ def ready(values):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('action', choices=['up','demo','status','stop','grant','restart-backends','config'])
+    p.add_argument('action', choices=['up','demo','reset','status','stop','grant','restart-backends','config'])
     p.add_argument('--state-dir', type=Path)
     p.add_argument('--project')
-    p.add_argument('--allowed-host', action='append')
     p.add_argument('--tenant-id', action='append')
     p.add_argument('--skip-build', action='store_true', help='use already-built images explicitly')
     p.add_argument('--review', action='store_true', help='target the reviewer demo stack')
     args = p.parse_args()
-    review = args.review or args.action == 'demo'
+    review = args.review or args.action in ('demo', 'reset')
     if review: os.environ.setdefault('DOCS_SITE_URL', REVIEW_DOCS_URL)
+    if review:
+        os.environ.setdefault('WORKSPACE_WORKER_IMAGE', WORKSPACE_WORKER_IMAGE)
+        os.environ['WORKSPACE_SECCOMP_FILE'] = str(WORKSPACE_SECCOMP_FILE)
     args.project = args.project or (REVIEW_PROJECT if review else 'trpc-agent-managed-local')
     state = (args.state_dir or (REVIEW_STATE if review else DEFAULT_STATE)).expanduser().resolve()
+    if args.action == 'reset':
+        # Only an explicit reset destroys the owned stack and its data; `demo`
+        # rebuilds and restarts while keeping volumes and private state.
+        remove_project(args.project)
+        discard_state(state)
+        args.action = 'demo'
     if args.action in ('up', 'demo') and not (state/'compose.env').exists():
         cmd = [sys.executable, GENERATOR, 'init', '--state-dir', state, '--project', args.project]
-        for host in args.allowed_host or []: cmd += ['--allowed-host', host]
         if review:
             for name, port in REVIEW_PORTS.items(): cmd += ['--'+name.replace('_','-')+'-port', str(port)]
-            for host in REVIEW_ALLOWED_HOSTS: cmd += ['--allowed-host', host]
         run(cmd)
     if not (state/'compose.env').exists(): raise RuntimeError('run up to initialize this state first')
     values=read_env(state); dc=compose(state, values, review)
@@ -202,8 +257,15 @@ def main():
                  '-f','deploy/compose/Dockerfile.web-managed','.'])
             run(['docker','build','-t',values.get('BACKEND_TOOLS_IMAGE','trpc-agent-service/backend-tools:managed-local'),
                  '-f','deploy/compose/Dockerfile.backend-tools','deploy/compose'])
-        if review:
-            run(['docker','build','-t',CHANNEL_LAB_IMAGE,'-f','tools/channel-lab/Dockerfile','tools/channel-lab'])
+            if review:
+                run(['docker','build','-t',CHANNEL_LAB_IMAGE,'-f','tools/channel-lab/Dockerfile','tools/channel-lab'])
+                # The workspace Worker needs its own base image (bash + bwrap);
+                # it reuses the same cross-built binary as the distroless one.
+                with tempfile.TemporaryDirectory(prefix='workspace-image-') as build_dir:
+                    run(['go','build','-trimpath','-ldflags=-s -w','-o',Path(build_dir)/'binary',
+                         './services/agent-worker/cmd/agent-worker'],env=environment)
+                    shutil.copyfile(ROOT/'deploy/compose/Dockerfile.worker-workspace',Path(build_dir)/'Dockerfile')
+                    run(['docker','build','-t',WORKSPACE_WORKER_IMAGE,build_dir])
         pin(state,values); values=read_env(state); dc=compose(state,values,review)
         acl=[sys.executable,ROOT/'deploy/compose/data-backends/backendctl.py','redis-acl']
         for role in ['admin','memory','session']:
@@ -213,9 +275,26 @@ def main():
         run(dc+['up','-d','--no-build','--wait','--wait-timeout','240'])
         ready(values)
         if review:
-            run([sys.executable, ROOT/'scripts/demo-seed.py', '--state-dir', str(state),
-                 '--control-url', 'http://127.0.0.1:'+str(values.get('CONTROL_API_HTTP_PORT','29080')),
-                 '--lab-url', CHANNEL_LAB_URL])
+            # Grant every demo tenant the managed backends before anything is
+            # published: the catalog is part of the release contract digest, so
+            # a later grant would invalidate already published revisions.
+            credentials_path = state/'review-credentials.json'
+            credentials = {}
+            if credentials_path.exists():
+                try: credentials = json.loads(credentials_path.read_text())
+                except (OSError, ValueError): credentials = {}
+            seed = [sys.executable, ROOT/'scripts/demo-seed.py', '--state-dir', str(state),
+                    '--control-url', 'http://127.0.0.1:'+str(values.get('CONTROL_API_HTTP_PORT','29080'))]
+            if credentials.get('seeded'):
+                print('DEMO_SEED=SKIP already seeded')
+            else:
+                # A failed publish must be resumable: the tenant already exists,
+                # so only the missing publication steps are retried.
+                if not credentials.get('tenant_id'):
+                    run(seed+['--phase','tenant'])
+                    credentials = json.loads(credentials_path.read_text())
+                values = grant_tenants(state, review, [credentials['tenant_id']])
+                run(seed+['--phase','publish','--lab-url',CHANNEL_LAB_URL])
             welcome(state, values)
         else:
             print('MANAGED_STACK=READY project='+values.get('COMPOSE_PROJECT_NAME',args.project))
@@ -223,12 +302,7 @@ def main():
             print('EXTERNAL_MODEL=NOT_PROVISIONED_BY_STARTUP IM_BINDING=NOT_PROVISIONED_BY_STARTUP')
     elif args.action=='grant':
         if not args.tenant_id: raise RuntimeError('grant requires explicit --tenant-id')
-        cmd=[sys.executable,GENERATOR,'grant','--state-dir',state]
-        for tenant in args.tenant_id: cmd += ['--tenant-id',tenant]
-        # This entry is for an unused local stack; don't switch active deployments.
-        run(cmd); values=read_env(state); pin(state,values)
-        run(dc+['up','-d','--no-deps','--force-recreate','control-api','agent-worker'])
-        ready(read_env(state)); print('CATALOG_GRANT_PIN=PASS')
+        grant_tenants(state, review, args.tenant_id); print('CATALOG_GRANT_PIN=PASS')
     elif args.action=='status':
         run(dc+['ps']); ready(values)
     elif args.action=='config': run(dc+['config','--quiet']); print('COMPOSE_CONFIG=PASS')

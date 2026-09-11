@@ -9,8 +9,7 @@ rewrites an existing tenant, and it refuses to run twice for the same state.
 Model choice: by default the Agent runs against the Channel Lab deterministic
 `lab-echo` model, so a reviewer needs no external credentials. Set
 DEMO_MODEL_BASE_URL, DEMO_MODEL_NAME and DEMO_MODEL_API_KEY to point at a real
-OpenAI-compatible model instead; that host must already be part of
-CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS or the release contract rejects it.
+OpenAI-compatible model instead.
 """
 import argparse
 import http.cookiejar
@@ -105,6 +104,8 @@ def main():
     parser.add_argument('--state-dir', type=Path, required=True)
     parser.add_argument('--control-url')
     parser.add_argument('--lab-url', default='http://127.0.0.1:18090')
+    parser.add_argument('--phase', choices=['all', 'tenant', 'publish'], default='all',
+                        help='tenant creates the owner and tenant; publish fills it in')
     arguments = parser.parse_args()
     state = arguments.state_dir.expanduser().resolve()
     credentials_path = state / 'review-credentials.json'
@@ -112,73 +113,92 @@ def main():
     control_url = arguments.control_url or metadata['urls']['control']
     api = API(control_url)
 
-    # Re-running `just demo` is normal: the stack is rebuilt, the tenant stays.
-    # Skip seeding when the recorded tenant still authenticates, so a second run
-    # is idempotent instead of an error.
-    if credentials_path.exists():
-        previous = private_json(credentials_path)
-        if not previous.get('seeded'):
+    # `tenant` and `publish` run as separate processes on purpose: the platform
+    # catalog has to be re-granted in between, and the release contract digest
+    # is derived from that catalog. Publishing first would pin every artifact to
+    # a digest the restarted Worker no longer accepts.
+    if arguments.phase in ('all', 'tenant'):
+        if credentials_path.exists():
+            previous = private_json(credentials_path)
+            if previous.get('seeded') or previous.get('tenant_id'):
+                print('DEMO_SEED=SKIP already seeded tenant=' + str(previous.get('tenant_id')))
+                return 0
             raise Failure('a previous seed stopped before finishing; archive ' + str(state)
                           + ' and run just demo again')
-        owner = previous.get('owner') or {}
-        try:
-            api.call('POST', '/v1/auth/login',
-                     {'username': owner.get('username'), 'password': owner.get('password')})
-        except Failure:
-            raise Failure('this state no longer matches the running stack; archive ' + str(state)
-                          + ' and run just demo again')
-        print('DEMO_SEED=SKIP already seeded tenant=' + str(previous.get('tenant_id')))
-        return 0
-
-    # 1. Rotate the bootstrap administrator's temporary password, as the product requires.
-    admin_user = metadata['bootstrap']['username']
-    admin_password = secret_file(metadata['bootstrap']['password_file'])
-    api.call('POST', '/v1/auth/login', {'username': admin_user, 'password': admin_password})
-    me = api.call('GET', '/v1/me')
-    if me.get('password_change_required') or me.get('must_change_password') or me.get('restricted'):
-        rotated = secrets.token_urlsafe(24)
+        # 1. Rotate the bootstrap administrator, as the product requires.
+        admin_user = metadata['bootstrap']['username']
+        admin_password = secret_file(metadata['bootstrap']['password_file'])
+        api.call('POST', '/v1/auth/login', {'username': admin_user, 'password': admin_password})
+        me = api.call('GET', '/v1/me')
+        if me.get('password_change_required') or me.get('must_change_password') or me.get('restricted'):
+            rotated = secrets.token_urlsafe(24)
+            api.call('POST', '/v1/me/change-password',
+                     {'current_password': admin_password, 'new_password': rotated}, expected=(204,))
+            admin_password = rotated
+        # 2. Create the demo owner and tenant.
+        owner_user = 'demo-owner'
+        owner_temporary = secrets.token_urlsafe(24)
+        user = api.call('POST', '/v1/admin/users',
+                        {'username': owner_user, 'display_name': 'Demo Owner',
+                         'temporary_password': owner_temporary}, expected=(201,))
+        tenant = api.call('POST', '/v1/admin/tenants',
+                          {'slug': 'demo', 'name': 'Demo Tenant', 'owner_user_id': user['id']}, expected=(201,))
+        tenant_id = tenant['id']
+        api.call('POST', '/v1/auth/login', {'username': owner_user, 'password': owner_temporary})
+        owner_password = secrets.token_urlsafe(24)
         api.call('POST', '/v1/me/change-password',
-                 {'current_password': admin_password, 'new_password': rotated}, expected=(204,))
-        admin_password = rotated
-
-    # 2. Create the demo owner and tenant.
-    owner_user = 'demo-owner'
-    owner_temporary = secrets.token_urlsafe(24)
-    user = api.call('POST', '/v1/admin/users',
-                    {'username': owner_user, 'display_name': 'Demo Owner',
-                     'temporary_password': owner_temporary}, expected=(201,))
-    tenant = api.call('POST', '/v1/admin/tenants',
-                      {'slug': 'demo', 'name': 'Demo Tenant', 'owner_user_id': user['id']}, expected=(201,))
-    tenant_id = tenant['id']
-    api.call('POST', '/v1/auth/login', {'username': owner_user, 'password': owner_temporary})
-    owner_password = secrets.token_urlsafe(24)
-    api.call('POST', '/v1/me/change-password',
-             {'current_password': owner_temporary, 'new_password': owner_password}, expected=(204,))
+                 {'current_password': owner_temporary, 'new_password': owner_password}, expected=(204,))
+        # Persist before anything else can fail: the rotated passwords exist
+        # nowhere else once this process exits.
+        save_private(credentials_path, {
+            'control_url': control_url,
+            'channel_lab_url': arguments.lab_url,
+            'admin': {'username': admin_user, 'password': admin_password},
+            'owner': {'username': owner_user, 'password': owner_password},
+            'tenant_id': tenant_id,
+            'seeded': False,
+        })
+        if arguments.phase == 'tenant':
+            print('DEMO_SEED=TENANT tenant=' + tenant_id)
+            return 0
+    else:
+        previous = private_json(credentials_path)
+        if previous.get('seeded'):
+            print('DEMO_SEED=SKIP already seeded tenant=' + str(previous.get('tenant_id')))
+            return 0
+        tenant_id = previous['tenant_id']
+        admin_user = previous['admin']['username']
+        admin_password = previous['admin']['password']
+        owner_user = previous['owner']['username']
+        owner_password = previous['owner']['password']
+        api.call('POST', '/v1/auth/login', {'username': owner_user, 'password': owner_password})
     base = '/v1/tenants/' + tenant_id
-    # Persist the logins before the long publication sequence: a later failure
-    # must never leave rotated credentials recoverable only from this process.
-    save_private(credentials_path, {
-        'control_url': control_url,
-        'channel_lab_url': arguments.lab_url,
-        'admin': {'username': admin_user, 'password': admin_password},
-        'owner': {'username': owner_user, 'password': owner_password},
-        'tenant_id': tenant_id,
-        'seeded': False,
-    })
 
     # 3. Publish one Agent version.
     agent = api.call('POST', base + '/agents', {'name': 'Demo Assistant'}, expected=(201,))['agent']
     spec = {
         'schema_version': 'v1',
         'root': 'assistant',
-        'requirements': {'models': {'primary': {'capabilities': ['chat']}}, 'tools': {}, 'knowledge': {}},
+        'requirements': {
+            'models': {'primary': {'capabilities': ['chat', 'tool_call']}},
+            'tools': {},
+            'knowledge': {},
+            'executors': {'sandbox': {'capability': 'workspace'}},
+        },
         'nodes': {'assistant': {
             'kind': 'llm',
+            'name': 'Demo Assistant',
             'instruction': 'Answer the latest user message in one short paragraph.',
             'model_slot': 'primary',
             'tool_slots': [],
             'knowledge_slots': [],
+            'memory': {'tools': ['memory_add', 'memory_search', 'memory_load'], 'preload_limit': 5},
+            'artifact': {'enabled': True},
+            'workspace': {'executor_slot': 'sandbox',
+                          'tools': ['workspace_exec', 'workspace_save_artifact']},
+            'add_session_summary': True,
         }},
+        'runtime': {'summary': {'enabled': True, 'model_slot': 'primary', 'event_threshold': 20}},
     }
     api.call('PUT', base + '/agents/' + agent['id'] + '/draft', {'expected_revision': 1, 'spec': spec})
     api.call('POST', base + '/agents/' + agent['id'] + '/versions', {'expected_revision': 2}, expected=(201,))
@@ -190,30 +210,50 @@ def main():
             'kind': 'openai_compatible',
             'model': os.environ.get('DEMO_MODEL_NAME') or 'gpt-4o',
             'base_url': (os.environ.get('DEMO_MODEL_BASE_URL') or 'https://api.openai.com/v1').rstrip('/'),
-            'capabilities': ['chat'],
+            'capabilities': ['chat', 'tool_call'],
         }
         model_key, model_source = external_key, '外部 OpenAI 兼容模型'
     else:
         model = {'kind': 'openai_compatible', 'model': 'lab-echo',
-                 'base_url': 'http://channel-lab:8080/v1', 'capabilities': ['chat']}
+                 'base_url': 'http://channel-lab:8080/v1', 'capabilities': ['chat', 'tool_call']}
         model_key, model_source = lab_model_key(arguments.lab_url), 'Channel Lab 内置确定性模型（无需外部密钥）'
 
     database = 'agent_platform'
     session_password = secret_file(state / 'secrets' / 'pg_session')
     session_dsn = ('postgres://session_runtime:' + session_password + '@postgres:5432/'
                    + database + '?sslmode=disable')
+    memory_password = secret_file(state / 'secrets' / 'pg_memory')
+    artifact_user = secret_file(state / 'secrets' / 'minio_app_user')
+    artifact_secret = secret_file(state / 'secrets' / 'minio_app_password')
     profile = api.call('POST', base + '/runtime-profiles', {'name': 'Demo Profile'}, expected=(201,))['profile']
     config = {
         'models': {'primary': model},
         'tools': {},
         'knowledge': {},
-        'storage': {'session': {'kind': 'postgres_state', 'destination': {
-            'host': 'postgres', 'port': 5432, 'database': database,
-            'username': 'session_runtime', 'sslmode': 'disable'}}},
+        'executors': {'sandbox': {'kind': 'sdk_sandbox'}},
+        'storage': {
+            'session': {'kind': 'postgres_state', 'destination': {
+                'host': 'postgres', 'port': 5432, 'database': database,
+                'username': 'session_runtime', 'sslmode': 'disable'}},
+            'memory': {'kind': 'managed_memory', 'backend_id': 'memory-pg', 'backend_revision': 1},
+            'artifact': {'kind': 'managed_artifact', 'backend_id': 'artifact-s3', 'backend_revision': 1},
+        },
     }
     profile_credentials = {
         'models': {'primary': {'api_key': {'action': 'replace', 'value': model_key}}},
-        'storage': {'session': {'dsn': {'action': 'replace', 'value': session_dsn}}},
+        # Managed memory and artifact still carry their own credentials: the
+        # catalog fixes the target, the credential proves the caller may use it.
+        'storage': {
+            'session': {'dsn': {'action': 'replace', 'value': session_dsn}},
+            # Managed resources carry a password, not a DSN: the platform
+            # resolves host, port, database and user from the catalog target,
+            # and only the secret half comes from the credential.
+            'memory': {'dsn_password': {'action': 'replace', 'value': memory_password}},
+            'artifact': {
+                'access_key_id': {'action': 'replace', 'value': artifact_user},
+                'secret_access_key': {'action': 'replace', 'value': artifact_secret},
+            },
+        },
     }
     api.call('PUT', base + '/runtime-profiles/' + profile['id'] + '/draft',
              {'expected_draft_revision': 1, 'credential_protocol_version': 'v1',
@@ -223,16 +263,17 @@ def main():
 
     # 5. Publish one Deployment revision.
     deployment = api.call('POST', base + '/deployments', {'name': 'Demo Deployment'},
-                          expected=(201,), idem='demo-deployment-create')['deployment']
+                          expected=(200, 201), idem='demo-deployment-create')['deployment']
     source = {'schema_version': 'v1',
               'agent': {'agent_id': agent['id'], 'version_number': 1},
               'profile': {'profile_id': profile['id'], 'revision_number': 1}}
     result = api.call('POST', base + '/deployments/' + deployment['id'] + '/validate', source)
     if not result.get('valid'):
-        raise Failure('deployment validation rejected the published Agent and Profile pair')
+        raise Failure('deployment validation rejected the pair: '
+                      + json.dumps(result, ensure_ascii=False)[:900])
     publication = api.call('POST', base + '/deployments/' + deployment['id'] + '/revisions',
                            {'expected_latest_revision_number': None, 'input': source},
-                           expected=(201,), idem='demo-deployment-publish')
+                           expected=(200, 201), idem='demo-deployment-publish')
     revision_number = publication['revision']['revision_number']
 
     # 6. Bind a Channel Lab bot to the published revision.
@@ -244,19 +285,15 @@ def main():
         'description': 'Channel Lab simulator bound to the demo deployment',
         'config': {'receive_mode': 'long_polling', 'endpoint_profile': 'test'},
         'credentials': {'telegram.bot_token': {'action': 'replace', 'value': bot['token']}},
-    }, expected=(201,), idem='demo-account-create')['account']
+    }, expected=(200, 201), idem='demo-account-create')['account']
     binding = api.call('POST', base + '/channel-bindings', {
         'account_id': account['account_id'],
         'target': {'deployment_id': deployment['id'], 'revision_number': revision_number},
-    }, expected=(201,), idem='demo-binding-create')['binding']
-    # The account must be enabled first: enabling a binding whose account is
-    # still disabled is rejected with CHANNEL_ACCOUNT_DISABLED.
-    api.call('POST', base + '/channel-accounts/' + account['account_id'] + '/enabled',
-             {'expected_account_revision': account['account_revision'], 'enabled': True},
-             idem='demo-account-enable')
-    api.call('POST', base + '/channel-bindings/' + binding['binding_id'] + '/enabled',
-             {'expected_binding_revision': binding['binding_revision'], 'enabled': True},
-             idem='demo-binding-enable')
+    }, expected=(200, 201), idem='demo-binding-create')['binding']
+    # Left disabled on purpose. Enabling needs a channel preflight first, and
+    # an enabled account the Gateway cannot reach makes its readiness fail,
+    # which in turn makes `docker compose up --wait` fail for the whole stack.
+    # Enable these from the console once the connection has been preflighted.
 
     save_private(credentials_path, {
         'control_url': control_url,

@@ -123,7 +123,12 @@ services:
     depends_on: [redis, qdrant, minio]
     healthcheck:
       test: ["CMD", "sh", "/tooling/health-all.sh"]
-      interval: 5s
+      # Each probe starts three Python processes, so a 5s steady-state interval
+      # burned most of a core while the stack idled. Probe quickly only while
+      # the fixture is starting, then back off.
+      interval: 30s
+      start_interval: 5s
+      start_period: 60s
       timeout: 70s
       retries: 30
   backend-init:

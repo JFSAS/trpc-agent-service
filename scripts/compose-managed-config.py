@@ -67,15 +67,12 @@ def validate_knowledge(value):
     if d is not None and (type(d) is not int or not 1<=d<=65536):raise ConfigError('explicit Knowledge dimensions must be 1..65536')
     if not NAME.fullmatch(value['collection']) or not NAME.fullmatch(value['vector_name']) or value['distance'] not in ('cosine','dot','euclid'):raise ConfigError('Knowledge named vector configuration invalid')
 
-def initial_settings(project='trpc-agent-managed-local',allowed_hosts=None,ports=None,knowledge=None):
+def initial_settings(project='trpc-agent-managed-local',ports=None,knowledge=None):
     if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,62}',project):raise ConfigError('Compose project name invalid')
-    internal=['postgres','redis','qdrant','minio']
-    hosts=sorted(set(internal+(allowed_hosts if allowed_hosts is not None else ['api.openai.com','api.deepseek.com'])))
-    if any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}',h) or '..' in h for h in hosts):raise ConfigError('allowed endpoint host invalid')
     values={'web':23000,'control':28080,'gateway':28090,'gateway_admin':28091,'worker':28083};values.update(ports or {})
     if any(type(v) is not int or not 1024<=v<=65535 for v in values.values()) or len(set(values.values()))!=5:raise ConfigError('host ports must be distinct unprivileged ports')
     know={'dimensions':None,'collection':'worker_knowledge','vector_name':'published_dense','distance':'cosine'};know.update(knowledge or {});validate_knowledge(know)
-    return {'project':project,'allowed_hosts':hosts,'ports':values,'knowledge':know,'database':'agent_platform','bootstrap_username':'managed-admin','scope_id':'managed-local','worker_id':'worker-one','gateway_instance_id':'gateway-1','runtime_uid':os.getuid(),'runtime_gid':os.getgid()}
+    return {'project':project,'ports':values,'knowledge':know,'database':'agent_platform','bootstrap_username':'managed-admin','scope_id':'managed-local','worker_id':'worker-one','gateway_instance_id':'gateway-1','runtime_uid':os.getuid(),'runtime_gid':os.getgid()}
 
 def make_pki(state):
     directory=state/'pki';private_dir(directory)
@@ -145,7 +142,7 @@ def render(state):
     cat,targets=catalog(s,data['tenant_ids']);write(state/'managed/catalog.json',cat);write(state/'managed/targets.json',targets)
     sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
     catalog_sha,targets_sha=sha(state/'managed/catalog.json'),sha(state/'managed/targets.json')
-    digest_env={'CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS':','.join(s['allowed_hosts']),'CONTROL_PLATFORM_BACKEND_CATALOG_SHA256':catalog_sha,'CONTROL_PLATFORM_BACKEND_TARGETS_SHA256':targets_sha}
+    digest_env={'CONTROL_PLATFORM_BACKEND_CATALOG_SHA256':catalog_sha,'CONTROL_PLATFORM_BACKEND_TARGETS_SHA256':targets_sha}
     fingerprint=hashlib.sha256(env_text(digest_env).encode()).hexdigest();pinned=data.get('pin') or {};digest=pinned.get('digest','') if pinned.get('inputs_sha256')==fingerprint else ''
     secret_map={name:name for name in ['bootstrap_password','redis_admin','redis_memory','redis_session','minio_user','minio_password','minio_app_user','minio_app_password','qdrant_api_key']}
     secret_map.update(pg_session='session_runtime',pg_memory='memory_runtime')
@@ -205,7 +202,7 @@ def main():
     for name in ('init','grant','pin','status'):
         p=sub.add_parser(name);p.add_argument('--state-dir',type=Path,default=DEFAULT_STATE)
         if name=='init':
-            p.add_argument('--project');p.add_argument('--allowed-host',action='append');p.add_argument('--tenant-id',action='append')
+            p.add_argument('--project');p.add_argument('--tenant-id',action='append')
             for key in ('web','control','gateway','gateway-admin','worker'):p.add_argument('--'+key+'-port',type=int)
         if name in ('init','grant'):
             if name=='grant':p.add_argument('--tenant-id',action='append',required=True)
@@ -216,8 +213,8 @@ def main():
         state=args.state_dir.absolute()
         knowledge={'dimensions':args.knowledge_dimensions,'collection':args.knowledge_collection,'vector_name':args.knowledge_vector_name,'distance':args.knowledge_distance} if args.action in ('init','grant') and args.knowledge_dimensions is not None else None
         if args.action=='init':
-            existing=(state/'state.json').exists();overrides=any(getattr(args,k+'_port') is not None for k in ('web','control','gateway','gateway_admin','worker')) or args.project is not None or args.allowed_host is not None or knowledge is not None
-            settings=None if existing and not overrides else initial_settings(args.project or 'trpc-agent-managed-local',args.allowed_host,{k:getattr(args,k+'_port') for k in ('web','control','gateway','gateway_admin','worker') if getattr(args,k+'_port') is not None},knowledge)
+            existing=(state/'state.json').exists();overrides=any(getattr(args,k+'_port') is not None for k in ('web','control','gateway','gateway_admin','worker')) or args.project is not None or knowledge is not None
+            settings=None if existing and not overrides else initial_settings(args.project or 'trpc-agent-managed-local',{k:getattr(args,k+'_port') for k in ('web','control','gateway','gateway_admin','worker') if getattr(args,k+'_port') is not None},knowledge)
             meta=initialize(state,settings)
             if args.tenant_id:meta=grant(state,args.tenant_id,knowledge)
         elif args.action=='grant':meta=grant(state,args.tenant_id,knowledge)
