@@ -203,10 +203,99 @@ docker compose -p channel-lab-dev \
 **单独启动 Lab 不会生成 Agent 回复**；需要按 [Channel Lab 指南](tools/channel-lab/README.md)
 连接 Gateway、Worker 和已发布的部署。Lab 验收与真实 Telegram / 企业微信验收应分别记录。
 
-### 4. 自行部署完整平台（推荐入口）
+### 4. 一键启动评审演示（`just demo`）
 
-准备 Docker Engine、支持 `!reset` 的 Docker Compose v2、Go 1.25+（使用 `go.mod`
-指定的工具链）、Python 3.11+ 和 OpenSSL。从仓库根目录执行：
+演示环境用一条命令拉起整条链路：管理控制台、Control API、Agent Worker（含工作区沙箱）、
+Channel Gateway、Channel Lab 模拟 IM，以及 PostgreSQL、NATS、Redis、Qdrant、MinIO 数据后端。
+它自带一个租户、一个已发布的 Agent 和一个已启用的模拟 IM 绑定，适合评审者和首次接触项目的人
+直接验证"发消息 → 执行 → 回复"。
+
+前置工具：
+
+- Docker Engine 或 OrbStack，以及支持 `!reset` 的 Docker Compose v2；
+- Go 1.25+（以 `go.mod` 指定的工具链为准）、Python 3.11+、OpenSSL；
+- [`just`](https://github.com/casey/just)：macOS 用 `brew install just`，装有 Rust 工具链时也可
+  `cargo install just`，其他平台参考其 README 的安装方式。
+
+从仓库根目录执行：
+
+```bash
+just demo                 # 构建镜像、启动全栈并播种演示数据；保留已有数据与命名卷
+just demo --skip-build    # 已构建过镜像时，直接重启并复用镜像
+just demo-status          # 复检容器状态与 HTTP 就绪探针
+just demo-stop            # 停止演示栈，保留私有 state 与命名卷
+just demo-reset           # 销毁容器、数据卷与私有 state，再构建并播种一个全新环境
+```
+
+启动成功后终端会打印访问入口与账号，密码按环境随机生成：
+
+- **管理控制台**：`http://127.0.0.1:24000`；
+- **模拟 IM（Channel Lab）**：`http://127.0.0.1:18090`；
+- **Gateway 管理**：`http://127.0.0.1:29091`；
+- **租户账号**：`demo-owner`（评审建议使用），**平台管理员**：`managed-admin`；
+- **凭据文件**：`~/.local/share/trpc-agent-service/managed-review/review-credentials.json`。
+
+演示环境提供的内容：
+
+- 一个租户及其 OWNER 账号，一个用于平台管理的管理员账号；
+- 一个已发布的 Agent（Demo Assistant）+ Runtime Profile + Deployment Revision，
+  默认指向 Channel Lab 的确定性模型 `lab-echo`，不需要任何外部密钥；
+- 一个已启用的 Channel Lab Bot 与指向该 Deployment Revision 的 Channel Binding；
+- 支持 `workspace_exec`、`workspace_save_artifact` 的 Worker 沙箱，以及 PostgreSQL / Redis Memory、
+  S3 Artifact、Qdrant Knowledge 和会话摘要等已交付的数据能力；
+- 独立的数据后端与私有证书，全部运行在本机并只监听回环地址。
+
+验证一条消息：用 `demo-owner` 登录控制台，打开 Channel Lab 选择 Demo Lab Bot 发送消息，
+消息会经 Channel Gateway 进入 Agent Worker 执行，再把回复写回 Lab。
+
+### 5. 替换为真实模型与真实 IM 发布
+
+演示环境默认使用本地确定性模型和模拟 IM。要换成真实 API Key 与真实渠道，建议按下面顺序操作；
+凭据只通过控制台写入，不要写进仓库文件或脚本。
+
+**真实模型（Runtime Profile）**
+
+1. 编辑 Runtime Profile 的 Draft，把 `models.primary` 的 `base_url` 与 `model` 改成真实的
+   OpenAI 兼容服务；
+2. 在对应凭据项写入 API Key，凭据为只写字段，服务端加密存储，读取接口不返回明文；
+3. 校验并发布新的 Profile Revision；
+4. 选择原有 Agent Version 与新的 Profile Revision，发布新的 Deployment Revision，再把
+   Channel Binding 指向该 Revision。
+
+同一平台契约下发布新 Revision 不需要重启 Worker，Binding 切换后新消息即按新版本执行；
+历史 Revision 不会被改写，可以随时把 Binding 切回旧版本。
+
+也可以在播种时直接使用真实模型（只影响 `just demo-reset` 之后新建的环境）：
+
+```bash
+DEMO_MODEL_BASE_URL=https://api.deepseek.com \
+DEMO_MODEL_NAME=deepseek-v4-pro \
+DEMO_MODEL_API_KEY=... \
+just demo-reset
+```
+
+**真实 IM**
+
+- **Telegram**：向 @BotFather 创建 Bot 并取得 Bot Token；在控制台创建 Telegram 渠道账号，
+  接收方式选长轮询（不需要公网回调地址），写入 Token；运行接入预检，启用账号与 Binding，
+  然后在 Telegram 里给 Bot 发送消息。
+- **企业微信（智能机器人长连接）**：在企业微信管理后台的智能机器人页面取得 Bot ID 与 Secret；
+  在控制台创建企业微信账号，填写 Bot ID 和 `wecom.bot_secret`；**先停用账号**，再运行"预检"
+  并勾选允许连接探测；预检通过后启用账号并把 Binding 指向目标 Deployment Revision。
+  预检会对同一个机器人发起一次真实订阅，可能替换该机器人已有的连接，确认影响后再执行；
+  Secret 通常只显示一次，重置后必须同步更新，且不要把它填成 Bot ID（会被判定
+  `WECOM_AUTH_REJECTED`）。长连接模式同样不需要公网回调地址。
+
+**安全提示**
+
+- 渠道与模型凭据通过控制台写入并加密存储，读取接口不返回明文；
+- 不要提交 `.env`、真实 Token、API Key、私钥或业务数据，也不要复制
+  `~/.local/share/trpc-agent-service/` 下的 state、证书或凭据文件进仓库。
+
+### 6. 自行部署完整平台
+
+演示环境适合评审和本地联调；长期使用请走托管本地全栈，它使用独立的 Compose 项目与配置目录。
+前置工具与上面的 `just`、Docker、Go、Python、OpenSSL 相同。从仓库根目录执行：
 
 ```bash
 just managed-up
