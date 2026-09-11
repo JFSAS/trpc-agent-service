@@ -104,7 +104,7 @@ func runCommitLossTest(t *testing.T, tamper bool) {
 	defer pool.Close()
 	ledger := postgresadapter.New(pool)
 	id := fmt.Sprintf("proof_loss_%d", time.Now().UnixNano())
-	requested := domain.Requested{EventID: "evt_" + id, EventDigest: domain.Digest([]byte(id)), RunDigest: domain.Digest([]byte("run" + id)), RunID: "run_" + id, AdmissionID: "adm_" + id, Route: domain.Route{TenantID: "tenant_" + id, Provider: "telegram", AccountID: "account", BindingID: "binding", DeploymentRevisionID: "revision", ManifestRef: "manifest", ManifestDigest: domain.Digest([]byte("manifest")), Generation: 1}, Input: domain.Input{ConversationID: "conversation", Text: "Hello", ReceivedAt: time.Now().UTC()}}
+	requested := domain.Requested{EventID: "evt_" + id, EventDigest: domain.Digest([]byte(id)), RunDigest: domain.Digest([]byte("run" + id)), RunID: "run_" + id, AdmissionID: "adm_" + id, Route: domain.Route{TenantID: "tenant_" + id, Provider: "telegram", AccountID: "account", BindingID: "binding", DeploymentRevisionID: "revision", ManifestRef: "manifest", ManifestDigest: domain.Digest([]byte("manifest")), Generation: 1}, Input: domain.Input{ConversationID: "conversation", SenderID: "sender_" + id, Text: "Hello", ReceivedAt: time.Now().UTC()}}
 	policy := domain.Policy{Version: "processor-test-v1", MaxRunAge: time.Minute, MaxReplyAge: time.Minute, MaxFutureSkew: time.Second, LeaseTTL: time.Second, RenewalInterval: 20 * time.Millisecond, RetryBackoff: time.Millisecond, MaxAttempts: 2}
 	if _, err = ledger.Accept(ctx, requested, policy, domain.IntakeLimits{MaxQueuedRuns: 1000, MaxRetainedRuns: 100000}); err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestProcessorPostgresPreparationErrorIsExplicit(t *testing.T) {
 	ledger := postgresadapter.New(pool)
 	id := fmt.Sprintf("preparation_%d", time.Now().UnixNano())
 	digest := domain.Digest([]byte("manifest"))
-	requested := domain.Requested{EventID: "evt_" + id, EventDigest: domain.Digest([]byte(id)), RunDigest: domain.Digest([]byte("run" + id)), RunID: "run_" + id, AdmissionID: "adm_" + id, Route: domain.Route{TenantID: "tenant_" + id, Provider: "telegram", AccountID: "account", BindingID: "binding", DeploymentRevisionID: "revision", ManifestRef: "manifest", ManifestDigest: digest, Generation: 1}, Input: domain.Input{ConversationID: "conversation", Text: "Hello", ReceivedAt: time.Now().UTC()}}
+	requested := domain.Requested{EventID: "evt_" + id, EventDigest: domain.Digest([]byte(id)), RunDigest: domain.Digest([]byte("run" + id)), RunID: "run_" + id, AdmissionID: "adm_" + id, Route: domain.Route{TenantID: "tenant_" + id, Provider: "telegram", AccountID: "account", BindingID: "binding", DeploymentRevisionID: "revision", ManifestRef: "manifest", ManifestDigest: digest, Generation: 1}, Input: domain.Input{ConversationID: "conversation", SenderID: "sender_" + id, Text: "Hello", ReceivedAt: time.Now().UTC()}}
 	policy := domain.Policy{Version: "processor-test-v1", MaxRunAge: time.Minute, MaxReplyAge: time.Minute, MaxFutureSkew: time.Second, LeaseTTL: time.Second, RenewalInterval: 20 * time.Millisecond, RetryBackoff: time.Millisecond, MaxAttempts: 2}
 	if _, err = ledger.Accept(ctx, requested, policy, domain.IntakeLimits{MaxQueuedRuns: 1000, MaxRetainedRuns: 100000}); err != nil {
 		t.Fatal(err)

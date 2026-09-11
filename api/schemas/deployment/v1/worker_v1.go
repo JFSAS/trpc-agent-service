@@ -26,6 +26,13 @@ const WorkerV1SessionRuntimeRole = "session_runtime"
 
 var ErrUnsupportedWorkerManifest = errors.New("unsupported Worker V1 manifest")
 
+// ErrWorkerV1ContractMismatch reports a manifest produced by a different
+// platform contract release than the consumer pinned. The manifest is not
+// malformed and the consumer is not missing a capability: a consumer running
+// the manifest's release can execute it. Release-pinned consumers may therefore
+// wait for that release instead of failing the work permanently.
+var ErrWorkerV1ContractMismatch = errors.New("Worker V1 manifest requires a different platform contract release")
+
 var ErrWorkerV1SessionRuntimeRole = fmt.Errorf("%w: session runtime username must be %s", ErrUnsupportedWorkerManifest, WorkerV1SessionRuntimeRole)
 
 // ValidateWorkerV1 is the static publication/consumer gate, not a mutable
@@ -33,8 +40,14 @@ var ErrWorkerV1SessionRuntimeRole = fmt.Errorf("%w: session runtime username mus
 // identity matching for the publisher while retaining every capability check.
 func ValidateWorkerV1(c ManifestContent, expectedPlatformDigest string) error {
 	reject := func(reason string) error { return fmt.Errorf("%w: %s", ErrUnsupportedWorkerManifest, reason) }
-	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion || (expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest) {
+	contractMismatch := func(reason string) error { return fmt.Errorf("%w: %s", ErrWorkerV1ContractMismatch, reason) }
+	if c.SchemaVersion != "v1" || c.CompilerVersion != "deployment-compiler-v1" || c.RuntimeContractVersion != "worker-manifest-v1" || c.PlatformContract.Version != WorkerV1PlatformVersion {
 		return reject("contract identity")
+	}
+	if expectedPlatformDigest != "" && c.PlatformContract.Digest != expectedPlatformDigest {
+		// Same manifest format, different release pin: the consumer is older (or
+		// newer) than the producer, not missing a capability.
+		return contractMismatch("platform contract digest")
 	}
 	// Summary and explicitly declared PostgreSQL/Redis Memory are executable.
 	if c.Runtime != nil && (c.Runtime.Summary == nil || c.Runtime.Summary.Validate() != nil) {

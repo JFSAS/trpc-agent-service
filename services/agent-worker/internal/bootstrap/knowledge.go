@@ -27,6 +27,11 @@ func (q knowledgeQueries) ImportKnowledge(ctx context.Context, r proof.Knowledge
 	if errors.Is(err, application.ErrManifestInvalid) || errors.Is(err, application.ErrManifestUnsupported) {
 		return out, httpadapter.ErrAttemptDenied
 	}
+	if errors.Is(err, application.ErrManifestContractMismatch) {
+		// Release skew is temporary: the same call succeeds after this Worker
+		// runs the release that compiled the Manifest.
+		return out, httpadapter.ErrUnavailable
+	}
 	if err != nil {
 		return out, httpadapter.ErrUnavailable
 	}

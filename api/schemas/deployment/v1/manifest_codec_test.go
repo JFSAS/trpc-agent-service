@@ -89,8 +89,7 @@ func TestWorkerV1StaticContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*ManifestContent){
-		"legacy":         func(c *ManifestContent) { c.PlatformContract.Version = "platform-v1" },
-		"release digest": func(c *ManifestContent) { c.PlatformContract.Digest = "sha256:" + strings.Repeat("2", 64) },
+		"legacy": func(c *ManifestContent) { c.PlatformContract.Version = "platform-v1" },
 		"combination": func(c *ManifestContent) {
 			n := c.AgentPlan.Nodes[c.AgentPlan.Root]
 			n.Kind = "parallel"
@@ -112,6 +111,13 @@ func TestWorkerV1StaticContract(t *testing.T) {
 				t.Fatal("unsupported manifest accepted")
 			}
 		})
+	}
+	// A different release pin is generation skew, not a capability refusal: the
+	// same manifest is executable by a consumer running the producer's release.
+	skewed := workerFixture(t)
+	skewed.PlatformContract.Digest = "sha256:" + strings.Repeat("2", 64)
+	if err := ValidateWorkerV1(skewed, c.PlatformContract.Digest); !errors.Is(err, ErrWorkerV1ContractMismatch) || errors.Is(err, ErrUnsupportedWorkerManifest) {
+		t.Fatalf("release pin mismatch = %v", err)
 	}
 	c.ResolvedRequirements.Models = map[string]string{"logical-slot": c.AgentPlan.Nodes[c.AgentPlan.Root].ModelResource}
 	if err := ValidateWorkerV1(c, c.PlatformContract.Digest); err != nil {

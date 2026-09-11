@@ -161,7 +161,7 @@ func operation(v string) string {
 }
 func outcome(v string) string {
 	switch v {
-	case "memory_apply_failed", "memory_finalize_failed", "ok", "fenced", "conflict", "capacity", "manifest_wait", "session_wait", "invalid", "session_preparation", "session_invalid", "credential_denied", "cancelled", "deadline", "dependency", "failed":
+	case "memory_apply_failed", "memory_finalize_failed", "ok", "fenced", "conflict", "capacity", "manifest_wait", "manifest_contract_wait", "session_wait", "invalid", "session_preparation", "session_invalid", "credential_denied", "cancelled", "deadline", "dependency", "failed":
 		return v
 	default:
 		return "other"
@@ -196,7 +196,7 @@ func (r *Recorder) Observe(ctx context.Context, o application.Observation) {
 		}
 	}
 	// Routine polling/lease checks still have metrics without flooding logs.
-	if o.Operation == "advance" || o.Result == "manifest_wait" || o.Result == "session_wait" || ((o.Operation == "fence" || o.Operation == "renew" || o.Operation == "manifest") && o.Result == "ok") {
+	if o.Operation == "advance" || o.Result == "manifest_wait" || o.Result == "manifest_contract_wait" || o.Result == "session_wait" || ((o.Operation == "fence" || o.Operation == "renew" || o.Operation == "manifest") && o.Result == "ok") {
 		return
 	}
 	o.TenantID, o.RunID, o.AttemptID = boundedID(o.TenantID), boundedID(o.RunID), boundedID(o.AttemptID)

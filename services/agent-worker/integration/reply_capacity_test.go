@@ -134,7 +134,7 @@ func TestWorkerReplyCapacityPGNATSSDK(t *testing.T) {
 		RunID: "run_capacity", RunDigest: domain.Digest([]byte("capacity-run")), AdmissionID: "adm_capacity",
 		Route: domain.Route{TenantID: "tenant_capacity", Provider: "telegram", AccountID: "account_capacity", BindingID: "binding_capacity",
 			DeploymentRevisionID: "revision_capacity", ManifestRef: "manifest_capacity", ManifestDigest: domain.Digest([]byte("capacity-manifest")), Generation: 1},
-		Input: domain.Input{ConversationID: "42", Text: "Capacity test input", ReceivedAt: time.Now().UTC()}}
+		Input: domain.Input{ConversationID: "42", SenderID: "sender_capacity", Text: "Capacity test input", ReceivedAt: time.Now().UTC()}}
 	policy := domain.Policy{Version: "explicit-capacity-fixture-v1", MaxRunAge: time.Minute, MaxReplyAge: time.Minute,
 		MaxFutureSkew: time.Second, LeaseTTL: 30 * time.Second, RenewalInterval: time.Second, RetryBackoff: time.Second, MaxAttempts: 2}
 	if _, err = ledger.Accept(ctx, r, policy, domain.IntakeLimits{MaxQueuedRuns: 10, MaxRetainedRuns: 100}); err != nil {

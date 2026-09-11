@@ -2,7 +2,6 @@ package memorystore
 
 import (
 	"context"
-
 	"fmt"
 	"net/url"
 	"strings"

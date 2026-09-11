@@ -50,6 +50,9 @@ func (r Reader) Resolve(ctx context.Context, route domain.Route) (resolved domai
 		return domain.Plan{}, application.ErrManifestInvalid
 	}
 	if err = protocol.ValidateWorkerV1(content, r.ContractDigest); err != nil {
+		if errors.Is(err, protocol.ErrWorkerV1ContractMismatch) {
+			return domain.Plan{}, application.ErrManifestContractMismatch
+		}
 		return domain.Plan{}, application.ErrManifestUnsupported
 	}
 	if kind := content.AgentPlan.Nodes[content.AgentPlan.Root].Kind; kind == "sequence" || kind == "loop" || content.AgentPlan.Nodes[content.AgentPlan.Root].Workspace != nil {

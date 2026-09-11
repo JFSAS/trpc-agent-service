@@ -34,6 +34,8 @@ func ObservationResult(err error) string {
 		return "capacity"
 	case errors.Is(err, ErrManifestMissing):
 		return "manifest_wait"
+	case errors.Is(err, ErrManifestContractMismatch):
+		return "manifest_contract_wait"
 	case errors.Is(err, domain.ErrNotReady):
 		return "session_wait"
 	case errors.Is(err, ErrManifestInvalid), errors.Is(err, ErrManifestUnsupported), errors.Is(err, domain.ErrInvalid):

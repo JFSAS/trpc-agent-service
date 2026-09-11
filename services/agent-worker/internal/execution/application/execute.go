@@ -13,13 +13,18 @@ var (
 	ErrManifestMissing     = errors.New("fixed manifest has not arrived")
 	ErrManifestInvalid     = errors.New("fixed manifest failed validation")
 	ErrManifestUnsupported = errors.New("fixed manifest is not supported by Worker V1")
-	ErrDependency          = errors.New("execution dependency temporarily unavailable")
-	ErrCredentialDenied    = errors.New("execution credentials rejected")
-	ErrRuntimeFailed       = errors.New("agent runtime failed")
-	ErrMemoryApply         = errors.New("accepted memory application failed")
-	ErrMemoryFinalize      = errors.New("accepted memory finalization failed")
-	ErrSessionInvalid      = errors.New("session snapshot failed validation")
-	ErrSessionPreparation  = errors.New("session store requires explicit preparation")
+	// ErrManifestContractMismatch is release skew, not a manifest defect: this
+	// process pinned a different platform contract release than the one that
+	// compiled the manifest. The Run waits for a matching Worker release instead
+	// of terminating permanently.
+	ErrManifestContractMismatch = errors.New("fixed manifest requires a different platform contract release")
+	ErrDependency               = errors.New("execution dependency temporarily unavailable")
+	ErrCredentialDenied         = errors.New("execution credentials rejected")
+	ErrRuntimeFailed            = errors.New("agent runtime failed")
+	ErrMemoryApply              = errors.New("accepted memory application failed")
+	ErrMemoryFinalize           = errors.New("accepted memory finalization failed")
+	ErrSessionInvalid           = errors.New("session snapshot failed validation")
+	ErrSessionPreparation       = errors.New("session store requires explicit preparation")
 )
 
 type ManifestReader interface {

@@ -87,6 +87,8 @@ func (r *manifestGateReader) Resolve(ctx context.Context, route domain.Route) (d
 		r.result = "INVALID"
 	case errors.Is(e, application.ErrManifestUnsupported):
 		r.result = "UNSUPPORTED"
+	case errors.Is(e, application.ErrManifestContractMismatch):
+		r.result = "CONTRACT_MISMATCH"
 	default:
 		r.result = "UNEXPECTED_DEPENDENCY"
 	}
@@ -331,7 +333,7 @@ var manifestGateCases = []manifestGateCase{
 	{name: "content_digest_mismatch", reader: "MISSING", invalidWire: true},
 	{name: "schema_version_mismatch", reader: "MISSING", invalidWire: true},
 	{name: "legacy_platform_version", reader: "UNSUPPORTED", reason: "UNSUPPORTED_MANIFEST"},
-	{name: "release_pin_mismatch", reader: "UNSUPPORTED", reason: "UNSUPPORTED_MANIFEST"},
+	{name: "release_pin_mismatch", reader: "CONTRACT_MISMATCH"},
 	{name: "fixed_manifest_reference_mismatch", reader: "MISSING"},
 	{name: "fixed_revision_mismatch", reader: "INVALID", reason: "MANIFEST_INVALID"},
 	{name: "fixed_digest_mismatch", reader: "INVALID", reason: "MANIFEST_INVALID"},
@@ -499,6 +501,10 @@ func TestWorkerManifestGateFixtureContracts(t *testing.T) {
 				if !errors.Is(e, protocol.ErrUnsupportedWorkerManifest) {
 					t.Fatal("expected capability gate refusal", e)
 				}
+			} else if tc.reader == "CONTRACT_MISMATCH" {
+				if !errors.Is(e, protocol.ErrWorkerV1ContractMismatch) {
+					t.Fatal("expected release-pin skew, not a capability gate refusal", e)
+				}
 			} else if e != nil {
 				t.Fatal("unrelated policy failure masks tested layer", e)
 			}
@@ -651,12 +657,19 @@ func TestWorkerManifestRejectionPGNATSSDK(t *testing.T) {
 			if reader.result != tc.reader {
 				t.Fatalf("actual Processor reader=%s want=%s", reader.result, tc.reader)
 			}
-			if tc.reader == "MISSING" {
+			switch tc.reader {
+			case "MISSING":
 				if !errors.Is(advanceErr, application.ErrManifestMissing) {
 					t.Fatal(advanceErr)
 				}
-			} else if advanceErr != nil {
-				t.Fatal(advanceErr)
+			case "CONTRACT_MISMATCH":
+				if !errors.Is(advanceErr, application.ErrManifestContractMismatch) {
+					t.Fatal(advanceErr)
+				}
+			default:
+				if advanceErr != nil {
+					t.Fatal(advanceErr)
+				}
 			}
 			finalRun, e := f.ledger.FindRun(f.ctx, run.Request.Route.TenantID, run.Request.RunID)
 			if e != nil {
@@ -696,10 +709,13 @@ func TestWorkerManifestRejectionPGNATSSDK(t *testing.T) {
 				if delta != [5]int32{} || attempts != 0 || candidates != 0 || finals != 0 || acceptedRef != "" || acceptedDigest != "" {
 					t.Fatal("negative crossed Claim/Resolve/SDK or accepted state", delta, attempts, candidates, finals)
 				}
-				if tc.reader == "MISSING" {
+				if tc.reader == "MISSING" || tc.reader == "CONTRACT_MISMATCH" {
 					processorResult = "PERSISTENT_MANIFEST_WAIT_NOT_RUN_REJECTION"
+					if tc.reader == "CONTRACT_MISMATCH" {
+						processorResult = "RELEASE_SKEW_WAIT_NOT_RUN_REJECTION"
+					}
 					if finalRun.Status != domain.Queued || finalRun.WaitReason != "MANIFEST" || settled != 0 {
-						t.Fatal("missing fixed manifest must remain durable wait", finalRun.Status, finalRun.WaitReason, settled)
+						t.Fatal("unexecutable fixed manifest must remain durable wait", finalRun.Status, finalRun.WaitReason, settled)
 					}
 					if _, e = f.ledger.FindCompletion(f.ctx, run.Request.Route.TenantID, run.Request.RunID); !errors.Is(e, domain.ErrNotFound) {
 						t.Fatal("waiting Run was falsely terminalized", e)

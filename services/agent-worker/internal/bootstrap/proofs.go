@@ -32,6 +32,11 @@ func (q proofQueries) VerifyAttempt(ctx context.Context, r proof.AttemptRequest)
 	if errors.Is(err, application.ErrManifestInvalid) || errors.Is(err, application.ErrManifestUnsupported) {
 		return response, httpadapter.ErrAttemptDenied
 	}
+	if errors.Is(err, application.ErrManifestContractMismatch) {
+		// Release skew is temporary: the Attempt may be retried once this Worker
+		// runs the release that compiled the Manifest.
+		return response, httpadapter.ErrUnavailable
+	}
 	if err != nil {
 		return response, httpadapter.ErrUnavailable
 	}
