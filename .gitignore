@@ -25,3 +25,6 @@ verification/
 # Python bytecode from the managed-local tooling.
 __pycache__/
 *.pyc
+
+# Local Codex worktrees created inside the repository root.
+/.codex-worktrees/
