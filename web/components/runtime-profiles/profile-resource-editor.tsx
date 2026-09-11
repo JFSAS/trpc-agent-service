@@ -6,7 +6,7 @@ import type { CredentialAction, CredentialActions, CredentialState, CredentialSt
 import { isAgentCapability } from "../../lib/agent-spec-v1";
 import { managedProfileIssues } from "../../lib/managed-profile";
 import { NumberInput } from "../agents/editor-inputs";
-import { Button } from "../ui";
+import { Button, Tooltip } from "../ui";
 import { ManagedBackendSelect } from "./managed-backend-select";
 import { ProfileDialog } from "./profile-dialog";
 import styles from "./resource-editor.module.css";
@@ -63,7 +63,7 @@ function statusLabel(state?: CredentialState): string {
 }
 
 function FormSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  return <section className={styles.section}><header><h3>{title}</h3>{description && <p>{description}</p>}</header>{children}</section>;
+  return <section className={styles.section}><header><h3>{title}{description && <Tooltip label={`${title} 说明`}>{description}</Tooltip>}</h3></header>{children}</section>;
 }
 function TextField({ id, label, value, onChange, readOnly, disabled, hint, placeholder }: { id: string; label: string; value?: string; onChange(value: string): void; readOnly?: boolean; disabled?: boolean; hint?: string; placeholder?: string }) {
   return <label className={styles.field} htmlFor={id}><span>{label}</span><input id={id} aria-label={label} aria-describedby={hint ? `${id}-hint` : undefined} value={value ?? ""} onChange={(event) => onChange(event.target.value)} readOnly={readOnly} disabled={disabled} placeholder={placeholder} autoComplete="off" spellCheck={false} />{hint && <small id={`${id}-hint`}>{hint}</small>}</label>;

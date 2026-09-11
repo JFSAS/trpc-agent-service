@@ -26,7 +26,8 @@ import { WorkspaceFields } from "./workspace-fields";
 import { NodeDataFields, RuntimeSummaryFields } from "./runtime-data-fields";
 import { AgentCanvas } from "./agent-canvas";
 import { DiagnosticsPanel } from "./diagnostics-panel";
-import { CsvInput, NumberInput } from "./editor-inputs";
+import { NumberInput } from "./editor-inputs";
+import { SlotSelect } from "./slot-select";
 import { RequirementsEditor } from "./requirements-editor";
 import { NodeToolbar, NodeStructureFields } from "./node-structure-editor";
 import styles from "./agent-spec-editor.module.css";
@@ -233,10 +234,10 @@ function LLMFields({ node, state, replace, disabled }: {
   return <>
     <label className="field"><span>Instruction</span><textarea disabled={disabled} onChange={(event) => replace({ ...node, instruction: event.target.value })} rows={5} style={{ font: "inherit" }} value={node.instruction} /></label>
     <label className="field"><span>Model Slot</span><select disabled={disabled} onChange={(event) => replace({ ...node, model_slot: event.target.value })} value={node.model_slot}>{Object.keys(state.spec.requirements.models).map((slot) => <option key={slot}>{slot}</option>)}</select></label>
-    <label className="field"><span>Tool Slots（逗号分隔）</span><CsvInput disabled={disabled} onValueChange={(tool_slots) => replace({ ...node, tool_slots })} value={node.tool_slots} /></label>
+    <SlotSelect label="Tool Slots" requirement="Tools" declared={state.spec.requirements.tools ?? {}} selected={node.tool_slots} replace={(tool_slots) => replace({ ...node, tool_slots })} disabled={disabled} />
     <NodeDataFields disabled={disabled} node={node} replace={replace} />
     <WorkspaceFields key={state.selectedNodeID} node={node} executors={state.spec.requirements.executors ?? {}} replace={replace} disabled={disabled} />
-    <label className="field"><span>Knowledge Slots（逗号分隔）</span><CsvInput disabled={disabled} onValueChange={(knowledge_slots) => replace({ ...node, knowledge_slots })} value={node.knowledge_slots} /></label>
+    <SlotSelect label="Knowledge Slots" requirement="Knowledge" declared={state.spec.requirements.knowledge ?? {}} selected={node.knowledge_slots} replace={(knowledge_slots) => replace({ ...node, knowledge_slots })} disabled={disabled} />
     <div style={{ display: "grid", gap: 7, gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
       <label className="field"><span>Temperature</span><NumberInput disabled={disabled} max={2} min={0} onValueChange={(temperature) => replace({ ...node, generation: generation(temperature, node.generation?.max_output_tokens) })} step={0.1} value={node.generation?.temperature} /></label>
       <label className="field"><span>Max Tokens</span><NumberInput disabled={disabled} max={262144} min={1} onValueChange={(tokens) => replace({ ...node, generation: generation(node.generation?.temperature, tokens) })} value={node.generation?.max_output_tokens} /></label>

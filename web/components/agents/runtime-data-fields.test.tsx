@@ -50,17 +50,17 @@ describe("runtime capability controls", () => {
     expect(spec().nodes.assistant.tool_slots).toEqual([]);
     fireEvent.change(screen.getByLabelText("Artifact 服务"), { target: { value: "absent" } });
     expect(spec().nodes.assistant).not.toHaveProperty("artifact");
-    expect(screen.getByText(/不是 SDK 内建工具/)).toHaveTextContent("artifact_save、artifact_load、artifact_list、artifact_delete");
-    expect(screen.getByText(/工具保存立即持久化/)).toHaveTextContent("不随失败 Run 回滚");
+    expect(screen.getByText(/不是 SDK 内建工具/, { selector: "[role='tooltip']" })).toHaveTextContent("artifact_save、artifact_load、artifact_list、artifact_delete");
+    expect(screen.getByText(/工具保存立即持久化/, { selector: "[role='tooltip']" })).toHaveTextContent("不随失败 Run 回滚");
   });
   it("disables controls and distinguishes supported Summary execution from cross-publication history migration", () => {
     render(<Harness disabled />);
     expect(screen.getByLabelText("声明 Memory 配置")).toBeDisabled();
     expect(screen.getByLabelText("生成会话摘要")).toBeDisabled();
     expect(screen.getByLabelText("Artifact 服务")).toBeDisabled();
-    expect(screen.getByText(/Session Summary 已支持配置、发布和 Worker 执行/)).toBeInTheDocument();
-    expect(screen.getByText(/新的 DeploymentRevision 对应新的 Session/)).toHaveTextContent("不继承旧版本的会话历史或摘要");
-    expect(screen.getByText(/内部 overlay 保留摘要元数据/)).toHaveTextContent("不等于跨发布版本的历史迁移");
+    expect(screen.getByText(/Session Summary 已支持配置、发布和 Worker 执行/, { selector: "[role='tooltip']" })).toBeInTheDocument();
+    expect(screen.getByText(/新的 DeploymentRevision 对应新的 Session/, { selector: "[role='tooltip']" })).toHaveTextContent("不继承旧版本的会话历史或摘要");
+    expect(screen.getByText(/内部 overlay 保留摘要元数据/, { selector: "[role='tooltip']" })).toHaveTextContent("不等于跨发布版本的历史迁移");
     expect(screen.queryByText(/P0a|含新增运行声明的 Deployment 暂不支持发布/)).toBeNull();
   });
 });

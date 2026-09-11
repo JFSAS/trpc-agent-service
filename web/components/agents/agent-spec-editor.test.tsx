@@ -119,8 +119,8 @@ describe("AgentSpecEditor", () => {
     await user.click(screen.getByRole("button", { name: "添加 Knowledge Slot" }));
 
     await user.click(screen.getByLabelText("节点 assistant"));
-    await user.type(screen.getByLabelText("Tool Slots（逗号分隔）"), "search");
-    await user.type(screen.getByLabelText("Knowledge Slots（逗号分隔）"), "docs");
+    await user.click(screen.getByLabelText("search"));
+    await user.click(screen.getByLabelText("docs"));
 
     const generated = onChange.mock.calls.at(-1)?.[0];
     expect(isAgentSpecV1(generated)).toBe(true);

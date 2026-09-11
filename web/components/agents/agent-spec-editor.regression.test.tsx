@@ -19,18 +19,23 @@ function current(): AgentSpecV1 {
 }
 
 describe("AgentSpec controlled editing regressions", () => {
-  it("preserves delimiters while typing multiple Tool and Knowledge slots", async () => {
+  it("selects node Tool and Knowledge slots from the declared requirements only", async () => {
     const user = userEvent.setup();
-    render(<Harness />);
-    const tools = screen.getByLabelText("Tool Slots（逗号分隔）");
-    await user.type(tools, "search,");
-    expect(tools).toHaveValue("search,");
-    await user.type(tools, "fetch");
-    const knowledge = screen.getByLabelText("Knowledge Slots（逗号分隔）");
-    await user.type(knowledge, "docs,notes");
-    expect(current().nodes.assistant).toEqual(expect.objectContaining({ tool_slots: ["search", "fetch"], knowledge_slots: ["docs", "notes"] }));
-    await user.tab();
-    expect(knowledge).toHaveValue("docs, notes");
+    const initial = createSingleLLMAgentSpec();
+    initial.requirements.tools = { search: { capability: "web.search" } };
+    initial.requirements.knowledge = { docs: { capability: "knowledge.query" } };
+    const assistant = initial.nodes.assistant;
+    if (assistant.kind === "llm") assistant.tool_slots = ["stale"];
+    render(<Harness initial={initial} />);
+
+    // A reference whose declaration was removed stays visible instead of silently vanishing.
+    expect(screen.getByLabelText("stale · 未声明")).toBeChecked();
+    await user.click(screen.getByLabelText("search"));
+    await user.click(screen.getByLabelText("docs"));
+    expect(current().nodes.assistant).toEqual(expect.objectContaining({ tool_slots: ["stale", "search"], knowledge_slots: ["docs"] }));
+    await user.click(screen.getByLabelText("search"));
+    await user.click(screen.getByLabelText("stale · 未声明"));
+    expect(current().nodes.assistant).toEqual(expect.objectContaining({ tool_slots: [], knowledge_slots: ["docs"] }));
   });
 
   it("keeps the canvas and focus when Instruction is cleared and retyped", async () => {
