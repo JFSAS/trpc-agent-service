@@ -111,11 +111,6 @@ func TestManagedSnapshotRejectsForeignStaleWrongAndExtra(t *testing.T) {
 			s.Qdrant.Dimensions++
 			i.ManagedBackends["knowledge/docs"] = s
 		}},
-		{"network", DiagnosticExecutionRangeDenied, func(i *CompileInput) {
-			s := i.ManagedBackends["storage/session"].Clone()
-			s.Redis.Host = "not-allowed.internal"
-			i.ManagedBackends["storage/session"] = s
-		}},
 		{"timeout", DiagnosticLimitExceeded, func(i *CompileInput) {
 			i.Platform.Execution.MaxRunSeconds = 1
 			s := i.ManagedBackends["storage/session"]

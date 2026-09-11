@@ -137,12 +137,10 @@ python3 scripts/test-worker-summary-live.py \
 变化；同一版本字符串并不意味着内容 digest 相同。严格 release pin 继续生效，不把
 任意旧/新 digest 加入动态信任列表，也不改写历史 Manifest。
 
-`.env.example` 已同步它所列 endpoint hosts 对应的新 digest。真实环境应使用自己的
-固定 hosts 计算，不复制文档中的默认值：
+`.env.example` 已同步当前冻结契约对应的 digest。真实环境应自行计算，不复制文档中的值：
 
 ```sh
-CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS="$FIXED_MODEL_AND_SESSION_HOSTS" \
-  go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
+go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 ```
 
 将输出同时配置到 Control 的 `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` 和 Worker

@@ -172,8 +172,8 @@ Control API 进程和当前 Compose 都必需 `CONTROL_PROFILE_CREDENTIAL_KEY`�
 
 ### 4.2 Platform Contract 固定 Digest
 
-`CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` 提供 Compiler 的精确小写 Host 集合；
-同一平台发布的所有副本还必须显式配置相同的
+Compiler 不在发布前审批资源出站 Host：编译产物会记录该 Deployment 实际会访问的
+精确小写 Host 集合，供审计使用。同一平台发布的所有副本还必须显式配置相同的
 `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST`。其格式为 `sha256:` 加 64 位小写
 十六进制，代表冻结实现契约、版本、执行范围和资源上限的整体身份，不是凭据或业务对象。
 
@@ -185,13 +185,12 @@ Digest 并比较。不匹配即启动失败，不监听端口；`/healthz` 保�
 发布准备阶段，使用待发布二进制与最终 Host 配置预计算一次：
 
 ```sh
-export CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS='api.openai.com,mcp.example.com,qdrant.internal,state.example.test'
 go run ./services/control-api/cmd/control-api -print-deployment-contract-digest
 # 已构建的同一发布二进制：control-api -print-deployment-contract-digest
 ```
 
-CLI 只读 Host 配置和冻结契约，不要求 DB、Profile Key 或 expected，也不启动服务。
-把经过核对的输出保存进本次发布配置，再向所有副本注入同一个值。当前上述 Host 示例
+CLI 只读冻结契约，不要求 DB、Profile Key 或 expected，也不启动服务。
+把经过核对的输出保存进本次发布配置，再向所有副本注入同一个值。
 对应 `.env.example` 中固定且有回归测试保护的配置：
 
 ```sh
@@ -260,8 +259,8 @@ Runner/Maintenance 与 observations。显式 fixture overlay 才使用本地账�
   `CONTROL_BOOTSTRAP_USERNAME` 和 `CONTROL_BOOTSTRAP_PASSWORD` 提供简单的本地凭证；
   已有 Operator 时 bootstrap 保持幂等。
 - `CONTROL_PROFILE_CREDENTIAL_KEY` 由外部环境变量注入，没有内置值或启动时自动生成。
-- `CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS` 提供 Deployment Compiler 的静态目标 Host
-  集合；使用精确小写 Host，不接受通配符，也不会触发在线探测或 Worker 节点枚举。
+- 资源出站 Host 由 Compiler 从 Profile 中推导并写入 Manifest，不是发布前的审批清单；
+  平台不会做在线探测或 Worker 节点枚举。
 - `CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST` 由平台发布配置固定；只读 CLI 支持
   预计算，Compose 拒绝缺值，Bootstrap 在 DB / HTTP 前拒绝实际 Digest 不匹配的副本。
 - 当前 Compose 已加入 NATS/Gateway，但不加入 Worker、Local IM 或可观测性组件，也不启用

@@ -33,35 +33,27 @@ func TestLoadConfigPreservesReleasePinnedDeploymentDigest(t *testing.T) {
 }
 
 func TestCheckedDeploymentContractAcceptsMatchingRelease(t *testing.T) {
-	for _, hosts := range [][]string{nil, {"model.example", "state.example"}} {
-		config := Config{DeploymentAllowedEndpointHosts: hosts}
-		contract, err := deploymentPlatformContract(config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		config.DeploymentExpectedContractDigest = contract.Digest
-		got, err := checkedDeploymentPlatformContract(config)
-		if err != nil || got.Digest != contract.Digest {
-			t.Fatalf("checked contract = %#v, error = %v", got, err)
-		}
+	config := Config{}
+	contract, err := deploymentPlatformContract(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.DeploymentExpectedContractDigest = contract.Digest
+	got, err := checkedDeploymentPlatformContract(config)
+	if err != nil || got.Digest != contract.Digest {
+		t.Fatalf("checked contract = %#v, error = %v", got, err)
 	}
 }
 
 func TestNewRejectsContractBeforeOpeningDatabase(t *testing.T) {
-	defaultContract, err := deploymentPlatformContract(Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name      string
 		expected  string
-		hosts     []string
 		wantError string
 	}{
-		{"missing", "", nil, "CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST is required"},
-		{"invalid", "invalid", nil, "must be sha256:"},
-		{"mismatch", "sha256:" + strings.Repeat("0", 64), nil, "digest mismatch"},
-		{"different replica hosts", defaultContract.Digest, []string{"different.example"}, "digest mismatch"},
+		{"missing", "", "CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST is required"},
+		{"invalid", "invalid", "must be sha256:"},
+		{"mismatch", "sha256:" + strings.Repeat("0", 64), "digest mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// This DSN always fails parsing if the database open path is reached.
@@ -69,7 +61,6 @@ func TestNewRejectsContractBeforeOpeningDatabase(t *testing.T) {
 				DatabaseURL:                      "postgres://%zz",
 				MigrationDatabaseURL:             "postgres://%zz",
 				DeploymentExpectedContractDigest: tc.expected,
-				DeploymentAllowedEndpointHosts:   tc.hosts,
 			})
 			if app != nil || err == nil || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("New() app = %v, error = %v, want contract failure before database parsing", app, err)
@@ -97,12 +88,11 @@ func TestDigestPreparationDoesNotLoadOtherProcessConfiguration(t *testing.T) {
 	t.Setenv("CONTROL_DATABASE_URL", "")
 	t.Setenv("CONTROL_PROFILE_CREDENTIAL_KEY", "")
 	t.Setenv("CONTROL_DEPLOYMENT_EXPECTED_CONTRACT_DIGEST", "")
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", "model.example,state.example")
 	got, err := DeploymentContractDigestFromEnvironment()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := deploymentPlatformContract(Config{DeploymentAllowedEndpointHosts: []string{"model.example", "state.example"}})
+	want, err := deploymentPlatformContract(Config{})
 	if err != nil || got != want.Digest {
 		t.Fatalf("digest = %q, error = %v, want %q", got, err, want.Digest)
 	}

@@ -28,15 +28,6 @@ func TestPrintDeploymentContractDigestRequiresNoDatabaseOrKey(t *testing.T) {
 	}
 }
 
-func TestPrintDeploymentContractDigestRejectsInvalidHosts(t *testing.T) {
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", "UPPER.example")
-	var output bytes.Buffer
-	err := runCommand([]string{"-print-deployment-contract-digest"}, &output)
-	if err == nil || !strings.Contains(err.Error(), "validate deployment platform contract") || output.Len() != 0 {
-		t.Fatalf("output = %q, error = %v, want failed validation without a digest", output.String(), err)
-	}
-}
-
 func TestEnvironmentExamplePinsMatchingDeploymentContract(t *testing.T) {
 	data, err := os.ReadFile("../../../../.env.example")
 	if err != nil {
@@ -49,11 +40,6 @@ func TestEnvironmentExamplePinsMatchingDeploymentContract(t *testing.T) {
 			values[key] = value
 		}
 	}
-	hosts, exists := values["CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS"]
-	if !exists || hosts == "" {
-		t.Fatal("environment example must fix its host configuration")
-	}
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", hosts)
 	want, err := bootstrap.DeploymentContractDigestFromEnvironment()
 	if err != nil {
 		t.Fatal(err)

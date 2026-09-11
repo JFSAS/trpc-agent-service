@@ -179,13 +179,26 @@ func TestCompilePlatformAdapterRangeAndLimits(t *testing.T) {
 			"/tools/search/kind", "search", "")
 	})
 	t.Run("endpoint", func(t *testing.T) {
+		// Any endpoint host compiles: the platform records the outbound set in
+		// the manifest rather than pre-approving it, so configuring a new model
+		// no longer requires a platform release first.
 		input := validCompileInput()
 		model := input.Profile.Spec.Models["primary"]
-		model.BaseURL = "https://denied.example.invalid/v1"
+		model.BaseURL = "https://unlisted.example.invalid/v1"
 		input.Profile.Spec.Models["primary"] = model
-		_, report := Compile(input)
-		assertDiagnostic(t, report, DiagnosticExecutionRangeDenied, DiagnosticSourceProfile,
-			"/models/primary/base_url", "primary", "")
+		manifest, report := Compile(input)
+		if !report.Valid {
+			t.Fatalf("report = %#v, want a valid compile for an unlisted endpoint host", report)
+		}
+		recorded := false
+		for _, host := range manifest.Content.Execution.AllowedEndpointHosts {
+			if host == "unlisted.example.invalid" {
+				recorded = true
+			}
+		}
+		if !recorded {
+			t.Fatalf("manifest hosts = %#v, want the contacted host recorded", manifest.Content.Execution.AllowedEndpointHosts)
+		}
 	})
 	t.Run("callable limit", func(t *testing.T) {
 		for _, test := range []struct {

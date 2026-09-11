@@ -81,10 +81,6 @@ func ValidateManagedSnapshots(input CompileInput) []Diagnostic {
 	expected := make(map[string]bool, len(requests))
 	byID := make(map[string]datav1.Snapshot)
 	var diagnostics []Diagnostic
-	allowed := make(map[string]bool, len(input.Platform.Execution.AllowedEndpointHosts))
-	for _, h := range input.Platform.Execution.AllowedEndpointHosts {
-		allowed[h] = true
-	}
 	for _, r := range requests {
 		expected[r.Key()] = true
 		s, ok := input.ManagedBackends[r.Key()]
@@ -101,10 +97,6 @@ func ValidateManagedSnapshots(input CompileInput) []Diagnostic {
 			continue
 		}
 		byID[r.BackendID] = s
-		host, _ := s.EndpointHost()
-		if !allowed[host] {
-			diagnostics = append(diagnostics, BackendDiagnostic(DiagnosticExecutionRangeDenied, r))
-		}
 		if (s.Limits.TimeoutMS+999)/1000 > input.Platform.Execution.MaxRunSeconds {
 			diagnostics = append(diagnostics, BackendDiagnostic(DiagnosticLimitExceeded, r))
 		}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,50 +43,6 @@ func TestLoadConfigUsesV1Defaults(t *testing.T) {
 	}
 	if config.BootstrapMode != "disabled" {
 		t.Fatalf("BootstrapMode = %q, want disabled", config.BootstrapMode)
-	}
-	if config.DeploymentAllowedEndpointHosts != nil {
-		t.Fatalf("DeploymentAllowedEndpointHosts = %#v, want nil default", config.DeploymentAllowedEndpointHosts)
-	}
-}
-
-func TestLoadConfigReadsDeploymentAllowedEndpointHosts(t *testing.T) {
-	configTestEnvironment(t)
-	t.Setenv("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS", "models.example, search.example ,state.example")
-
-	config, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	want := []string{"models.example", "search.example", "state.example"}
-	if !reflect.DeepEqual(config.DeploymentAllowedEndpointHosts, want) {
-		t.Fatalf("DeploymentAllowedEndpointHosts = %#v, want %#v", config.DeploymentAllowedEndpointHosts, want)
-	}
-}
-
-func TestDeploymentPlatformContractUsesConfiguredHosts(t *testing.T) {
-	configured := []string{"models.internal.example", "state.internal.example"}
-	contract, err := deploymentPlatformContract(Config{DeploymentAllowedEndpointHosts: configured})
-	if err != nil {
-		t.Fatalf("deploymentPlatformContract() error = %v", err)
-	}
-	if !reflect.DeepEqual(contract.Execution.AllowedEndpointHosts, configured) {
-		t.Fatalf("AllowedEndpointHosts = %#v, want %#v", contract.Execution.AllowedEndpointHosts, configured)
-	}
-	wantDigest, err := contract.CalculateDigest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if contract.Digest != wantDigest {
-		t.Fatalf("Digest = %q, want %q", contract.Digest, wantDigest)
-	}
-}
-
-func TestDeploymentPlatformContractRejectsInvalidConfiguredHosts(t *testing.T) {
-	for _, hosts := range [][]string{{"UPPER.example"}, {"same.example", "same.example"}, {""}} {
-		_, err := deploymentPlatformContract(Config{DeploymentAllowedEndpointHosts: hosts})
-		if err == nil || !strings.Contains(err.Error(), "validate deployment platform contract") {
-			t.Fatalf("deploymentPlatformContract(%#v) error = %v, want validation error", hosts, err)
-		}
 	}
 }
 

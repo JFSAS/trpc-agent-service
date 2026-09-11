@@ -20,7 +20,6 @@ type Config struct {
 	Channel                          *ChannelConfig
 	Runtime                          *RuntimeConfig
 	ProfileCredentialKey             []byte
-	DeploymentAllowedEndpointHosts   []string
 	DeploymentExpectedContractDigest string
 	HTTPAddress                      string
 	DatabaseURL                      string
@@ -92,21 +91,18 @@ func LoadConfig() (Config, error) {
 		PlatformBackendTargetsSHA256:     strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_TARGETS_SHA256")),
 		ProfileCredentialKey:             credentialKey,
 		DeploymentExpectedContractDigest: expectedContractDigest,
-		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment(
-			"CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS",
-		),
-		HTTPAddress:          stringEnvironment("CONTROL_HTTP_ADDRESS", ":8080"),
-		DatabaseURL:          databaseURL,
-		MigrationDatabaseURL: migrationDatabaseURL,
-		SessionLifetime:      sessionLifetime,
-		SessionCookieName:    stringEnvironment("CONTROL_SESSION_COOKIE_NAME", "control_session"),
-		SessionCookieDomain:  strings.TrimSpace(os.Getenv("CONTROL_SESSION_COOKIE_DOMAIN")),
-		SessionCookieSecure:  secure,
-		BootstrapMode:        bootstrapMode,
-		BootstrapUsername:    bootstrapUsername,
-		BootstrapDisplayName: stringEnvironment("CONTROL_BOOTSTRAP_DISPLAY_NAME", "Platform Operator"),
-		BootstrapPassword:    bootstrapPassword,
-		ShutdownTimeout:      10 * time.Second,
+		HTTPAddress:                      stringEnvironment("CONTROL_HTTP_ADDRESS", ":8080"),
+		DatabaseURL:                      databaseURL,
+		MigrationDatabaseURL:             migrationDatabaseURL,
+		SessionLifetime:                  sessionLifetime,
+		SessionCookieName:                stringEnvironment("CONTROL_SESSION_COOKIE_NAME", "control_session"),
+		SessionCookieDomain:              strings.TrimSpace(os.Getenv("CONTROL_SESSION_COOKIE_DOMAIN")),
+		SessionCookieSecure:              secure,
+		BootstrapMode:                    bootstrapMode,
+		BootstrapUsername:                bootstrapUsername,
+		BootstrapDisplayName:             stringEnvironment("CONTROL_BOOTSTRAP_DISPLAY_NAME", "Platform Operator"),
+		BootstrapPassword:                bootstrapPassword,
+		ShutdownTimeout:                  10 * time.Second,
 	}, nil
 }
 

@@ -105,18 +105,7 @@ func DefaultPlatformExecutionContract() PlatformExecutionContract {
 			profiledomain.StorageKindPostgresState: {Version: StorageAdapterPostgresStateV1},
 		},
 		Execution: ExecutionPolicy{
-			Backend: "worker-process-v1",
-			AllowedEndpointHosts: []string{
-				"db.example.test",
-				"embedding.example.test",
-				"model.example",
-				"model.example.test",
-				"models.example.test",
-				"qdrant.example.test",
-				"search.example",
-				"state.example",
-				"tools.example.test",
-			},
+			Backend:         "worker-process-v1",
 			MaxRunSeconds:   120,
 			MaxToolCalls:    16,
 			MaxOutputTokens: 4096,
@@ -198,9 +187,10 @@ func (c PlatformExecutionContract) Validate() error {
 		c.Limits.MaxCallableEntriesPerNode <= 0 || c.Limits.MaxManifestBytes <= 0 {
 		return ErrInvalidPlatformExecutionContract
 	}
-	if len(c.Execution.AllowedEndpointHosts) == 0 {
-		return ErrInvalidPlatformExecutionContract
-	}
+	// AllowedEndpointHosts is the manifest's record of the hosts a Deployment
+	// will contact, not a platform approval list. An empty value is valid here;
+	// manifest validation independently requires a compiled manifest to declare
+	// at least one host.
 	seenHosts := make(map[string]struct{}, len(c.Execution.AllowedEndpointHosts))
 	for _, host := range c.Execution.AllowedEndpointHosts {
 		if !validContractHost(host) {

@@ -357,12 +357,6 @@ func deploymentPlatformContract(config Config) (deploymentdomain.PlatformExecuti
 	if err := bindManagedCatalogDigest(config, &contract); err != nil {
 		return deploymentdomain.PlatformExecutionContract{}, err
 	}
-	if len(config.DeploymentAllowedEndpointHosts) > 0 {
-		contract.Execution.AllowedEndpointHosts = append(
-			[]string(nil), config.DeploymentAllowedEndpointHosts...,
-		)
-
-	}
 	digest, err := contract.CalculateDigest()
 	contract.Digest = digest
 	if err != nil {

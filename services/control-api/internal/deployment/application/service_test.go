@@ -505,7 +505,7 @@ func TestServiceCapturesOwnedPlatformContractSnapshot(t *testing.T) {
 	deps := h.service.deps
 	service := NewService(deps)
 	expected := service.deps.Platform.Digest
-	deps.Platform.Execution.AllowedEndpointHosts[0] = "mutated.example"
+	deps.Platform.Execution.MaxRunSeconds = 1
 	delete(deps.Platform.ModelAdapters, profiledomain.ModelKindOpenAICompatible)
 	if err := service.deps.Platform.Validate(); err != nil || service.deps.Platform.Digest != expected {
 		t.Fatalf("caller mutation changed captured platform contract: %v", err)

@@ -18,9 +18,8 @@ var deploymentContractDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`
 // process startup must never use it to manufacture its own expected value.
 func DeploymentContractDigestFromEnvironment() (string, error) {
 	contract, err := deploymentPlatformContract(Config{
-		DeploymentAllowedEndpointHosts: commaSeparatedEnvironment("CONTROL_DEPLOYMENT_ALLOWED_ENDPOINT_HOSTS"),
-		PlatformBackendCatalogSHA256:   strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_CATALOG_SHA256")),
-		PlatformBackendTargetsSHA256:   strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_TARGETS_SHA256")),
+		PlatformBackendCatalogSHA256: strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_CATALOG_SHA256")),
+		PlatformBackendTargetsSHA256: strings.TrimSpace(os.Getenv("CONTROL_PLATFORM_BACKEND_TARGETS_SHA256")),
 	})
 	if err != nil {
 		return "", err

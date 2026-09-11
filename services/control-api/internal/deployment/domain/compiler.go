@@ -476,10 +476,6 @@ func compileResources(
 	}
 	var uses []CredentialUse
 	hosts := make(map[string]bool)
-	allowedHosts := make(map[string]bool, len(platform.Execution.AllowedEndpointHosts))
-	for _, host := range platform.Execution.AllowedEndpointHosts {
-		allowedHosts[host] = true
-	}
 
 	for _, name := range sortedTrueKeys(used.models) {
 		resource, selected := models[name]
@@ -490,8 +486,8 @@ func compileResources(
 		if !supported {
 			*diagnostics = append(*diagnostics, unsupportedAdapter("models", name, resource.Kind))
 		}
-		checkURLHost(resource.BaseURL, "/models/"+escapeJSONPointer(name)+"/base_url",
-			"models", name, allowedHosts, hosts, diagnostics)
+		recordURLHost(resource.BaseURL, "/models/"+escapeJSONPointer(name)+"/base_url",
+			"models", name, hosts, diagnostics)
 		credential := credentialUse(
 			resource.APIKeyCredentialID, CredentialPurposeAPIKey,
 			audienceDigest(resource.Kind, resource.BaseURL),
@@ -512,8 +508,8 @@ func compileResources(
 		if !supported {
 			*diagnostics = append(*diagnostics, unsupportedAdapter("tools", name, resource.Kind))
 		}
-		checkURLHost(resource.ServerURL, "/tools/"+escapeJSONPointer(name)+"/server_url",
-			"tools", name, allowedHosts, hosts, diagnostics)
+		recordURLHost(resource.ServerURL, "/tools/"+escapeJSONPointer(name)+"/server_url",
+			"tools", name, hosts, diagnostics)
 		auth := ManifestToolAuth{Kind: resource.Auth.Kind}
 		if resource.Auth.Kind == profiledomain.AuthKindBearer {
 			credential := credentialUse(
@@ -548,7 +544,7 @@ func compileResources(
 			snapshot := backends["knowledge/"+name].Clone()
 			host, _ := snapshot.EndpointHost()
 			hosts[host] = true
-			checkURLHost(resource.Embedding.BaseURL, "/knowledge/"+escapeJSONPointer(name)+"/embedding/base_url", "knowledge", name, allowedHosts, hosts, diagnostics)
+			recordURLHost(resource.Embedding.BaseURL, "/knowledge/"+escapeJSONPointer(name)+"/embedding/base_url", "knowledge", name, hosts, diagnostics)
 			credential := credentialUse(resource.Embedding.APIKeyCredentialID, CredentialPurposeEmbeddingAPIKey, audienceDigest(resource.Kind, resource.Embedding.BaseURL))
 			uses = append(uses, credential)
 			var qdrantUse *CredentialUse
@@ -565,11 +561,10 @@ func compileResources(
 			resources.Knowledge[name] = ManifestKnowledgeResource{Credential: qdrantUse, Backend: &snapshot, AdapterVersion: adapter.Version, Kind: resource.Kind, Embedding: ManifestEmbeddingResource{Model: resource.Embedding.Model, BaseURL: resource.Embedding.BaseURL, Dimensions: resource.Embedding.Dimensions, Credential: credential}, Capability: profiledomain.CapabilityKnowledgeSearch}
 			continue
 		}
-		checkHost(resource.Host, "/knowledge/"+escapeJSONPointer(name)+"/host",
-			"knowledge", name, allowedHosts, hosts, diagnostics)
-		checkURLHost(resource.Embedding.BaseURL,
+		recordHost(resource.Host, hosts)
+		recordURLHost(resource.Embedding.BaseURL,
 			"/knowledge/"+escapeJSONPointer(name)+"/embedding/base_url",
-			"knowledge", name, allowedHosts, hosts, diagnostics)
+			"knowledge", name, hosts, diagnostics)
 		var qdrantCredential *CredentialUse
 		if resource.QdrantAPIKeyCredentialID != "" {
 			credential := credentialUse(
@@ -634,9 +629,7 @@ func compileResources(
 			resources.Storage[name] = compiledResource
 			continue
 		}
-		checkHost(resource.Destination.Host,
-			"/storage/"+escapeJSONPointer(name)+"/destination/host",
-			"storage", name, allowedHosts, hosts, diagnostics)
+		recordHost(resource.Destination.Host, hosts)
 		credential := credentialUse(
 			resource.DSNCredentialID, CredentialPurposeDSN,
 			audienceDigest(resource.Kind, resource.Destination),
@@ -673,9 +666,9 @@ func stringValue(value any) string {
 	}
 }
 
-func checkURLHost(
+func recordURLHost(
 	value, path, category, name string,
-	allowed, used map[string]bool,
+	used map[string]bool,
 	diagnostics *[]Diagnostic,
 ) {
 	parsed, err := url.Parse(value)
@@ -686,22 +679,14 @@ func checkURLHost(
 		))
 		return
 	}
-	checkHost(parsed.Hostname(), path, category, name, allowed, used, diagnostics)
+	recordHost(parsed.Hostname(), used)
 }
 
-func checkHost(
-	host, path, category, name string,
-	allowed, used map[string]bool,
-	diagnostics *[]Diagnostic,
-) {
-	normalized := strings.ToLower(host)
-	used[normalized] = true
-	if !allowed[normalized] {
-		*diagnostics = append(*diagnostics, resourceDiagnostic(
-			DiagnosticExecutionRangeDenied, SeverityError, DiagnosticSourceProfile,
-			path, category, name, "resource endpoint host is outside the platform execution range",
-		))
-	}
+// recordHost notes one outbound host for the compiled manifest. Any host is
+// accepted: the manifest declares the exact set a Deployment will contact, so
+// the execution range stays auditable without gating on a platform allowlist.
+func recordHost(host string, used map[string]bool) {
+	used[strings.ToLower(host)] = true
 }
 
 func credentialUse(id, purpose, audience string) CredentialUse {

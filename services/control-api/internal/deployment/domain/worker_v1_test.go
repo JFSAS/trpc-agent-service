@@ -51,10 +51,10 @@ func TestWorkerV1ContractGatesAndPreservesLegacy(t *testing.T) {
 }
 
 func TestWorkerV1RoleRuleParticipatesInPinnedContractDigest(t *testing.T) {
-	if got := WorkerV1PlatformExecutionContract().Digest; got != "sha256:db0ced65e209a230a9fa1fc39e6c6aabdb8a3e12e21364b1ceb1ad72aa482805" {
+	if got := WorkerV1PlatformExecutionContract().Digest; got != "sha256:06e3236c021c1d9f7f9e507ec24c3134aa79ac48c08b0b2aa6f62cd5c47fc481" {
 		t.Fatalf("Worker role and ordered plan release identity = %s", got)
 	}
-	if got := DefaultPlatformExecutionContract().Digest; got != "sha256:e5c1019aa4fa0ea06b08f4966bc5cf154113b702f3ace93db6483fcc5a0d5d33" {
+	if got := DefaultPlatformExecutionContract().Digest; got != "sha256:6780067e652823ffd9d1e80993d85159a57f0789665cf71571ffd6270a0f31b8" {
 		t.Fatalf("historical platform-v1 identity changed = %s", got)
 	}
 }
