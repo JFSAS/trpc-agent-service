@@ -7,10 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	telegram "github.com/liuzengh/trpc-agent-service/platform/im/telegram"
+	admission "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/admission/domain"
 	use "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/accountuse"
 	refresh "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/application/catalogrefresh"
 	connection "github.com/liuzengh/trpc-agent-service/services/channel-gateway/internal/connection/domain"
@@ -98,6 +102,11 @@ func (s *Runtime) set(a c.Account, state, reason string, epoch int64, healthy bo
 func (s *Runtime) Status(id string) Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.statusLocked(id)
+}
+
+// statusLocked applies the lease expiry rule; callers already hold s.mu.
+func (s *Runtime) statusLocked(id string) Status {
 	st := s.statuses[id]
 	if st.Healthy && !st.Until.IsZero() && !time.Now().Before(st.Until) {
 		st.Healthy = false
@@ -108,6 +117,43 @@ func (s *Runtime) Status(id string) Status {
 		}
 	}
 	return st
+}
+
+// AccountStatus pairs a catalog entry with its runtime status. Ready() fails
+// when StatusRevision != ConnectionRevision or Healthy is false, so both sides
+// of that comparison are reported together for operator diagnosis.
+type AccountStatus struct {
+	AccountID          string `json:"account_id"`
+	Provider           string `json:"provider"`
+	Enabled            bool   `json:"enabled"`
+	ConnectionRevision int64  `json:"connection_revision"`
+	StatusRevision     int64  `json:"status_revision"`
+	State              string `json:"state"`
+	Reason             string `json:"reason"`
+	Healthy            bool   `json:"healthy"`
+	OwnerEpoch         int64  `json:"owner_epoch"`
+	Until              string `json:"until,omitempty"`
+}
+
+func (s *Runtime) AccountStatuses() []AccountStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AccountStatus, 0, len(s.statuses))
+	for _, a := range s.directory.Accounts() {
+		st := s.statusLocked(a.ID)
+		until := ""
+		if !st.Until.IsZero() {
+			until = st.Until.UTC().Format(time.RFC3339)
+		}
+		out = append(out, AccountStatus{
+			AccountID: a.ID, Provider: a.Provider, Enabled: a.Enabled,
+			ConnectionRevision: a.ConnectionRevision, StatusRevision: st.Revision,
+			State: st.State, Reason: st.Reason, Healthy: st.Healthy,
+			OwnerEpoch: st.OwnerEpoch, Until: until,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AccountID < out[j].AccountID })
+	return out
 }
 func (s *Runtime) Ready() bool {
 	for _, a := range s.directory.Accounts() {
@@ -120,6 +166,59 @@ func (s *Runtime) Ready() bool {
 	}
 	return true
 }
+
+// admissionCause names why an admitted update was refused, using a fixed
+// vocabulary rather than the error text so no inbound payload is echoed.
+func admissionCause(e error) string {
+	switch {
+	case errors.Is(e, c.ErrUnauthorized):
+		return "unauthorized"
+	case errors.Is(e, c.ErrUnavailable):
+		return "unavailable"
+	case errors.Is(e, admission.ErrInvalidInput):
+		return "invalid_input"
+	case errors.Is(e, admission.ErrAccountUnavailable):
+		return "account_unavailable"
+	case errors.Is(e, d.ErrOwnership):
+		return "ownership_lost"
+	case errors.Is(e, admission.ErrRouteChanged):
+		return "route_changed"
+	case errors.Is(e, admission.ErrClaimLost):
+		return "claim_lost"
+	case errors.Is(e, admission.ErrUsageDenied):
+		return "usage_denied"
+	case errors.Is(e, admission.ErrRateLimited):
+		return "rate_limited"
+	case errors.Is(e, admission.ErrConflict):
+		return "conflict"
+	case errors.Is(e, admission.ErrUnavailable):
+		return "admission_unavailable"
+	case errors.Is(e, context.DeadlineExceeded):
+		return "timeout"
+	}
+	return "other"
+}
+
+// providerCause names a failure class without echoing the error: transport
+// errors embed the request URL, which carries the bot token.
+func providerCause(e error) string {
+	var apiErr *telegram.APIError
+	if errors.As(e, &apiErr) {
+		return "api" + strconv.Itoa(apiErr.Code)
+	}
+	var urlErr *url.Error
+	if errors.As(e, &urlErr) {
+		return "transport"
+	}
+	switch {
+	case errors.Is(e, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(e, context.Canceled):
+		return "canceled"
+	}
+	return "other"
+}
+
 func (s *Runtime) remove(id string) {
 	s.installer.Remove(id)
 	s.mu.Lock()
@@ -241,6 +340,13 @@ func (s *Runtime) reconcile(ctx context.Context, listed c.Account) {
 		if mode == "long_polling" {
 			healthy, _ = s.receivers.PollingReady(ctx, p)
 		}
+		// Not owning the lease right now is neutral pacing, not a diagnosis. A
+		// recorded failure from the previous cycle must stay visible: Ready()
+		// fails on it, so overwriting it here would hide the only reason an
+		// operator can see for the Gateway reporting unready.
+		if previous := s.Status(a.ID); previous.State == "ERROR" && previous.Reason != "" {
+			return
+		}
 		s.set(a, "CONFIG_APPLIED", "WAITING_FOR_OWNER", 0, healthy, time.Now().Add(5*time.Second))
 		return
 	}
@@ -292,9 +398,14 @@ func (s *Runtime) reconcile(ctx context.Context, listed c.Account) {
 			reason = "POLLING_CONFLICT"
 			delay = 30 * time.Second
 		} else if errors.As(e, &rate) {
+			reason = "PROVIDER_RATE_LIMITED"
 			delay = max(5*time.Second, min(rate.After, 24*time.Hour))
 		} else if errors.Is(e, d.ErrOwnership) {
 			reason = "OWNERSHIP_LOST"
+		} else {
+			// Every unclassified failure would otherwise collapse into the same
+			// PROVIDER_UNAVAILABLE code, hiding why the Gateway is unready.
+			reason = "PROVIDER_UNAVAILABLE:" + providerCause(e)
 		}
 	}
 	var id string
@@ -398,7 +509,15 @@ func (s *Runtime) reconcile(ctx context.Context, listed c.Account) {
 		var update struct {
 			ID *int64 `json:"update_id"`
 		}
-		if json.Unmarshal(raw, &update) != nil || update.ID == nil || *update.ID < 0 || *update.ID >= c.MaxRevision {
+		if json.Unmarshal(raw, &update) != nil {
+			reason = "UPDATE_MALFORMED"
+			return
+		}
+		if update.ID == nil || *update.ID < 0 || *update.ID >= c.MaxRevision {
+			// A bare return here would leave reason at its initializer and report
+			// PROVIDER_UNAVAILABLE, naming the wrong subsystem: the provider call
+			// succeeded and its answer is what this loop rejected.
+			reason = "UPDATE_ID_INVALID"
 			return
 		}
 		if e = s.receivers.Check(ctx, p, l); e != nil {
@@ -406,6 +525,7 @@ func (s *Runtime) reconcile(ctx context.Context, listed c.Account) {
 			return
 		}
 		if e = s.intake.Accept(ctx, p, l, raw); e != nil {
+			reason = "ADMISSION_REJECTED:" + admissionCause(e)
 			return
 		}
 		next := *update.ID + 1

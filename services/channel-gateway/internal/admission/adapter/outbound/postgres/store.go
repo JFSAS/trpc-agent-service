@@ -174,10 +174,12 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 	if c.Input.TelegramFence != nil || s.telegramGuard != nil && s.telegramGuard.Required(ctx) {
 		f := c.Input.TelegramFence
 		if f == nil || s.telegramGuard == nil || c.Input.Key.Provider != "telegram" {
-			return domain.Receipt{}, domain.ErrUnavailable
+			return domain.Receipt{}, fmt.Errorf("%w: fence=%t guard=%t provider=%q", domain.ErrUnavailable, f != nil, s.telegramGuard != nil, c.Input.Key.Provider)
 		}
 		if err = s.telegramGuard.VerifyPolling(ctx, tx, f.ScopeID, c.Input.Key.AccountID, f.InstanceID, f.InstanceEpoch, f.Epoch, f.Revision); err != nil {
-			return domain.Receipt{}, domain.ErrUnavailable
+			// Keep the guard's own classification: collapsing every guard failure
+			// into ErrUnavailable hides whether the permit or the lease is at fault.
+			return domain.Receipt{}, errors.Join(domain.ErrUnavailable, err)
 		}
 	}
 	if c.Input.Key.Provider == "wecom" {
@@ -247,12 +249,15 @@ func (s *Store) Commit(ctx context.Context, c domain.Acceptance) (receipt domain
 	if c.Input.TelegramFence != nil {
 		f := c.Input.TelegramFence
 		if err = s.telegramGuard.VerifyPolling(ctx, tx, f.ScopeID, c.Input.Key.AccountID, f.InstanceID, f.InstanceEpoch, f.Epoch, f.Revision); err != nil {
-			return domain.Receipt{}, domain.ErrUnavailable
+			// Same reason as the pre-charge check: keep the guard's classification
+			// so the failure names the permit or the lease instead of collapsing
+			// into an unactionable "admission temporarily unavailable".
+			return domain.Receipt{}, errors.Join(domain.ErrUnavailable, err)
 		}
 	}
 	if s.accountGuard != nil {
 		if err = s.accountGuard.RecheckAccount(ctx, tx); err != nil {
-			return domain.Receipt{}, domain.ErrUnavailable
+			return domain.Receipt{}, errors.Join(domain.ErrUnavailable, err)
 		}
 	}
 	if err = tx.Commit(ctx); err != nil {

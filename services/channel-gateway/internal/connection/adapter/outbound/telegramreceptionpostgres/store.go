@@ -93,7 +93,13 @@ func (s *Store) Acquire(ctx context.Context, p *c.Permit, botID string) (d.Lease
 		// permits in Guard. It may replace the owner only after the recorded
 		// remote call window has ended; disabled alone is never sufficient.
 		changed := l.Revision != b.ConnectionRevision
-		if !callDone || !expired && !same && !changed {
+		// A lease naming this instance but a different process epoch belongs to
+		// a previous incarnation: one logical instance runs one process, so that
+		// owner is gone. Waiting out its 30 second lease would stall reception
+		// on every restart and hold the whole Gateway unready, because Ready()
+		// fails while any enabled account is unhealthy.
+		restarted := l.InstanceID == b.InstanceID && l.InstanceEpoch != b.InstanceEpoch
+		if !callDone || !expired && !same && !changed && !restarted {
 			return nil
 		}
 		if !due && l.Revision == b.ConnectionRevision {

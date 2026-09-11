@@ -126,8 +126,12 @@ func (route RouteSnapshot) Select(cohort Cohort) (RouteSnapshot, bool, error) {
 	}
 	rollout := route.Traffic
 	if rollout == nil {
+		// No canary is configured, so the route carries no rollout identity at
+		// all. Setting a variant without a rollout ID produces a pair that
+		// RouteSnapshot.ValidateFor rejects, which failed every ordinary
+		// admission and left the Gateway permanently unready.
 		route.Traffic = nil
-		route.RolloutVariant = "stable"
+		route.RolloutVariant = ""
 		return route, false, nil
 	}
 	if rollout.PercentageBasisPoints == 0 {

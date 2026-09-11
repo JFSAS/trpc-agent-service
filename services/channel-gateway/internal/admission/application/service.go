@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -107,12 +108,12 @@ func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt
 	select {
 	case s.lookups <- struct{}{}:
 	default:
-		return domain.Receipt{}, domain.ErrUnavailable
+		return domain.Receipt{}, fmt.Errorf("%w: receipt lookups saturated", domain.ErrUnavailable)
 	}
 	receipt, digest, found, err := s.ledger.Find(ctx, in.Key)
 	<-s.lookups
 	if err != nil {
-		return domain.Receipt{}, err
+		return domain.Receipt{}, fmt.Errorf("acceptance receipt lookup: %w", err)
 	}
 	if found {
 		if digest != in.SourceDigest {
@@ -121,13 +122,13 @@ func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt
 		return receipt, nil
 	}
 	if s.stopping.Load() {
-		return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+		return s.finalReceipt(ctx, in, fmt.Errorf("%w: admission stopping", domain.ErrUnavailable))
 	}
 	select {
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
 	default:
-		return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+		return s.finalReceipt(ctx, in, fmt.Errorf("%w: admission slots saturated", domain.ErrUnavailable))
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		if s.stopping.Load() {
@@ -146,16 +147,22 @@ func (s *Service) AcceptInbound(ctx context.Context, in domain.Inbound) (receipt
 				route, err = s.routes.Resolve(ctx, in.Key.Provider, in.Key.AccountID)
 			}
 			if err != nil {
-				return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+				return s.finalReceipt(ctx, in, fmt.Errorf("%w: route resolve", domain.ErrUnavailable))
 			}
 			if err = route.ValidateFor(in.Key); err != nil {
-				return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+				return s.finalReceipt(ctx, in, fmt.Errorf("%w: route validate: %v", domain.ErrUnavailable, err))
 			}
 			policy := governancev1.Disabled(route.TenantID)
 			if s.policies != nil {
 				policy, err = s.policies.UsagePolicy(ctx, route.TenantID)
-				if err != nil || policy.TenantID != route.TenantID || policy.Validate() != nil {
-					return s.finalReceipt(ctx, in, domain.ErrUnavailable)
+				if err != nil {
+					return s.finalReceipt(ctx, in, fmt.Errorf("%w: usage policy fetch: %v", domain.ErrUnavailable, err))
+				}
+				if policy.TenantID != route.TenantID {
+					return s.finalReceipt(ctx, in, fmt.Errorf("%w: usage policy tenant mismatch", domain.ErrUnavailable))
+				}
+				if err = policy.Validate(); err != nil {
+					return s.finalReceipt(ctx, in, fmt.Errorf("%w: usage policy validate: %v", domain.ErrUnavailable, err))
 				}
 			}
 			if !policy.Allows(route.AccountID, route.BindingID, in.SenderID, in.ConversationID) {

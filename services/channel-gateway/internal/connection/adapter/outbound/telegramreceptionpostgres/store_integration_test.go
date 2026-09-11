@@ -108,6 +108,39 @@ func receipt(t *testing.T, pool *pgxpool.Pool, id int64) {
 		t.Fatal(e)
 	}
 }
+func TestPGRestartedInstanceTakesOverItsOwnLiveLease(t *testing.T) {
+	pool := setup(t)
+	const first, second = "00000000-0000-4000-8000-00000000000a", "00000000-0000-4000-8000-00000000000b"
+	a, e := p.New(pool, "pool", sourceEpoch, "gw", first)
+	if e != nil {
+		t.Fatal(e)
+	}
+	snap := snapshot(1)
+	ta, qa := apply(t, a, snap)
+	pa := permit(t, a, ta, qa, snap.Accounts[0], "telegram_receiver")
+	ctx := context.Background()
+	if _, yes, e := r.New(pool, a).Acquire(ctx, pa, "123"); e != nil || !yes {
+		t.Fatal("first acquisition", yes, e)
+	}
+	// The same logical instance restarted before its 30 second lease expired.
+	b, e := p.New(pool, "pool", sourceEpoch, "gw", second)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tb, qb := apply(t, b, snap)
+	pb := permit(t, b, tb, qb, snap.Accounts[0], "telegram_receiver")
+	lease, yes, e := r.New(pool, b).Acquire(ctx, pb, "123")
+	if e != nil || !yes {
+		t.Fatal("restarted instance must take over its own live lease", yes, e)
+	}
+	if lease.InstanceEpoch != second {
+		t.Fatalf("lease instance epoch = %q, want %q", lease.InstanceEpoch, second)
+	}
+	if lease.Epoch <= 1 {
+		t.Fatal("takeover must advance the owner epoch to fence the old process")
+	}
+}
+
 func TestPGPhysicalOwnerCallWindowAndDurableCursor(t *testing.T) {
 	pool := setup(t)
 	a, b := store(t, pool, "a"), store(t, pool, "b")

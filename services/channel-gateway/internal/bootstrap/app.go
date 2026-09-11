@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -254,6 +255,20 @@ func newWithDatabaseTarget(ctx context.Context, c Config, expected databaseIdent
 	admin := http.NewServeMux()
 	admin.HandleFunc("GET /livez", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	admin.HandleFunc("GET /readyz", app.ready)
+	// Per-account reception status: the Gateway image is distroless and writes no
+	// log stream, so this is the only way to see why an enabled account is not
+	// ready, which in turn makes the whole Gateway report unready.
+	admin.HandleFunc("GET /accounts", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		accounts := []telegramruntime.AccountStatus{}
+		if app.telegram != nil {
+			accounts = app.telegram.AccountStatuses()
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{"telegram": accounts}); err != nil {
+			return
+		}
+	})
 	if catalog != nil {
 		registry := &dynamicTelegram{handlers: map[string]http.Handler{}, use: use, acceptor: acceptor}
 		factory := c.telegramFactory
@@ -314,26 +329,63 @@ func (a *App) Close() {
 	})
 }
 func (a *App) ready(w http.ResponseWriter, r *http.Request) {
-	if a.stopping.Load() || (a.catalog != nil && !a.catalog.Ready()) || (a.telegram != nil && !a.telegram.Ready()) || (a.connections != nil && !a.connections.Ready()) {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	// The failing check is named in a response header: the Gateway image is
+	// distroless, so an operator has no shell or log stream to inspect a 503.
+	failed := make([]string, 0, 4)
+	if a.stopping.Load() {
+		failed = append(failed, "stopping")
+	}
+	if a.catalog != nil && !a.catalog.Ready() {
+		failed = append(failed, "catalog")
+	}
+	if a.telegram != nil && !a.telegram.Ready() {
+		failed = append(failed, "telegram")
+	}
+	if a.connections != nil && !a.connections.Ready() {
+		failed = append(failed, "connections")
+	}
+	if len(failed) > 0 {
+		unready(w, failed...)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	health, err := a.routes.QueryProjectionHealth(ctx)
-	if err != nil || !health.Initialized || health.Stale || health.BlockedReason != "" {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	switch {
+	case err != nil:
+		unready(w, "routes:error")
+		return
+	case !health.Initialized:
+		unready(w, "routes:uninitialized")
+		return
+	case health.Stale:
+		unready(w, "routes:stale")
+		return
+	case health.BlockedReason != "":
+		unready(w, "routes:blocked:"+health.BlockedReason,
+			fmt.Sprintf("contiguous=%d highest=%d target=%d", health.ContiguousSequence, health.HighestSequence, health.TargetSequence))
 		return
 	}
 	budget, err := a.ledger.Health(ctx)
-	if err != nil || budget.Saturated {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	if err != nil {
+		unready(w, "ledger:error")
+		return
+	}
+	if budget.Saturated {
+		unready(w, "ledger:saturated")
 		return
 	}
 	if !a.transport.Conn.IsConnected() {
 		w.Header().Set("X-Gateway-State", "degraded")
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// unready reports an operator-visible reason for a 503 without exposing state
+// beyond the Gateway's own health counters.
+func unready(w http.ResponseWriter, reasons ...string) {
+	w.Header().Set("X-Gateway-Ready-Failed", strings.Join(reasons, ","))
+	w.WriteHeader(http.StatusServiceUnavailable)
 }
 func (a *App) Run(ctx context.Context) error {
 	// Bind both before starting background work, so a bad listen address cannot

@@ -4,6 +4,7 @@ package domain
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -172,8 +173,28 @@ func (i Inbound) Validate() error {
 }
 func (r RouteSnapshot) ValidateFor(k EventKey) error {
 	rolloutValid := r.RolloutID == "" && r.RolloutVariant == "" || identifier.MatchString(r.RolloutID) && (r.RolloutVariant == "stable" || r.RolloutVariant == "canary")
-	if r.Provider != k.Provider || r.AccountID != k.AccountID || r.Generation < 1 || r.Generation > 9007199254740991 || !identifier.MatchString(r.TenantID) || !identifier.MatchString(r.BindingID) || !identifier.MatchString(r.DeploymentRevisionID) || len(r.ManifestRef) > 2048 || !manifestReference.MatchString(r.ManifestRef) || !manifestDigest.MatchString(r.ManifestDigest) || !rolloutValid {
-		return ErrInvalidInput
+	// Report each predicate separately. A single opaque ErrInvalidInput leaves an
+	// operator unable to tell a routing mismatch from a malformed snapshot, and
+	// both surface as admission temporarily unavailable.
+	switch {
+	case r.Provider != k.Provider:
+		return fmt.Errorf("%w: provider %q does not match event %q", ErrInvalidInput, r.Provider, k.Provider)
+	case r.AccountID != k.AccountID:
+		return fmt.Errorf("%w: account %q does not match event %q", ErrInvalidInput, r.AccountID, k.AccountID)
+	case r.Generation < 1 || r.Generation > 9007199254740991:
+		return fmt.Errorf("%w: generation %d out of range", ErrInvalidInput, r.Generation)
+	case !identifier.MatchString(r.TenantID):
+		return fmt.Errorf("%w: tenant_id %q is malformed", ErrInvalidInput, r.TenantID)
+	case !identifier.MatchString(r.BindingID):
+		return fmt.Errorf("%w: binding_id %q is malformed", ErrInvalidInput, r.BindingID)
+	case !identifier.MatchString(r.DeploymentRevisionID):
+		return fmt.Errorf("%w: deployment_revision_id %q is malformed", ErrInvalidInput, r.DeploymentRevisionID)
+	case len(r.ManifestRef) > 2048 || !manifestReference.MatchString(r.ManifestRef):
+		return fmt.Errorf("%w: manifest_ref %q is malformed", ErrInvalidInput, r.ManifestRef)
+	case !manifestDigest.MatchString(r.ManifestDigest):
+		return fmt.Errorf("%w: manifest_digest %q is malformed", ErrInvalidInput, r.ManifestDigest)
+	case !rolloutValid:
+		return fmt.Errorf("%w: rollout %q/%q is malformed", ErrInvalidInput, r.RolloutID, r.RolloutVariant)
 	}
 	return nil
 }
